@@ -1,34 +1,62 @@
 import json
 import re
-
 import pywintypes
 import win32file
 import win32pipe
 from flask import Flask, jsonify
 from guessit import guessit
+from anime_lookup import get_anime_cover, get_episode_title, get_anime_info
 
 app = Flask(__name__)
 PIPE_NAME = r"\\.\pipe\mpv"
 
 
-def parse_title(filename):
+def parse_title_data(filename):
     if not filename or filename == "N/A":
-        return "N/A"
+        return {
+            "full_title": "N/A", 
+            "series_title": "N/A",
+            "season": None,
+            "episode": None,
+            "episode_title": None
+        }
+    
     guessed = guessit(filename)
     title = guessed.get("title", filename)
     season = guessed.get("season")
     episode = guessed.get("episode")
     episode_title = guessed.get("episode_title")
+    
+    # Fallback: try to extract S##E## with regex if guessit didn't detect it
+    # This handles cases like "Re.Zero - S03E01" where guessit might fail
+    if season is None or episode is None:
+        se_match = re.search(r'[Ss](\d{1,2})[Ee](\d{1,3})', filename)
+        if se_match:
+            if season is None:
+                season = int(se_match.group(1))
+            if episode is None:
+                episode = int(se_match.group(2))
+            # Clean up title if it contains the S##E## pattern in alternative_title
+            if guessed.get("alternative_title") and re.match(r'S\d+E\d+', guessed.get("alternative_title", "")):
+                # guessit misidentified S##E## as alternative_title, keep just the title
+                pass
 
-    result = title
+    # Build full formatted title
+    full_title = title
     if season is not None and episode is not None:
-        result += f" - S{season:02d}E{episode:02d}"
+        full_title += f" - S{season:02d}E{episode:02d}"
     elif episode is not None:
-        result += f" - E{episode:02d}"  # Para anime sem temporada, adiciona só E01
+        full_title += f" - E{episode:02d}"
     if episode_title:
-        result += f" - {episode_title}"
+        full_title += f" - {episode_title}"
 
-    return result
+    return {
+        "full_title": full_title,
+        "series_title": title,
+        "season": season,
+        "episode": episode,
+        "episode_title": episode_title
+    }
 
 
 def get_mpv_data():
@@ -51,26 +79,41 @@ def get_mpv_data():
                 + b"\n"
             )
             win32file.WriteFile(handle, msg)
-            result, data = win32file.ReadFile(handle, 1024)
-            response = json.loads(data.decode("utf-8").strip())
-            return response.get("data", "N/A")
+            result, data = win32file.ReadFile(handle, 4096)
+            
+            # Handle multiple JSON responses in buffer - take only the first line
+            text = data.decode("utf-8").strip()
+            if "\n" in text:
+                text = text.split("\n")[0]
+            
+            try:
+                response = json.loads(text)
+                return response.get("data", "N/A")
+            except json.JSONDecodeError:
+                return "N/A"
 
         filename = query("filename/no-ext")
-        parsed_title = parse_title(filename)
+        parsed = parse_title_data(filename)
+        
+        # Set media title in MPV (optional, keeps consistency)
         set_msg = (
             json.dumps(
                 {
-                    "command": ["set_property", "media-title", parsed_title],
+                    "command": ["set_property", "media-title", parsed["full_title"]],
                     "request_id": 2,
                 }
             ).encode("utf-8")
             + b"\n"
         )
         win32file.WriteFile(handle, set_msg)
-        win32file.ReadFile(handle, 1024)  # Consome resposta (opcional)
+        win32file.ReadFile(handle, 1024)
 
         data = {
-            "media_title": parsed_title,
+            "media_title": parsed["full_title"],
+            "series_title": parsed["series_title"],
+            "season": parsed["season"],
+            "episode": parsed["episode"],
+            "episode_title": parsed["episode_title"],
             "filename": query("filename"),
             "pause": query("pause"),
             "percent_pos": query("percent-pos"),
@@ -86,13 +129,69 @@ def get_mpv_data():
             "buffering": query("paused-for-cache"),
             "loop_file": query("loop-file"),
             "loop_playlist": query("loop-playlist"),
+            "artist": query("metadata/by-key/Artist"),
+            "album": query("metadata/by-key/Album"),
             "mpv_version": query("mpv-version"),
         }
 
-        # Adicione aqui: Combine media_title com meta_title se existir
+        # Combine media_title with meta_title if exists
         meta_title = data.get("meta_title")
-        if meta_title and meta_title != "N/A":
-            data["media_title"] += f" - {meta_title}"
+        if meta_title and meta_title != "N/A" and isinstance(meta_title, str):
+             # Avoid duplicating if meta_title is already in full_title
+            if meta_title not in data["media_title"]:
+                data["media_title"] += f" - {meta_title}"
+
+        # Fetch anime metadata if it looks like an anime
+        cover_url = None
+        if parsed["series_title"] and parsed["series_title"] != "N/A":
+            try:
+                # Check if title is too short (likely truncated/abbreviated)
+                title_is_short = len(parsed["series_title"]) < 10
+                
+                if title_is_short:
+                    # Short title - fetch full title from API
+                    anime_info = get_anime_info(
+                        parsed["series_title"],
+                        parsed["season"]
+                    )
+                    
+                    if anime_info:
+                        cover_url = anime_info.get("cover_url")
+                        
+                        # Use full title from API (prioritize English, fallback to Romaji)
+                        full_title = anime_info.get("title_english") or anime_info.get("title_romaji")
+                        if full_title:
+                            data["series_title"] = full_title
+                            # Update media_title to use full title
+                            data["media_title"] = parsed["full_title"].replace(
+                                parsed["series_title"], 
+                                full_title
+                            )
+                else:
+                    # Good title - only fetch cover, preserve filename title
+                    cover_url = get_anime_cover(
+                        parsed["series_title"],
+                        parsed["season"]
+                    )
+                
+                # Get episode title if not in filename
+                if not parsed["episode_title"] and parsed["episode"]:
+                    ep_title = get_episode_title(
+                        parsed["series_title"],
+                        parsed["season"],
+                        parsed["episode"]
+                    )
+                    if ep_title:
+                        data["episode_title"] = ep_title
+                        # Update media_title to include episode title
+                        if " - " not in data["media_title"] or data["media_title"].endswith(f"E{parsed['episode']:02d}"):
+                            data["media_title"] += f" - {ep_title}"
+                        
+            except Exception as e:
+                print(f"[web_server] Error fetching anime metadata: {e}")
+        
+        data["cover_image"] = cover_url
+
 
         win32file.CloseHandle(handle)
         return data
@@ -103,20 +202,107 @@ def get_mpv_data():
 @app.route("/")
 def home():
     data = get_mpv_data()
-    if "error" in data:
-        return f"<h1>Erro: {data['error']}</h1>"
+    has_error = "error" in data
+    
+    # Initial values for display
+    if has_error:
+        json_data = json.dumps(data)
+        media_title = f"Erro: {data['error']}"
+        status_text = "N/A"
+        position_text = "N/A"
+        volume_text = "N/A"
+        format_text = "N/A"
+        meta_text = "N/A"
+        loop_text = "N/A"
+        mpv_version = "N/A"
+    else:
+        json_data = json.dumps(data)
+        status = "Pausado" if data["pause"] else "Tocando"
+        buffering = "Sim" if data["buffering"] else "Não"
+        media_title = data["media_title"]
+        status_text = f"Status: {status} | Buffering: {buffering}"
+        
+        # Handle N/A values for numeric fields (when MPV is open but no media playing)
+        percent = data.get('percent_pos')
+        time = data.get('time_pos')
+        dur = data.get('duration')
+        if isinstance(percent, (int, float)) and isinstance(time, (int, float)) and isinstance(dur, (int, float)):
+            position_text = f"Posição: {percent:.1f}% ({time:.1f}s / {dur:.1f}s)"
+        else:
+            position_text = "Posição: N/A"
+        
+        volume_text = f"Volume: {data['volume']} | Velocidade: {data['speed']}"
+        format_text = f"Formato: {data['file_format']} | Resolução: {data['width']}x{data['height']} | FPS: {data['fps']}"
+        meta_text = f"Metadados - Título: {data['meta_title']} | Artista: {data['artist']} | Álbum: {data['album']}"
+        loop_text = f"Loop - Arquivo: {data['loop_file']} | Playlist: {data['loop_playlist']}"
+        mpv_version = f"Versão MPV: {data['mpv_version']}"
 
-    status = "Pausado" if data["pause"] else "Tocando"
-    buffering = "Sim" if data["buffering"] else "Não"
     return f"""
-    <h1>Mídia atual: {data["media_title"]}</h1>
-    <p>Status: {status} | Buffering: {buffering}</p>
-    <p>Posição: {data["percent_pos"]:.1f}% ({data["time_pos"]:.1f}s / {data["duration"]:.1f}s)</p>
-    <p>Volume: {data["volume"]} | Velocidade: {data["speed"]}</p>
-    <p>Formato: {data["file_format"]} | Resolução: {data["width"]}x{data["height"]} | FPS: {data["fps"]}</p>
-    <p>Metadados - Título: {data["meta_title"]} | Artista: {data["artist"]} | Álbum: {data["album"]}</p>
-    <p>Loop - Arquivo: {data["loop_file"]} | Playlist: {data["loop_playlist"]}</p>
-    <p>Versão MPV: {data["mpv_version"]}</p>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>MPV Web Interface</title>
+        <script id="premid-data" type="application/json">
+            {json_data}
+        </script>
+        <script>
+            setInterval(async () => {{
+                try {{
+                    const res = await fetch('/api');
+                    if (res.ok) {{
+                        const data = await res.json();
+                        document.getElementById('premid-data').textContent = JSON.stringify(data);
+                        
+                        // Check for error state
+                        if (data.error) {{
+                            document.querySelector('h1').textContent = "Erro: " + data.error;
+                            document.getElementById('status').textContent = "N/A";
+                            document.getElementById('position').textContent = "N/A";
+                            document.getElementById('volume').textContent = "N/A";
+                            document.getElementById('format').textContent = "N/A";
+                            document.getElementById('meta').textContent = "N/A";
+                            document.getElementById('loop').textContent = "N/A";
+                            document.getElementById('version').textContent = "N/A";
+                            return;
+                        }}
+                        
+                        // Update UI with valid data
+                        const status = data.pause ? "Pausado" : "Tocando";
+                        const buffering = data.buffering ? "Sim" : "Não";
+                        document.querySelector('h1').textContent = "Mídia atual: " + data.media_title;
+                        document.getElementById('status').textContent = `Status: ${{status}} | Buffering: ${{buffering}}`;
+                        
+                        // Handle N/A values for position
+                        if (typeof data.percent_pos === 'number' && typeof data.time_pos === 'number' && typeof data.duration === 'number') {{
+                            document.getElementById('position').textContent = `Posição: ${{data.percent_pos.toFixed(1)}}% (${{data.time_pos.toFixed(1)}}s / ${{data.duration.toFixed(1)}}s)`;
+                        }} else {{
+                            document.getElementById('position').textContent = "Posição: N/A";
+                        }}
+                        document.getElementById('volume').textContent = `Volume: ${{data.volume}} | Velocidade: ${{data.speed}}`;
+                        document.getElementById('format').textContent = `Formato: ${{data.file_format}} | Resolução: ${{data.width}}x${{data.height}} | FPS: ${{data.fps}}`;
+                        document.getElementById('meta').textContent = `Metadados - Título: ${{data.meta_title}} | Artista: ${{data.artist}} | Álbum: ${{data.album}}`;
+                        document.getElementById('loop').textContent = `Loop - Arquivo: ${{data.loop_file}} | Playlist: ${{data.loop_playlist}}`;
+                        document.getElementById('version').textContent = `Versão MPV: ${{data.mpv_version}}`;
+                    }}
+                }} catch (e) {{ console.error(e); }}
+            }}, 1000);
+        </script>
+        <style>
+            body {{ font-family: sans-serif; background: #121212; color: #fff; padding: 2rem; }}
+        </style>
+    </head>
+    <body>
+        <h1>Mídia atual: {media_title}</h1>
+        <p id="status">{status_text}</p>
+        <p id="position">{position_text}</p>
+        <p id="volume">{volume_text}</p>
+        <p id="format">{format_text}</p>
+        <p id="meta">{meta_text}</p>
+        <p id="loop">{loop_text}</p>
+        <p id="version">{mpv_version}</p>
+    </body>
+    </html>
     """
 
 
@@ -127,3 +313,4 @@ def api():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
