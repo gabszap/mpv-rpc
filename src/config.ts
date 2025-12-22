@@ -63,9 +63,12 @@ export const config = {
         showCover: getEnvBool("SHOW_COVER", true),
         privacyMode: getEnvBool("PRIVACY_MODE", false),
         hideIdling: getEnvBool("HIDE_IDLING", false),
-        showTitleAsPresence: getEnvBool("SHOW_TITLE_AS_PRESENCE", true),
-        preferredTitleLanguage: getEnv("PREFERRED_TITLE_LANGUAGE", "none") as "english" | "romaji" | "none",
+        showTitleAsPresence: getEnvBool("SHOW_TITLE", true),
+        preferredTitleLanguage: getEnv("TITLE_LANG", "none") as "english" | "romaji" | "none",
     },
+
+    // Metadata provider (jikan, anilist, or kitsu)
+    metadataProvider: getEnv("METADATA_PROVIDER", "jikan") as "jikan" | "anilist" | "kitsu",
 
     // Jikan API settings (hardcoded)
     jikan: {

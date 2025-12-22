@@ -189,10 +189,11 @@ Contributions are welcome! Feel free to open issues and pull requests.
 
 - [x] Linux support (Unix sockets)
 - [x] Configuration via `.env` file
+- [x] AniList API support
+- [x] Kitsu API support
 - [ ] Metadata for movies and TV series (TMDb/OMDb)
 - [ ] MAL sync (mark as watched)
 - [ ] System Tray (run in background)
-- [ ] AniList and Kitsu API support
 - [ ] Graphical interface (GUI) for easy configuration
 - [ ] Mini Mode (Show only "Watching [Filename]" without metadata fetch)
 

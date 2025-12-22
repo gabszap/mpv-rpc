@@ -8,6 +8,7 @@ import { config } from "./config";
 import * as mpv from "./mpv";
 import * as discord from "./discord";
 import { checkAvailability } from "./parser";
+import { providerName } from "./anime";
 
 let updateInterval: NodeJS.Timeout | null = null;
 let isRunning = false;
@@ -71,6 +72,9 @@ async function start(): Promise<void> {
         console.warn("[Main] WARNING: GuessIt not found. Using basic fallback parser.");
         console.warn("       Install Python and run 'pip install guessit' for better accuracy.");
     }
+
+    // Show metadata provider
+    console.log(`[Main] Metadata provider: ${providerName}`);
 
     // Try to connect to MPV
     console.log("[Main] Looking for MPV...");

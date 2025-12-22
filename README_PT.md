@@ -189,10 +189,11 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues e pull re
 
 - [x] Suporte a Linux (Unix sockets)
 - [x] Configuração via arquivo `.env`
+- [x] Suporte para AniList API
+- [x] Suporte para Kitsu API
 - [ ] Metadados para filmes e séries (TMDb/OMDb)
 - [ ] Sincronização com MAL (marcar como assistido)
 - [ ] System Tray (rodar em background)
-- [ ] Suporte para AniList e Kitsu API
 - [ ] Interface gráfica (GUI) para facil configuração
 - [ ] Modo Mini (Exibir apenas "Assistindo [Arquivo]" sem busca de metadados)
 
