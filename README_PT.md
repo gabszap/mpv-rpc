@@ -8,18 +8,25 @@ Discord Rich Presence para o MPV Media Player com suporte automático a metadado
 ![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
 ![Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
 
 <p align="center">
   <a href="README.md"><img src="https://img.shields.io/badge/English-blue?style=for-the-badge" alt="English"></a>
   <a href="README_PT.md"><img src="https://img.shields.io/badge/Português-green?style=for-the-badge" alt="Português"></a>
 </p>
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Demo" width="600">
+  <br>
+  <em>Demo</em>
+</p>
+
 ## Sobre
 
 O **MPV Discord RPC** é uma ferramenta desenvolvida em Node.js que integra o seu MPV Media Player ao Discord, exibindo o que você está assistindo em tempo real. O grande diferencial deste projeto é a sua capacidade de identificar automaticamente animes através do nome do arquivo e buscar informações detalhadas, como capas e títulos oficiais, utilizando a API do MyAnimeList (Jikan).
 
-> [!IMPORTANT]
-> Atualmente, este projeto suporta apenas **Windows** (suporte para Linux em breve). Além disso, a função **showCover** funciona apenas para animes no momento.
+> [!NOTE]
+> A função **showCover** funciona apenas para animes no momento. A configuração pode ser feita via arquivo `.env`.
 
 
 ### Recursos
@@ -47,7 +54,8 @@ git clone https://github.com/gabszap/mpv-rpc.git && cd mpv-rpc
 pip install guessit && npm install
 
 # Adicione ao mpv.conf
-echo 'input-ipc-server=\\.\pipe\mpv' >> "%APPDATA%/mpv/mpv.conf"
+echo 'input-ipc-server=\\.\pipe\mpv' >> "%APPDATA%/mpv/mpv.conf"  # Windows
+echo 'input-ipc-server=/tmp/mpv-socket' >> ~/.config/mpv/mpv.conf  # Linux
 
 # Compile e execute
 npm run dev
@@ -110,7 +118,7 @@ A aplicação irá:
 
 ## Configuração
 
-As configurações podem ser ajustadas em `config.ts`:
+As configurações podem ser ajustadas em `.env`:
 
 | Opção | Descrição | Padrão |
 |-------|-----------|--------|
@@ -150,6 +158,15 @@ As configurações podem ser ajustadas em `config.ts`:
 
 ![Privacy Mode](assets/privacymode.png)
 
+## Scripts Recomendados para o MPV
+
+Para uma experiência ainda melhor com o MPV, confira estes scripts úteis de [Eisa01/mpv-scripts](https://github.com/Eisa01/mpv-scripts):
+
+| Script | Descrição |
+|--------|-----------|
+| [SmartSkip](https://github.com/Eisa01/mpv-scripts#smartskip) | Pula automaticamente intros, outros e silêncios em vídeos |
+| [SmartCopyPaste](https://github.com/Eisa01/mpv-scripts#smartcopypaste) | Copia/cola caminhos de vídeo, URLs e timestamps com Ctrl+C/V |
+
 ## Dependências
 
 - [@xhayper/discord-rpc](https://www.npmjs.com/package/@xhayper/discord-rpc) - Cliente Discord RPC
@@ -170,13 +187,15 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues e pull re
 
 ## TODO
 
-- [ ] Suporte a Linux (Unix sockets)
-- [ ] Configuração via arquivo `.env`
+- [x] Suporte a Linux (Unix sockets)
+- [x] Configuração via arquivo `.env`
 - [ ] Metadados para filmes e séries (TMDb/OMDb)
 - [ ] Sincronização com MAL (marcar como assistido)
 - [ ] System Tray (rodar em background)
 - [ ] Suporte para AniList e Kitsu API
 - [ ] Interface gráfica (GUI) para facil configuração
+- [ ] Modo Mini (Exibir apenas "Assistindo [Arquivo]" sem busca de metadados)
+
 
 ## Licença
 
