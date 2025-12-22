@@ -1,5 +1,26 @@
 {
+  "name": "mpv-rpc",
+  "version": "1.0.0",
+  "description": "Discord Rich Presence for MPV Media Player",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": [
+    "mpv",
+    "discord",
+    "rpc",
+    "rich-presence"
+  ],
+  "license": "MIT",
   "dependencies": {
+    "@xhayper/discord-rpc": "^1.2.0",
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.9.3"
   }
 }
