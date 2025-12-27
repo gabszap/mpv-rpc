@@ -44,6 +44,9 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 - MPV Media Player
 - Discord Desktop
 
+> [!IMPORTANT]
+> Make sure **Node.js** and **Python** are added to your system **PATH**.
+
 > **Note:** Python is required to run the `guessit` library, used in the parsing module to identify titles, seasons, and episodes from file names.
 
 ## Quick Start
@@ -52,6 +55,9 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 # Clone and install
 git clone https://github.com/gabszap/mpv-rpc.git && cd mpv-rpc
 pip install guessit && npm install
+
+# Configure the .env with the Discord application ID
+cp .env.example .env
 
 # Add to mpv.conf
 echo 'input-ipc-server=\\.\pipe\mpv' >> "%APPDATA%/mpv/mpv.conf"  # Windows
@@ -173,6 +179,8 @@ For an even better MPV experience, check out these useful scripts from [Eisa01/m
 - [axios](https://www.npmjs.com/package/axios) - HTTP Client
 - [guessit](https://pypi.org/project/guessit/) - File name parser
 - [jikan](https://jikan.moe/) - Authless MAL API
+- [anilist](https://anilist.co/) - Anilist API
+- [kitsu](https://kitsu.io/) - Kitsu API
 - [PreMiD](https://premid.app/) - I got some assets from here
 
 ## Contributing

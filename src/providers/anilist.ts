@@ -87,6 +87,7 @@ const SEARCH_QUERY = `
 query ($search: String) {
     Media(search: $search, type: ANIME, sort: POPULARITY_DESC) {
         id
+        idMal
         title {
             romaji
             english
@@ -104,6 +105,7 @@ const GET_BY_ID_QUERY = `
 query ($id: Int) {
     Media(id: $id, type: ANIME) {
         id
+        idMal
         title {
             romaji
             english
@@ -195,6 +197,7 @@ export class AniListProvider implements AnimeProvider {
 
             return {
                 id: media.id,
+                mal_id: media.idMal || undefined,
                 title_english: media.title.english,
                 title_romaji: media.title.romaji,
                 cover_url: media.coverImage?.extraLarge || media.coverImage?.large || null,

@@ -27,6 +27,10 @@ function createProvider(): AnimeProvider {
 
 const provider = createProvider();
 
+// Fallback provider for episode titles (only if not already using Jikan)
+const fallbackProvider: AnimeProvider | null =
+    config.metadataProvider !== "jikan" ? new JikanProvider() : null;
+
 // Export provider name for logging
 export const providerName = provider.name;
 
@@ -133,7 +137,7 @@ export async function getAnimeInfo(title: string, season: number | null = null):
 }
 
 /**
- * Get episode title
+ * Get episode title (with fallback to Jikan if primary provider fails)
  */
 export async function getEpisodeTitle(
     animeTitle: string,
@@ -149,7 +153,26 @@ export async function getEpisodeTitle(
             return episodeCache.get(episodeCacheKey) ?? null;
         }
 
-        const title = await provider.getEpisodeTitle(animeInfo.id, episode);
+        // Try primary provider first
+        let title = await provider.getEpisodeTitle(animeInfo.id, episode);
+
+        // Fallback to Jikan if primary provider has no episode data
+        if (!title && fallbackProvider) {
+            console.log(`[Anime] ${provider.name} has no episode data, trying Jikan fallback...`);
+
+            // If we have the MAL ID from AniList, use it directly
+            if (animeInfo.mal_id) {
+                title = await fallbackProvider.getEpisodeTitle(animeInfo.mal_id, episode);
+            } else {
+                // Fallback: search by title if no MAL ID
+                const searchTitle = animeInfo.title_romaji || animeInfo.title_english || animeTitle;
+                const jikanSearch = await fallbackProvider.searchAnime(searchTitle);
+                if (jikanSearch) {
+                    title = await fallbackProvider.getEpisodeTitle(jikanSearch.id, episode);
+                }
+            }
+        }
+
         episodeCache.set(episodeCacheKey, title);
         return title;
     } catch {

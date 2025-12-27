@@ -44,7 +44,10 @@ O **MPV Discord RPC** é uma ferramenta desenvolvida em Node.js que integra o se
 - MPV Media Player
 - Discord Desktop
 
-> **Nota:** O Python é necessário para a execução da biblioteca `guessit`, utilizada no módulo de parsing para identificar títulos, temporadas e episódios a partir dos nomes dos arquivos.
+> [!IMPORTANT]
+> Certifique-se de que o **Node.js** e o **Python** estejam adicionados ao **PATH** do seu sistema.
+
+> **Nota:** O Python é necessário para executar a biblioteca `guessit`, usada no módulo de parsing para identificar títulos, temporadas e episódios a partir dos nomes dos arquivos.
 
 ## Início Rápido
 
@@ -52,6 +55,9 @@ O **MPV Discord RPC** é uma ferramenta desenvolvida em Node.js que integra o se
 # Clone e instale
 git clone https://github.com/gabszap/mpv-rpc.git && cd mpv-rpc
 pip install guessit && npm install
+
+# Configure o .env com o ID da aplicação do Discord Developer Portal
+cp .env.example .env
 
 # Adicione ao mpv.conf
 echo 'input-ipc-server=\\.\pipe\mpv' >> "%APPDATA%/mpv/mpv.conf"  # Windows
@@ -173,6 +179,8 @@ Para uma experiência ainda melhor com o MPV, confira estes scripts úteis de [E
 - [axios](https://www.npmjs.com/package/axios) - Cliente HTTP
 - [guessit](https://pypi.org/project/guessit/) - Parser de nomes de arquivos
 - [jikan](https://jikan.moe/) - Authless MAL API
+- [anilist](https://anilist.co/) - Anilist API
+- [kitsu](https://kitsu.io/) - Kitsu API
 - [PreMiD](https://premid.app/) - peguei alguns recursos daqui
 
 ## Contribuindo

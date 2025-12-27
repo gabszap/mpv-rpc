@@ -81,7 +81,7 @@ export async function clearActivity(): Promise<void> {
 }
 
 /**
- * Log status to terminal (avoids duplicates)
+ * Log status to terminal (avoids duplicates, ignores pause state changes)
  */
 function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}): void {
     const title = data.series_title !== "N/A" ? data.series_title : data.media_title;
@@ -97,8 +97,8 @@ function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}): void
     }
     statusLog += `"`;
     if (options.privacyMode) statusLog += " (Privacy Mode)";
-    if (data.pause) statusLog += " (Paused)";
 
+    // Only log when content changes (ignore pause state changes)
     if (statusLog !== lastStatusLog) {
         console.log(`[Status] ${statusLog}`);
         lastStatusLog = statusLog;
@@ -161,18 +161,38 @@ export async function setActivity(data: MpvData): Promise<void> {
     let state = "";
     let details = fullTitle; // Default: show full title in details
 
-    if (config.settings.showTitleAsPresence && data.season !== null && data.episode !== null) {
-        // When using title as presence name, show episode title in details
-        details = data.episode_title || fullTitle;
-        state = "on MPV";
+    // When showTitleAsPresence is active, avoid duplicating title (it's already in activity name)
+    if (config.settings.showTitleAsPresence) {
+        if (data.season !== null && data.episode !== null) {
+            // SxEx format
+            details = data.episode_title || `Episode ${data.episode}`;
+            state = "on MPV";
+        } else if (data.episode !== null) {
+            // Episode only (no season)
+            details = data.episode_title
+                ? `Episode ${data.episode} - ${data.episode_title}`
+                : `Episode ${data.episode}`;
+            state = "on MPV";
+        } else if (data.episode_title) {
+            details = data.episode_title;
+            state = "on MPV";
+        } else {
+            details = "on MPV";
+            state = "";
+        }
     } else if (data.season !== null && data.episode !== null) {
         // Discord already shows badge with season/episode, so just show title
         state = data.episode_title || "";
     } else if (data.episode !== null) {
-        state = `Episode ${data.episode}`;
+        // Episode only (no season) - show episode info in state
         if (data.episode_title) {
-            state += ` - ${data.episode_title}`;
+            state = `Episode ${data.episode} - ${data.episode_title}`;
+        } else {
+            state = `Episode ${data.episode}`;
         }
+    } else if (data.episode_title) {
+        // Only have episode title (no episode number) - show title as state
+        state = data.episode_title;
     } else if (data.artist !== "N/A") {
         state = `by ${data.artist}`;
     } else {

@@ -7,6 +7,7 @@ import * as path from "path";
 
 export interface AnimeInfo {
     id: number;                    // Provider-specific ID (MAL ID or AniList ID)
+    mal_id?: number;               // MyAnimeList ID (for fallback purposes)
     title_english: string | null;
     title_romaji: string;
     cover_url: string | null;
