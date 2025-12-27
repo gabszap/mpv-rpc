@@ -201,7 +201,7 @@ export async function getMpvData(): Promise<MpvData | null> {
         let seriesTitle = parsed.series_title;
         const originalTitle = parsed.series_title; // Keep original for episode lookup
 
-        if (seriesTitle && seriesTitle !== "N/A") {
+        if (seriesTitle && seriesTitle !== "N/A" && parsed.media_type !== "series") {
             try {
                 // Try to get anime info
                 const animeInfo = await getAnimeInfo(seriesTitle, parsed.season);

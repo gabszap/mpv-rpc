@@ -11,6 +11,7 @@ export interface ParsedFilename {
     season: number | null;
     episode: number | null;
     episode_title: string | null;
+    media_type: "anime" | "series" | "unknown";
 }
 
 const execFileAsync = promisify(execFile);
@@ -40,6 +41,33 @@ export async function checkAvailability(): Promise<boolean> {
 }
 
 /**
+ * Detect if the file is anime or regular series based on filename patterns
+ * Anime files typically have fansub groups like [Judas] or [SubsPlease] at the start
+ */
+function detectMediaType(filename: string): "anime" | "series" | "unknown" {
+    // Check for fansub group at the start: [GroupName]
+    // This is the main indicator - western series don't have this
+    const hasGroupAtStart = /^\[[^\]]+\]/.test(filename);
+
+    // Check for CRC hash at the end: [ABCD1234]
+    const hasCrcHash = /\[[0-9A-Fa-f]{8}\]/.test(filename);
+
+    if (hasGroupAtStart || hasCrcHash) {
+        return "anime";
+    }
+
+    // If no anime indicators, likely a western series
+    // Pattern: Show.Name.S01E01.Quality.Source.mkv
+    const hasWesternPattern = /\.\d{3,4}p\./.test(filename) && !hasGroupAtStart;
+
+    if (hasWesternPattern) {
+        return "series";
+    }
+
+    return "unknown";
+}
+
+/**
  * Clean up title - remove dots, underscores, brackets, etc.
  */
 function cleanTitle(title: string): string {
@@ -63,6 +91,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             season: null,
             episode: null,
             episode_title: null,
+            media_type: "unknown",
         };
     }
 
@@ -116,6 +145,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             season,
             episode,
             episode_title,
+            media_type: detectMediaType(filename),
         };
     }
 
@@ -173,5 +203,6 @@ function fallbackParse(filename: string): ParsedFilename {
         season,
         episode,
         episode_title: null,
+        media_type: detectMediaType(filename),
     };
 }
