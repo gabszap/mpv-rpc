@@ -75,6 +75,13 @@ export const config = {
         baseUrl: "https://api.jikan.moe/v4",
         minRequestInterval: 500,
     },
+
+    // MyAnimeList sync settings
+    mal: {
+        enabled: getEnvBool("MAL_SYNC", false),
+        clientId: getEnv("MAL_CLIENT_ID", ""),
+        syncThreshold: parseInt(getEnv("MAL_SYNC_THRESHOLD", "90"), 10), // % watched to trigger sync
+    },
 };
 
 export type Config = typeof config;

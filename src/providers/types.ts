@@ -11,6 +11,7 @@ export interface AnimeInfo {
     title_english: string | null;
     title_romaji: string;
     cover_url: string | null;
+    total_episodes?: number;       // For MAL sync (mark as completed)
 }
 
 export interface AnimeSearchResult {

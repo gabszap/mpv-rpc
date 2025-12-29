@@ -34,6 +34,8 @@ O **MPV Discord RPC** é uma ferramenta desenvolvida em Node.js que integra o se
 - Detecção automática de anime a partir do nome do arquivo
 - Busca de metadados via API Jikan (MyAnimeList)
 - Exibição de capas de anime no Rich Presence
+- Sincronização MyAnimeList: Atualização automática do seu progresso
+- Stremio MPV Bridge: Abra streams do Stremio Web diretamente no MPV
 - Cache local para evitar requisições repetidas
 - Modo privacidade
 
@@ -121,6 +123,19 @@ A aplicação irá:
 1. Conectar ao Discord
 2. Procurar pelo MPV (com reconexão automática)
 3. Atualizar o Rich Presence em tempo real
+4. Sincronizar progresso com o MyAnimeList (se ativado e autenticado)
+
+## Sincronização com o MAL
+
+Você pode sincronizar automaticamente o seu progresso de episódios assistidos com o MyAnimeList. Isso requer uma autenticação única.
+
+Para instruções detalhadas de como configurar e autorizar a sincronização, consulte o [Guia de Configuração do MyAnimeList](docs/mal-sync-setup.md).
+
+## Stremio MPV Bridge
+
+Você pode integrar o Stremio Web com o MPV usando a bridge (ponte). Isso permite abrir streams diretamente no MPV com suporte inteligente a playlists para episódios.
+
+Para instruções de configuração e uso, consulte o [Guia do Stremio MPV Bridge](docs/stremio-mpv-bridge.md).
 
 ## Configuração
 
@@ -133,6 +148,9 @@ As configurações podem ser ajustadas em `.env`:
 | `hideIdling` | Ocultar status quando ocioso | `false` |
 | `showTitleAsPresence` | Usar título do anime como nome da atividade | `true` |
 | `preferredTitleLanguage` | Idioma preferido do título (`english`, `romaji`, `none`) | `none` |
+| `MAL_SYNC` | Ativar sincronização com MyAnimeList | `false` |
+| `MAL_CLIENT_ID` | MyAnimeList API Client ID | (vazio) |
+| `MAL_SYNC_THRESHOLD` | % assistido para disparar sync (0-100) | `90` |
 
 ## Como Funciona
 
@@ -199,8 +217,8 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues e pull re
 - [x] Configuração via arquivo `.env`
 - [x] Suporte para AniList API
 - [x] Suporte para Kitsu API
+- [x] Sincronização com MAL (marcar como assistido)
 - [ ] Metadados para filmes e séries (TMDb/OMDb)
-- [ ] Sincronização com MAL (marcar como assistido)
 - [ ] System Tray (rodar em background)
 - [ ] Interface gráfica (GUI) para facil configuração
 - [ ] Modo Mini (Exibir apenas "Assistindo [Arquivo]" sem busca de metadados)

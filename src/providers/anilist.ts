@@ -115,6 +115,7 @@ query ($id: Int) {
             large
         }
         format
+        episodes
         relations {
             edges {
                 relationType
@@ -201,6 +202,7 @@ export class AniListProvider implements AnimeProvider {
                 title_english: media.title.english,
                 title_romaji: media.title.romaji,
                 cover_url: media.coverImage?.extraLarge || media.coverImage?.large || null,
+                total_episodes: media.episodes || undefined,
             };
         } catch {
             return null;

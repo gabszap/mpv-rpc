@@ -9,6 +9,7 @@ import * as mpv from "./mpv";
 import * as discord from "./discord";
 import { checkAvailability } from "./parser";
 import { providerName } from "./anime";
+import { syncEpisode, authorize, isAuthenticated, getUsername } from "./mal-sync/sync";
 
 let updateInterval: NodeJS.Timeout | null = null;
 let isRunning = false;
@@ -34,6 +35,11 @@ async function update(): Promise<void> {
 
         // Update Discord presence
         await discord.setActivity(data);
+
+        // MAL sync - if enabled and watching anime
+        if (data.mal_id && data.episode && data.percent_pos >= config.mal.syncThreshold) {
+            await syncEpisode(data.mal_id, data.episode, data.percent_pos, data.total_episodes ?? undefined);
+        }
     } catch (e) {
         console.error("[Main] Update error:", e);
     } finally {
@@ -75,6 +81,19 @@ async function start(): Promise<void> {
 
     // Show metadata provider
     console.log(`[Main] Metadata provider: ${providerName}`);
+
+    // Show MAL sync status
+    if (config.mal.enabled) {
+        if (isAuthenticated()) {
+            const username = await getUsername();
+            console.log("[Main] MAL sync: enabled (authenticated)");
+            if (username) {
+                console.log(`[Main] MAL sync: logged in as ${username}`);
+            }
+        } else {
+            console.log("[Main] MAL sync: enabled (not authenticated - run with 'mal-auth' to authorize)");
+        }
+    }
 
     // Try to connect to MPV
     console.log("[Main] Looking for MPV...");
@@ -123,8 +142,24 @@ async function stop(): Promise<void> {
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
-// Start the service
-start().catch((e) => {
-    console.error("[Main] Fatal error:", e);
-    process.exit(1);
-});
+// Check for CLI commands
+const args = process.argv.slice(2);
+
+if (args.includes("mal-auth")) {
+    // MAL authorization mode
+    console.log("[MAL] Starting authorization flow...");
+    authorize().then((success) => {
+        if (success) {
+            console.log("[MAL] Authorization complete! You can now restart mpv-rpc.");
+        } else {
+            console.log("[MAL] Authorization failed or cancelled.");
+        }
+        process.exit(success ? 0 : 1);
+    });
+} else {
+    // Normal mode - Start the service
+    start().catch((e) => {
+        console.error("[Main] Fatal error:", e);
+        process.exit(1);
+    });
+}

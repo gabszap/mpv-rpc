@@ -22,6 +22,8 @@ export interface MpvData {
     duration: number;
     artist: string;
     cover_image: string | null;
+    mal_id: number | null;        // For MAL sync
+    total_episodes: number | null; // For MAL sync (mark as completed)
 }
 
 let socket: net.Socket | null = null;
@@ -180,6 +182,8 @@ export async function getMpvData(): Promise<MpvData | null> {
                 duration: 0,
                 artist: "N/A",
                 cover_image: null,
+                mal_id: null,
+                total_episodes: null,
             };
         }
 
@@ -199,6 +203,8 @@ export async function getMpvData(): Promise<MpvData | null> {
         let coverImage: string | null = null;
         let episodeTitle = parsed.episode_title;
         let seriesTitle = parsed.series_title;
+        let malId: number | null = null;
+        let totalEpisodes: number | null = null;
         const originalTitle = parsed.series_title; // Keep original for episode lookup
 
         if (seriesTitle && seriesTitle !== "N/A" && parsed.media_type !== "series") {
@@ -207,6 +213,8 @@ export async function getMpvData(): Promise<MpvData | null> {
                 const animeInfo = await getAnimeInfo(seriesTitle, parsed.season);
                 if (animeInfo) {
                     coverImage = animeInfo.cover_url;
+                    malId = animeInfo.mal_id || null;
+                    totalEpisodes = animeInfo.total_episodes || null;
 
                     // Choose title based on preferred language setting
                     const titlePref = config.settings.preferredTitleLanguage;
@@ -251,6 +259,8 @@ export async function getMpvData(): Promise<MpvData | null> {
             duration: typeof duration === "number" ? duration : 0,
             artist: typeof artist === "string" ? artist : "N/A",
             cover_image: coverImage,
+            mal_id: malId,
+            total_episodes: totalEpisodes,
         };
     } catch (e) {
         console.error("[MPV] Error getting data:", e);

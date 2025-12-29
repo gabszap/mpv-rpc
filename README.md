@@ -34,6 +34,8 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 - Automatic anime detection from file name
 - Metadata fetching via Jikan API (MyAnimeList)
 - Anime cover display in Rich Presence
+- MyAnimeList Sync: Automatically update your watch progress
+- Stremio MPV Bridge: Open Stremio Web streams directly in MPV
 - Local cache to avoid repeated requests
 - Privacy mode
 
@@ -121,6 +123,19 @@ The application will:
 1. Connect to Discord
 2. Look for MPV (with automatic reconnection)
 3. Update Rich Presence in real time
+4. Sync progress to MyAnimeList (if enabled and authenticated)
+
+## MAL Sync
+
+You can automatically sync your watch progress to MyAnimeList. This requires a one-time authentication.
+
+For detailed instructions on how to set up and authorize MAL sync, please refer to the [MAL Sync Setup Guide](docs/mal-sync-setup.md).
+
+## Stremio MPV Bridge
+
+You can integrate Stremio Web with MPV using the bridge. This allows you to open streams directly in MPV with smart playlist support for episodes.
+
+For setup and usage instructions, please refer to the [Stremio MPV Bridge Guide](docs/stremio-mpv-bridge.md).
 
 ## Configuration
 
@@ -133,6 +148,9 @@ Settings can be adjusted in `.env`:
 | `hideIdling` | Hide status when idle | `false` |
 | `showTitleAsPresence` | Use anime title as activity name | `true` |
 | `preferredTitleLanguage` | Preferred title language (`english`, `romaji`, `none`) | `none` |
+| `MAL_SYNC` | Enable MyAnimeList synchronization | `false` |
+| `MAL_CLIENT_ID` | MyAnimeList API Client ID | (empty) |
+| `MAL_SYNC_THRESHOLD` | % watched to trigger sync (0-100) | `90` |
 
 ## How It Works
 
@@ -199,8 +217,8 @@ Contributions are welcome! Feel free to open issues and pull requests.
 - [x] Configuration via `.env` file
 - [x] AniList API support
 - [x] Kitsu API support
+- [x] MAL sync (mark as watched)
 - [ ] Metadata for movies and TV series (TMDb/OMDb)
-- [ ] MAL sync (mark as watched)
 - [ ] System Tray (run in background)
 - [ ] Graphical interface (GUI) for easy configuration
 - [ ] Mini Mode (Show only "Watching [Filename]" without metadata fetch)

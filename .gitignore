@@ -3,3 +3,4 @@ legacy/
 dist/
 .anime_cache/
 .env
+.mal_tokens.json
