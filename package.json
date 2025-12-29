@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
-    "start:bridge": "npm run start --workspace=stremio-mpv-bridge",
+    "bridge": "npm run start --workspace=stremio-mpv-bridge",
     "test": "vitest run"
   },
   "workspaces": [

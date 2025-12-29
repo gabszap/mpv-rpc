@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stremio MPV Bridge
 // @namespace    https://github.com/gabszap/mpv-rpc
-// @version      1.5.5
+// @version      1.6.4
 // @icon         https://www.stremio.com/website/stremio-purple-small.png
 // @description  Open Stremio Web streams directly in MPV with playlist support
 // @homepage     https://github.com/gabszap/mpv-rpc
@@ -54,12 +54,13 @@
 
     function log(...args) {
         if (CONFIG.DEBUG) {
-            console.log('%c[Stremio-MPV]', 'color: #666; font-weight: bold;', ...args);
+            console.log('%c[Stremio-MPV]', 'color: #8b5cf6; font-weight: bold;', ...args);
         }
     }
 
-    function notify(...args) {
-        console.log('%c[Stremio-MPV]', 'color: #8b5cf6; font-weight: bold;', ...args);
+    function notify(msg, type = 'info') {
+        log(msg);
+        showToast(msg, type);
     }
 
     // ==================== CONFIGURATION UI ====================
@@ -92,80 +93,94 @@
             <style>
                 #stremio-mpv-modal {
                     position: fixed; inset: 0; z-index: 100000;
-                    background: rgba(0,0,0,0.8);
+                    background: rgba(0,0,0,0.25);
+                    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
                     display: flex; align-items: center; justify-content: center;
                     font-family: 'Roboto', sans-serif;
+                    opacity: 0; transition: opacity 0.3s ease;
+                    color-scheme: dark;
                 }
                 .mpv-modal-content {
-                    background: #1e1e1e; color: #eee;
-                    padding: 24px; border-radius: 12px;
+                    background: rgba(15, 15, 15, 0.65); color: #eee;
+                    padding: 24px; border-radius: 20px;
                     width: 450px; max-width: 90vw;
-                    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    box-shadow: 0 20px 50px rgba(0,0,0,0.6);
                     max-height: 90vh; overflow-y: auto;
+                    transform: scale(0.9); transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
                 }
+                #stremio-mpv-modal.active { opacity: 1; }
+                #stremio-mpv-modal.active .mpv-modal-content { transform: scale(1); }
+                
                 .mpv-modal-header {
-                    font-size: 20px; font-weight: bold; margin-bottom: 20px;
-                    color: #8b5cf6;
+                    font-size: 22px; font-weight: bold; margin-bottom: 24px;
+                    background: linear-gradient(45deg, #a78bfa, #8b5cf6);
+                    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
                 }
-                .mpv-form-group { margin-bottom: 16px; }
-                .mpv-label { display: block; margin-bottom: 8px; font-size: 14px; opacity: 0.8; }
+                .mpv-form-group { margin-bottom: 18px; }
+                .mpv-label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 500; color: #a78bfa; text-transform: uppercase; letter-spacing: 0.5px; }
                 .mpv-input {
-                    width: 100%; padding: 10px; background: #2d2d2d;
-                    border: 1px solid #444; border-radius: 6px;
-                    color: white; font-size: 14px;
+                    width: 100%; padding: 12px; background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px;
+                    color: white; font-size: 14px; transition: all 0.2s ease;
                 }
-                .mpv-input:focus { outline: none; border-color: #8b5cf6; }
-                .mpv-help { font-size: 12px; opacity: 0.5; margin-top: 4px; }
+                .mpv-input:focus { outline: none; border-color: #8b5cf6; background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2); }
+                .mpv-help { font-size: 12px; opacity: 0.5; margin-top: 6px; line-height: 1.4; }
                 .mpv-actions {
-                    display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;
+                    display: flex; justify-content: flex-end; gap: 12px; margin-top: 30px;
                 }
                 .mpv-btn {
-                    padding: 8px 16px; border-radius: 6px; cursor: pointer;
-                    border: none; font-weight: 500; font-size: 14px;
+                    padding: 10px 20px; border-radius: 8px; cursor: pointer;
+                    border: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease;
                 }
                 .mpv-btn-cancel { background: transparent; color: #aaa; }
-                .mpv-btn-cancel:hover { color: white; background: rgba(255,255,255,0.1); }
-                .mpv-btn-save { background: #8b5cf6; color: white; }
-                .mpv-btn-save:hover { background: #7c3aed; }
+                .mpv-btn-cancel:hover { color: white; background: rgba(255,255,255,0.05); }
+                .mpv-btn-save { background: #8b5cf6; color: white; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); }
+                .mpv-btn-save:hover { background: #7c3aed; transform: translateY(-1px); box-shadow: 0 6px 15px rgba(139, 92, 246, 0.4); }
+                
                 .mpv-checkbox-group {
-                    display: flex; align-items: center; gap: 10px;
-                    background: #2d2d2d; padding: 10px; border-radius: 6px;
+                    display: flex; align-items: center; gap: 12px;
+                    background: rgba(255, 255, 255, 0.03); padding: 12px; border-radius: 10px;
+                    border: 1px solid rgba(255, 255, 255, 0.05);
                 }
                 .mpv-checkbox {
-                    width: 20px; height: 20px; cursor: pointer; accent-color: #8b5cf6;
-                    appearance: auto; display: inline-block; margin: 0;
+                    width: 18px; height: 18px; min-width: 18px; min-height: 18px;
+                    cursor: pointer; accent-color: #8b5cf6;
+                    appearance: auto; -webkit-appearance: checkbox; 
+                    margin: 0; filter: invert(0.8) hue-rotate(180deg) brightness(0.7);
                 }
                 .mpv-reorder-btn {
-                    background: #2d2d2d; border: 1px solid #444; color: #aaa;
-                    border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 10px;
+                    background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #aaa;
+                    border-radius: 6px; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+                    cursor: pointer; font-size: 10px; transition: all 0.2s ease;
                 }
-                .mpv-reorder-btn:hover { background: #444; color: white; }
+                .mpv-reorder-btn:hover { background: #8b5cf6; color: white; border-color: #8b5cf6; }
             </style>
             <div class="mpv-modal-content">
-                <div class="mpv-modal-header">MPV Bridge Settings</div>
+                <div class="mpv-modal-header">MPV Bridge Settings <span style="font-size: 14px; opacity: 0.6; font-weight: normal; margin-left: 8px;">v${GM_info.script.version}</span></div>
                 
                 ${providersHTML}
-                <div class="mpv-help" style="margin-bottom: 16px;">Copy the link from the addon's "Share" button.</div>
+                <div class="mpv-help" style="margin-bottom: 20px; color: #aaa;">Copy the link from the addon's "Share" button.</div>
 
                 <div class="mpv-form-group">
-                    <label class="mpv-label">Playlist Mode</label>
+                    <label class="mpv-label">Stream Mode</label>
                     <div class="mpv-checkbox-group">
-                        <input type="checkbox" id="mpv-playlist-all" class="mpv-checkbox" ${playlistMode === 'all' ? 'checked' : ''}>
+                        <input type="checkbox" id="mpv-playlist-all" class="mpv-checkbox" ${playlistMode === 'all' ? 'checked' : ''} style="width: 18px; height: 18px; accent-color: #8b5cf6; cursor: pointer;">
                         <div style="flex:1">
-                            <label for="mpv-playlist-all" style="cursor:pointer; user-select:none">Load all episodes</label>
+                            <label for="mpv-playlist-all" style="cursor:pointer; user-select:none; font-size: 14px;">Load all episodes</label>
                             <div class="mpv-help" style="margin-top:2px">Loads all remaining episodes of the current season</div>
                         </div>
                     </div>
                 </div>
 
-                <div class="mpv-form-group" id="mpv-group-count" style="${playlistMode === 'all' ? 'opacity:0.5; pointer-events:none' : ''}">
+                <div class="mpv-form-group" id="mpv-group-count" style="${playlistMode === 'all' ? 'opacity:0.3; pointer-events:none' : ''}">
                     <label class="mpv-label">Next episodes to load</label>
                     <input type="number" id="mpv-ep-count" class="mpv-input" value="${extraEpisodes}" min="1" max="25">
                 </div>
 
                 <div class="mpv-form-group">
-                    <label class="mpv-label">Keyboard Shortcut (Open in MPV)</label>
-                    <input type="text" id="mpv-shortcut" class="mpv-input" value="${mpvShortcut}" maxlength="1" style="width: 50px; text-align: center; text-transform: uppercase;">
+                    <label class="mpv-label">Keyboard Shortcut</label>
+                    <input type="text" id="mpv-shortcut" class="mpv-input" value="${mpvShortcut}" maxlength="1" style="width: 60px; text-align: center; text-transform: uppercase; font-weight: bold;">
                 </div>
 
                 <div class="mpv-actions">
@@ -176,19 +191,27 @@
         `;
 
         document.body.appendChild(modal);
+        requestAnimationFrame(() => modal.classList.add('active'));
 
         const checkbox = modal.querySelector('#mpv-playlist-all');
         const countGroup = modal.querySelector('#mpv-group-count');
 
         checkbox.addEventListener('change', (e) => {
-            countGroup.style.opacity = e.target.checked ? '0.5' : '1';
+            countGroup.style.opacity = e.target.checked ? '0.3' : '1';
             countGroup.style.pointerEvents = e.target.checked ? 'none' : 'auto';
         });
 
-        modal.querySelector('#mpv-cancel').addEventListener('click', () => modal.remove());
-        modal.querySelector('#mpv-save').addEventListener('click', saveConfig);
+        const closeModal = () => {
+            modal.classList.remove('active');
+            setTimeout(() => modal.remove(), 300);
+        };
 
-        // Handle provider enabled/disabled toggle in real-time in the modal
+        modal.querySelector('#mpv-cancel').addEventListener('click', closeModal);
+        modal.querySelector('#mpv-save').addEventListener('click', () => {
+            saveConfig();
+            closeModal();
+        });
+
         modal.querySelectorAll('.mpv-provider-toggle').forEach(toggle => {
             toggle.addEventListener('change', (e) => {
                 const input = modal.querySelector(`.mpv-provider-input[data-id="${e.target.dataset.id}"]`);
@@ -200,7 +223,7 @@
         });
 
         modal.addEventListener('click', (e) => {
-            if (e.target === modal) modal.remove();
+            if (e.target === modal) closeModal();
         });
     }
 
@@ -240,7 +263,6 @@
         GM_setValue('mpvShortcut', mpvShortcut);
 
         showToast('Settings saved!', 'success');
-        modal.remove();
     }
 
     // ==================== URL PARSER ====================
@@ -398,17 +420,20 @@
             }
 
             const limit = playlistMode === 'all' ? 50 : extraEpisodes;
-            showToast(`Fetching streams... (Mode: ${playlistMode === 'all' ? 'All' : limit})`, 'info');
+            const modeText = playlistMode === 'all' ? 'Playlist' : 'Episode Batch';
+            notify(`Fetching streams... (Mode: ${modeText})`, 'info');
 
-            const urls = await collectStreams(content, limit);
+            const playlist = await collectStreams(content, limit);
 
-            if (urls.length === 0) {
+            if (playlist.length === 0) {
                 showToast('No streams found', 'error');
                 return;
             }
 
-            await sendToMPV(urls, content);
-            showToast(`Opening ${urls.length} item(s) in MPV`, 'success');
+            await sendToMPV(playlist, content);
+            showToast(`Opening ${playlist.length} item(s) in MPV`, 'success');
+
+            syncProgressWithStremio(content);
 
         } catch (error) {
             log('Error:', error);
@@ -426,25 +451,25 @@
     }
 
     async function collectStreams(content, limit) {
-        const urls = [];
+        const items = [];
 
         const fetchWithProviders = async (season, ep) => {
             for (const p of providers) {
                 if (!p.enabled || !p.url) continue;
                 log(`Trying ${p.name} for S${season}E${ep}...`);
                 const streams = await fetchStreams(p.url, content.imdbId, season, ep);
-                const url = findBestStream(streams);
-                if (url) {
+                const streamItem = findBestStream(streams);
+                if (streamItem) {
                     log(`Found on ${p.name}`);
-                    return url;
+                    return streamItem;
                 }
             }
             return null;
         };
 
         notify(`Fetching S${content.season}E${content.episode}...`);
-        const firstUrl = await fetchWithProviders(content.season, content.episode);
-        if (firstUrl) urls.push(firstUrl);
+        const firstItem = await fetchWithProviders(content.season, content.episode);
+        if (firstItem) items.push(firstItem);
 
         if (content.type === 'series' && limit > 0) {
             let failures = 0;
@@ -452,10 +477,10 @@
                 const nextEp = content.episode + i;
                 notify(`Fetching S${content.season}E${nextEp}...`);
 
-                const nextUrl = await fetchWithProviders(content.season, nextEp);
+                const nextItem = await fetchWithProviders(content.season, nextEp);
 
-                if (nextUrl) {
-                    urls.push(nextUrl);
+                if (nextItem) {
+                    items.push(nextItem);
                     failures = 0;
                 } else {
                     log(`Episode ${nextEp} not found on any provider.`);
@@ -467,7 +492,7 @@
                 }
             }
         }
-        return urls;
+        return items;
     }
 
     async function fetchStreams(baseUrl, imdbId, season, episode) {
@@ -487,29 +512,104 @@
 
     function findBestStream(streams) {
         if (!streams || !streams.length) return null;
-        const http = streams.find(s => (s.url || s.externalUrl || '').startsWith('http'));
-        if (http) return http.url || http.externalUrl;
 
-        const magnet = streams.find(s => s.infoHash);
-        if (magnet) {
-            let m = `magnet:?xt=urn:btih:${magnet.infoHash}`;
-            if (magnet.sources) magnet.sources.forEach(s => m += `&tr=${encodeURIComponent(s)}`);
-            return m;
+        const stream = streams.find(s => (s.url || s.externalUrl || '').startsWith('http'))
+            || streams.find(s => s.infoHash);
+
+        if (!stream) return null;
+
+        let url = stream.url || stream.externalUrl;
+        if (!url && stream.infoHash) {
+            url = `magnet:?xt=urn:btih:${stream.infoHash}`;
+            if (stream.sources) stream.sources.forEach(s => url += `&tr=${encodeURIComponent(s)}`);
         }
-        return null;
+
+        let title = stream.description || stream.name || "";
+        const lines = title.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+        const fileLine = lines.find(l => /\.(mkv|mp4|avi|mov|m4v|flv|webm|ts)$/i.test(l));
+        if (fileLine) {
+            title = fileLine;
+        } else if (lines.length > 0) {
+            title = lines.reduce((a, b) => a.length > b.length ? a : b);
+        }
+
+        title = title.replace(/^[^\w\[\(]+/, "").trim();
+
+        return { url, title };
     }
 
-    function sendToMPV(urls, title) {
+    function sendToMPV(playlist, title) {
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST',
                 url: `${CONFIG.SERVER_URL}/play`,
                 headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({ urls, title: title.imdbId }),
+                data: JSON.stringify({
+                    playlist, // Array of {url, title}
+                    contentTitle: title.imdbId
+                }),
                 onload: r => r.status === 200 ? resolve() : reject(new Error('Server error')),
                 onerror: () => reject(new Error('Connection failed'))
             });
         });
+    }
+
+    async function syncProgressWithStremio(content) {
+        try {
+            const profile = JSON.parse(localStorage.getItem('profile') || '{}');
+            const authKey = profile.auth?.key;
+            if (!authKey) return notify('Sync: No authKey found');
+
+            const libRecent = JSON.parse(localStorage.getItem('library_recent') || '{"items":{}}');
+            let item = libRecent.items[content.imdbId];
+
+            if (!item) {
+                notify(`Sync: Item ${content.imdbId} not in local library, cannot sync.`);
+                return;
+            }
+
+            const now = new Date().toISOString();
+            const videoId = `${content.imdbId}:${content.season}:${content.episode}`;
+
+            const watchedStr = `${content.imdbId}:0:${content.season}:${content.episode}:eJxjYBBgAAIAAFcAEQ==`;
+
+            item.state = item.state || {};
+            item.state.lastWatched = now;
+            item.state.video_id = videoId;
+            item.state.timesWatched = (item.state.timesWatched || 0) + 1;
+            item.state.timeWatched = item.state.duration || 1500000;
+            item.state.timeOffset = 1;
+            item.state.flaggedWatched = 1;
+            item.state.watched = watchedStr;
+            item._mtime = now;
+
+            notify(`Syncing progress for ${content.imdbId} (S${content.season}E${content.episode})...`);
+
+            return new Promise((resolve) => {
+                GM_xmlhttpRequest({
+                    method: 'POST',
+                    url: 'https://api.strem.io/api/datastorePut',
+                    headers: { 'Content-Type': 'application/json' },
+                    data: JSON.stringify({
+                        authKey: authKey,
+                        collection: 'libraryItem',
+                        changes: [item]
+                    }),
+                    onload: (r) => {
+                        if (r.status === 200) notify('Sync successful!', 'success');
+                        else log('Sync failed:', r.status);
+                        resolve();
+                    },
+                    onerror: (err) => {
+                        log('Sync XHR Error:', err);
+                        resolve();
+                    }
+                });
+            });
+        } catch (e) {
+            log('Sync Exception:', e);
+        }
     }
 
     function showToast(message, type = 'info') {
@@ -530,7 +630,8 @@
 
         const active = providers.filter(p => p.enabled && p.url).map(p => p.name);
         notify(`Active providers: ${active.length > 0 ? active.join(', ') : 'None'}`);
-        notify(`Playlist mode: ${playlistMode} | Extra episodes: ${extraEpisodes}`);
+        const modeDesc = playlistMode === 'all' ? 'Playlist' : 'Episode Batch';
+        notify(`Mode: ${modeDesc} | Extra: ${extraEpisodes}`);
 
         createFloatingButton();
 

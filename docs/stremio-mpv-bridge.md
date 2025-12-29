@@ -29,7 +29,7 @@ The server acts as a bridge between your browser and the MPV player. This projec
 npm install
 
 # 3. Start the bridge server
-npm run start:bridge
+npm run bridge
 ```
 The server runs on `http://localhost:9632`.
 
@@ -59,7 +59,7 @@ The server runs on `http://localhost:9632`.
 
 ### 📖 Usage
 
-1.  Make sure the local server is running (`npm run start:bridge`).
+1.  Make sure the local server is running (`npm run bridge`).
 2.  Navigate to an episode on Stremio Web.
 3.  Click the **Purple MPV Icon** in the bottom right corner or press `V`.
 4.  MPV will open and begin streaming immediately.
@@ -91,14 +91,14 @@ O servidor atua como uma ponte entre o navegador e o player MPV. Este projeto ut
 npm install
 
 # 3. Inicie o servidor bridge
-npm run start:bridge
+npm run bridge
 ```
 O servidor rodará em `http://localhost:9632`.
 
 > [!IMPORTANT]
 > **Uso Simultâneo**: Caso você queira utilizar tanto o **Discord RPC** quanto o **Stremio Bridge**, por enquanto é necessário manter **dois terminais abertos**:
 > 1. Um para o Discord RPC (`npm start` na pasta raiz).
-> 2. Outro para o Stremio Bridge (`npm run start:bridge` na pasta raiz).
+> 2. Outro para o Stremio Bridge (`npm run bridge` na pasta raiz).
 
 **Variáveis de Ambiente Opcionais:**
 - `PORT`: Porta do servidor (padrão: 9632).
@@ -121,7 +121,7 @@ O servidor rodará em `http://localhost:9632`.
 
 ### 📖 Uso
 
-1.  Certifique-se de que o servidor local está rodando (`npm run start:bridge`).
+1.  Certifique-se de que o servidor local está rodando (`npm run bridge`).
 2.  Navegue até um episódio no Stremio Web.
 3.  Clique no **Ícone Roxo do MPV** no canto inferior direito ou pressione `V`.
 4.  O MPV abrirá e começará a reproduzir o vídeo imediatamente.

@@ -164,8 +164,11 @@ export async function getMpvData(): Promise<MpvData | null> {
     }
 
     try {
-        // Get filename first
-        const filename = await getProperty("filename/no-ext");
+        // Get primary identifiers from MPV
+        const [filename, mediaTitle] = await Promise.all([
+            getProperty("filename/no-ext"),
+            getProperty("media-title")
+        ]);
 
         if (!filename || filename === "N/A") {
             // MPV is connected but no media playing
@@ -187,8 +190,33 @@ export async function getMpvData(): Promise<MpvData | null> {
             };
         }
 
-        // Parse the filename
-        const parsed = await parseFilename(filename);
+        /**
+         * Determine the best string for metadata parsing.
+         * For streams, 'filename' is often a cryptic URL or hash.
+         * 'media-title' populated via M3U #EXTINF is usually a clean filename.
+         */
+        const isUrl = (s: string) => /^(https?|magnet):/i.test(s);
+        const isPlaylist = (s: string) => /stremio-playlist-\d+/i.test(s);
+
+        let parseTarget = filename;
+
+        // If filename is a playlist, try to use mediaTitle
+        if (isPlaylist(filename)) {
+            if (mediaTitle && mediaTitle !== "N/A" && !isPlaylist(mediaTitle)) {
+                parseTarget = mediaTitle;
+            } else {
+                // If we don't have a good title yet, don't parse anything
+                return null;
+            }
+        } else if (mediaTitle && mediaTitle !== "N/A" && mediaTitle !== filename) {
+            // If filename is a URL or mediaTitle looks like a proper title, prefer mediaTitle
+            if (isUrl(filename) || !isUrl(mediaTitle)) {
+                parseTarget = mediaTitle;
+            }
+        }
+
+        // Parse the target string
+        const parsed = await parseFilename(parseTarget);
 
         // Get other properties in parallel
         const [pause, percent_pos, time_pos, duration, artist] = await Promise.all([
