@@ -24,6 +24,8 @@ export interface MpvData {
     cover_image: string | null;
     mal_id: number | null;        // For MAL sync
     total_episodes: number | null; // For MAL sync (mark as completed)
+    imdb_id?: string;            // For Stremio sync
+    type?: string;               // For Stremio sync
 }
 
 let socket: net.Socket | null = null;

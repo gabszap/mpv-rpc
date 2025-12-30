@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stremio MPV Bridge
 // @namespace    https://github.com/gabszap/mpv-rpc
-// @version      1.6.4
+// @version      1.7.0
 // @icon         https://www.stremio.com/website/stremio-purple-small.png
 // @description  Open Stremio Web streams directly in MPV with playlist support
 // @homepage     https://github.com/gabszap/mpv-rpc
@@ -268,7 +268,7 @@
     // ==================== URL PARSER ====================
     function parseCurrentURL() {
         const hash = window.location.hash;
-        log('Parsing URL:', hash.substring(0, 60) + '...');
+        log('Parsing URL:', hash.substring(0, 80) + '...');
 
         if (hash.includes('/player/') && lastValidContent && lastValidContent.episode) {
             log('Using saved content (player mode):', lastValidContent);
@@ -276,25 +276,61 @@
         }
 
         const decodedHash = decodeURIComponent(hash);
-        const contentMatch = decodedHash.match(/tt\d+:\d+:\d+/);
-        if (contentMatch) {
-            const parts = contentMatch[0].split(':');
+
+        // Support multiple catalog formats:
+        // IMDb: tt12345:1:1 (imdbId:season:episode)
+        // Kitsu: kitsu:47235:1 (kitsu:id:episode - no season!)
+        // TMDB: tmdb:12345:1:1
+
+        // First try IMDb format (tt12345:season:episode)
+        const imdbMatch = decodedHash.match(/(tt\d+):(\d+):(\d+)/);
+        if (imdbMatch) {
             const result = {
                 type: 'series',
-                imdbId: parts[0],
-                season: parseInt(parts[1]),
-                episode: parseInt(parts[2])
+                imdbId: imdbMatch[1],
+                season: parseInt(imdbMatch[2]),
+                episode: parseInt(imdbMatch[3])
             };
-            log('Content found:', result);
+            log('IMDb content found:', result);
             lastValidContent = result;
             return result;
         }
 
-        const imdbMatch = decodedHash.match(/(tt\d+)/);
-        if (imdbMatch) {
+        // Try Kitsu format (kitsu:id:episode) - note: Kitsu uses :episode directly, not :season:episode
+        const kitsuMatch = decodedHash.match(/kitsu[:%]3A(\d+)[:%]3A(\d+)/i) || decodedHash.match(/kitsu:(\d+):(\d+)/i);
+        if (kitsuMatch) {
+            const result = {
+                type: 'series',
+                imdbId: `kitsu:${kitsuMatch[1]}`, // Keep full ID for Stremio API
+                season: 1, // Kitsu doesn't use seasons in URL, default to 1
+                episode: parseInt(kitsuMatch[2])
+            };
+            log('Kitsu content found:', result);
+            lastValidContent = result;
+            return result;
+        }
+
+        // Try TMDB or other formats (prefix:id:season:episode)
+        const genericMatch = decodedHash.match(/(\w+)[:%]3A(\d+)[:%]3A(\d+)[:%]3A(\d+)/i) ||
+            decodedHash.match(/(\w+):(\d+):(\d+):(\d+)/i);
+        if (genericMatch) {
+            const result = {
+                type: 'series',
+                imdbId: `${genericMatch[1]}:${genericMatch[2]}`,
+                season: parseInt(genericMatch[3]),
+                episode: parseInt(genericMatch[4])
+            };
+            log('Generic content found:', result);
+            lastValidContent = result;
+            return result;
+        }
+
+        // Fallback: just IMDb ID without episode
+        const imdbIdMatch = decodedHash.match(/(tt\d+)/);
+        if (imdbIdMatch) {
             return {
                 type: 'series',
-                imdbId: imdbMatch[1],
+                imdbId: imdbIdMatch[1],
                 season: parseInt(decodedHash.match(/season=(\d+)/)?.[1]) || null,
                 episode: null
             };
@@ -433,8 +469,6 @@
             await sendToMPV(playlist, content);
             showToast(`Opening ${playlist.length} item(s) in MPV`, 'success');
 
-            syncProgressWithStremio(content);
-
         } catch (error) {
             log('Error:', error);
             showToast(error.message, 'error');
@@ -461,7 +495,14 @@
                 const streamItem = findBestStream(streams);
                 if (streamItem) {
                     log(`Found on ${p.name}`);
-                    return streamItem;
+                    // Add episode metadata to each item
+                    return {
+                        ...streamItem,
+                        imdbId: content.imdbId,
+                        season: season,
+                        episode: ep,
+                        type: content.type
+                    };
                 }
             }
             return null;
@@ -541,13 +582,25 @@
 
     function sendToMPV(playlist, title) {
         return new Promise((resolve, reject) => {
+            const profile = JSON.parse(localStorage.getItem('profile') || '{}');
+            const authKey = profile.auth?.key;
+
+            log(`Bridge: Sending payload with authKey: ${authKey ? 'Found' : 'MISSING'} | ID: ${title.imdbId}`);
+
             GM_xmlhttpRequest({
                 method: 'POST',
                 url: `${CONFIG.SERVER_URL}/play`,
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify({
                     playlist, // Array of {url, title}
-                    contentTitle: title.imdbId
+                    contentTitle: title.imdbId,
+                    stremioAuth: authKey,
+                    stremioContext: {
+                        imdbId: title.imdbId,
+                        season: title.season,
+                        episode: title.episode,
+                        type: title.type
+                    }
                 }),
                 onload: r => r.status === 200 ? resolve() : reject(new Error('Server error')),
                 onerror: () => reject(new Error('Connection failed'))

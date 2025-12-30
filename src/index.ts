@@ -10,10 +10,12 @@ import * as discord from "./discord";
 import { checkAvailability } from "./parser";
 import { providerName } from "./anime";
 import { syncEpisode, authorize, isAuthenticated, getUsername } from "./mal-sync/sync";
+import axios from "axios";
 
 let updateInterval: NodeJS.Timeout | null = null;
 let isRunning = false;
 let isUpdating = false; // Mutex to prevent parallel updates
+let lastScrobbledFile: string | null = null; // Prevent scrobble spam
 
 /**
  * Main update loop - fetches MPV data and updates Discord
@@ -30,6 +32,7 @@ async function update(): Promise<void> {
         if (!data) {
             // MPV not connected, clear Discord activity
             await discord.clearActivity();
+            lastScrobbledFile = null; // Reset on disconnect
             return;
         }
 
@@ -39,6 +42,27 @@ async function update(): Promise<void> {
         // MAL sync - if enabled and watching anime
         if (data.mal_id && data.episode && data.percent_pos >= config.mal.syncThreshold) {
             await syncEpisode(data.mal_id, data.episode, data.percent_pos, data.total_episodes ?? undefined);
+        }
+
+        // Bridge scrobble (Stremio sync) - notifies bridge of current progress
+        // Only scrobble once per file when threshold reached
+        if (data.percent_pos >= 90 && lastScrobbledFile !== data.filename) {
+            console.log(`[Status] Sending scrobble request to bridge (${Math.round(data.percent_pos)}%)...`);
+            try {
+                const res = await axios.post('http://127.0.0.1:9632/scrobble', {
+                    percent: data.percent_pos,
+                    imdbId: data.imdb_id,
+                    season: data.season,
+                    episode: data.episode,
+                    type: data.type,
+                    title: data.media_title // Send title for matching in server
+                });
+                if (res.data.success || res.status === 200) {
+                    lastScrobbledFile = data.filename;
+                }
+            } catch (e) {
+                // Silently ignore scrobble errors
+            }
         }
     } catch (e) {
         console.error("[Main] Update error:", e);
