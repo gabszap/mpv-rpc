@@ -40,7 +40,9 @@ async function update(): Promise<void> {
         }
 
         // Update Discord presence
-        await discord.setActivity(data);
+        if (config.settings.discordRpc) {
+            await discord.setActivity(data);
+        }
 
         // MAL sync - if enabled and watching anime
         if (data.mal_id && data.episode && data.percent_pos >= config.mal.syncThreshold) {
@@ -99,14 +101,18 @@ async function start(): Promise<void> {
     isRunning = true;
 
     // Connect to Discord
-    console.log("[Main] Connecting to Discord...");
-    const discordConnected = await discord.connect();
+    if (config.settings.discordRpc) {
+        console.log("[Main] Connecting to Discord...");
+        const discordConnected = await discord.connect();
 
-    if (!discordConnected) {
-        console.log("[Main] Failed to connect to Discord. Is Discord running?");
-        console.log("[Main] Will retry in background...");
+        if (!discordConnected) {
+            console.log("[Main] Failed to connect to Discord. Is Discord running?");
+            console.log("[Main] Will retry in background...");
+        } else {
+            console.log("[Main] Discord connected!");
+        }
     } else {
-        console.log("[Main] Discord connected!");
+        console.log("[Discord] RPC Disabled");
     }
 
     // Check Parser availability
@@ -172,8 +178,10 @@ async function stop(): Promise<void> {
         updateInterval = null;
     }
 
-    await discord.clearActivity();
-    await discord.disconnect();
+    if (config.settings.discordRpc) {
+        await discord.clearActivity();
+        await discord.disconnect();
+    }
     mpv.disconnect();
 
     console.log("[Main] Goodbye!");

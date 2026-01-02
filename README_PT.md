@@ -37,7 +37,7 @@ O **MPV Discord RPC** é uma ferramenta desenvolvida em Node.js que integra o se
 - Sincronização MyAnimeList: Atualização automática do seu progresso
 - Stremio MPV Bridge: Abra streams do Stremio Web diretamente no MPV
     - Suporte a Playlists automáticas
-    - Sincronização de progresso (Sync) para filmes e séries (IMDb-based ID's)
+    - Sincronização de progresso para filmes e séries
     - Compatibilidade de player para animes (Kitsu)
 - Cache local para evitar requisições repetidas
 - Modo privacidade
@@ -138,8 +138,12 @@ Para instruções detalhadas de como configurar e autorizar a sincronização, c
 
 Você pode integrar o Stremio Web com o MPV usando a bridge (ponte). Isso permite abrir streams diretamente no MPV com suporte inteligente a playlists para episódios.
 
+> [!IMPORTANT]
+> **Limitação de Sincronização:** O progresso de visualização (marcar como assistido) de volta para o Stremio funciona **apenas para itens baseados em IDs do IMDb (tt0000000)**. 
+> Conteúdos de catálogos como o Kitsu possuem estruturas de ID incompatíveis e funcionarão apenas no modo player (sem sincronizar o progresso no Stremio).
+
 **Destaques:**
-- **Sincronização:** O progresso de filmes e séries (IMDb) é sincronizado automaticamente com sua conta do Stremio (marcando como "visto" ao atingir 90%).
+- **Sincronização:** O progresso de filmes e séries é sincronizado automaticamente com sua conta do Stremio (marcando como "visto" ao atingir 90%).
 - **Compatibilidade:** Suporte completo para reprodução de conteúdos do Kitsu (apenas player, sincronização de progresso não suportada).
 - **Metadados:** Identificação aprimorada de títulos de séries e episódios diretamente da interface do Stremio.
 
@@ -159,6 +163,7 @@ As configurações podem ser ajustadas em `.env`:
 | `MAL_SYNC` | Ativar sincronização com MyAnimeList | `false` |
 | `MAL_CLIENT_ID` | MyAnimeList API Client ID | (vazio) |
 | `MAL_SYNC_THRESHOLD` | % assistido para disparar sync (0-100) | `90` |
+| `DISCORD_RPC` | Ativar o Discord Rich Presence | `true` |
 
 ## Como Funciona
 

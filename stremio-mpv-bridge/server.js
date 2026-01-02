@@ -351,12 +351,13 @@ const server = app.listen(PORT, () => {
 ╔═══════════════════════════════════════════════════════════╗
 ║               Stremio MPV Bridge - Local Server           ║
 ╠═══════════════════════════════════════════════════════════╣
-║  Port: ${PORT}                                               ║
-║  MPV:  ${MPV_PATH.padEnd(45).substring(0, 45)}║
+║  Port: ${String(PORT).padEnd(51)}║
+║  MPV:  ${MPV_PATH.padEnd(51).substring(0, 51)}║
 ║                                                           ║
 ║  Endpoints:                                               ║
-║    GET  /health  - Server status check                    ║
-║    POST /play    - Open URLs in MPV                       ║
+║    GET  /health    - Server status check                  ║
+║    POST /play      - Open URLs in MPV                     ║
+║    POST /scrobble  - Sync watch progress                  ║
 ╚═══════════════════════════════════════════════════════════╝
 `);
 });
