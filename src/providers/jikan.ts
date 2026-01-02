@@ -64,7 +64,7 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
     try {
         const response = await axios.get(`${config.jikan.baseUrl}${endpoint}`, {
             params,
-            timeout: 10000,
+            timeout: 15000,
         });
         circuitBreaker.recordSuccess();
         logApiCall("Jikan", endpoint, params, `${response.status} OK`, "");
@@ -78,9 +78,9 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
             return jikanRequest(endpoint, params, retryCount);
         }
 
-        if ((e.code === "ECONNABORTED" || e.code === "ETIMEDOUT") && retryCount < 1) {
-            logApiCall("Jikan", endpoint, params, "TIMEOUT", "retrying...");
-            await new Promise(resolve => setTimeout(resolve, 500));
+        if ((e.code === "ECONNABORTED" || e.code === "ETIMEDOUT") && retryCount < 3) {
+            logApiCall("Jikan", endpoint, params, "TIMEOUT", `retrying... (attempt ${retryCount + 2}/4)`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))); // Exponential backoff
             return jikanRequest(endpoint, params, retryCount + 1);
         }
 

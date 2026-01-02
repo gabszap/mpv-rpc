@@ -265,6 +265,67 @@
         showToast('Settings saved!', 'success');
     }
 
+    // ==================== UI SCRAPER ====================
+    function scrapeMetadata() {
+        const metadata = {
+            seriesName: null,
+            episodeTitle: null,
+            season: null,
+            episode: null
+        };
+
+        try {
+            const headerEl = document.querySelector('div[class*="episode-title"]');
+            if (headerEl && headerEl.innerText) {
+                const seMatch = headerEl.innerText.match(/S(\d+)E(\d+)/i);
+                if (seMatch) {
+                    metadata.season = parseInt(seMatch[1]);
+                    metadata.episode = parseInt(seMatch[2]);
+                    log(`Scraped from header: S${metadata.season}E${metadata.episode}`);
+                }
+
+                const titlePart = headerEl.innerText.replace(/S\d+E\d+/i, '').trim();
+                if (titlePart.length > 2) {
+                    metadata.episodeTitle = titlePart;
+                }
+            }
+
+            const titleEl = document.querySelector('[class*="title-label"]');
+            if (titleEl && titleEl.innerText) {
+                metadata.seriesName = titleEl.innerText.trim();
+            } else {
+                const logoEl = document.querySelector('img[class*="logo"]');
+                if (logoEl && logoEl.title) {
+                    metadata.seriesName = logoEl.title.trim();
+                } else if (logoEl && logoEl.alt) {
+                    metadata.seriesName = logoEl.alt.trim();
+                }
+            }
+
+            if (!metadata.season) {
+                const allMultiselects = document.querySelectorAll('[class*="multiselect-button"]');
+                for (const el of allMultiselects) {
+                    if (el.innerText && el.innerText.includes('Season')) {
+                        const match = el.innerText.match(/Season\s*(\d+)/i);
+                        if (match) {
+                            metadata.season = parseInt(match[1]);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!metadata.season) {
+                const urlMatch = window.location.hash.match(/season=(\d+)/i);
+                if (urlMatch) metadata.season = parseInt(urlMatch[1]);
+            }
+        } catch (e) {
+            log('Scraper error:', e);
+        }
+
+        return metadata;
+    }
+
     // ==================== URL PARSER ====================
     function parseCurrentURL() {
         const hash = window.location.hash;
@@ -275,19 +336,15 @@
             return lastValidContent;
         }
 
+        const uiMeta = scrapeMetadata();
         const decodedHash = decodeURIComponent(hash);
 
-        // Support multiple catalog formats:
-        // IMDb: tt12345:1:1 (imdbId:season:episode)
-        // Kitsu: kitsu:47235:1 (kitsu:id:episode - no season!)
-        // TMDB: tmdb:12345:1:1
-
-        // First try IMDb format (tt12345:season:episode)
         const imdbMatch = decodedHash.match(/(tt\d+):(\d+):(\d+)/);
         if (imdbMatch) {
             const result = {
                 type: 'series',
                 imdbId: imdbMatch[1],
+                name: uiMeta.seriesName,
                 season: parseInt(imdbMatch[2]),
                 episode: parseInt(imdbMatch[3])
             };
@@ -296,27 +353,28 @@
             return result;
         }
 
-        // Try Kitsu format (kitsu:id:episode) - note: Kitsu uses :episode directly, not :season:episode
         const kitsuMatch = decodedHash.match(/kitsu[:%]3A(\d+)[:%]3A(\d+)/i) || decodedHash.match(/kitsu:(\d+):(\d+)/i);
         if (kitsuMatch) {
             const result = {
                 type: 'series',
-                imdbId: `kitsu:${kitsuMatch[1]}`, // Keep full ID for Stremio API
-                season: 1, // Kitsu doesn't use seasons in URL, default to 1
-                episode: parseInt(kitsuMatch[2])
+                imdbId: `kitsu:${kitsuMatch[1]}`,
+                name: uiMeta.seriesName,
+                episodeTitle: uiMeta.episodeTitle,
+                season: uiMeta.season || 1,
+                episode: uiMeta.episode || parseInt(kitsuMatch[2])
             };
             log('Kitsu content found:', result);
             lastValidContent = result;
             return result;
         }
 
-        // Try TMDB or other formats (prefix:id:season:episode)
         const genericMatch = decodedHash.match(/(\w+)[:%]3A(\d+)[:%]3A(\d+)[:%]3A(\d+)/i) ||
             decodedHash.match(/(\w+):(\d+):(\d+):(\d+)/i);
         if (genericMatch) {
             const result = {
                 type: 'series',
                 imdbId: `${genericMatch[1]}:${genericMatch[2]}`,
+                name: uiMeta.seriesName,
                 season: parseInt(genericMatch[3]),
                 episode: parseInt(genericMatch[4])
             };
@@ -325,13 +383,13 @@
             return result;
         }
 
-        // Fallback: just IMDb ID without episode
         const imdbIdMatch = decodedHash.match(/(tt\d+)/);
         if (imdbIdMatch) {
             return {
                 type: 'series',
                 imdbId: imdbIdMatch[1],
-                season: parseInt(decodedHash.match(/season=(\d+)/)?.[1]) || null,
+                name: uiMeta.seriesName,
+                season: parseInt(decodedHash.match(/season=(\d+)/)?.[1]) || uiMeta.season || null,
                 episode: null
             };
         }
@@ -495,7 +553,6 @@
                 const streamItem = findBestStream(streams);
                 if (streamItem) {
                     log(`Found on ${p.name}`);
-                    // Add episode metadata to each item
                     return {
                         ...streamItem,
                         imdbId: content.imdbId,
@@ -536,9 +593,15 @@
         return items;
     }
 
-    async function fetchStreams(baseUrl, imdbId, season, episode) {
+    async function fetchStreams(baseUrl, id, season, episode) {
         return new Promise(resolve => {
-            const url = `${baseUrl}/stream/series/${imdbId}:${season}:${episode}.json`;
+            const isKitsu = id.startsWith('kitsu:');
+            const url = isKitsu
+                ? `${baseUrl}/stream/series/${id}:${episode}.json`
+                : `${baseUrl}/stream/series/${id}:${season}:${episode}.json`;
+
+            log(`Fetching streams from: ${url}`);
+
             GM_xmlhttpRequest({
                 method: 'GET', url, timeout: 5000,
                 onload: r => {
@@ -565,7 +628,7 @@
             if (stream.sources) stream.sources.forEach(s => url += `&tr=${encodeURIComponent(s)}`);
         }
 
-        let title = stream.description || stream.name || "";
+        let title = stream.title || stream.description || stream.name || "";
         const lines = title.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
         const fileLine = lines.find(l => /\.(mkv|mp4|avi|mov|m4v|flv|webm|ts)$/i.test(l));
@@ -592,11 +655,13 @@
                 url: `${CONFIG.SERVER_URL}/play`,
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify({
-                    playlist, // Array of {url, title}
+                    playlist,
                     contentTitle: title.imdbId,
                     stremioAuth: authKey,
                     stremioContext: {
                         imdbId: title.imdbId,
+                        name: title.name,
+                        episodeTitle: title.episodeTitle,
                         season: title.season,
                         episode: title.episode,
                         type: title.type
@@ -606,63 +671,6 @@
                 onerror: () => reject(new Error('Connection failed'))
             });
         });
-    }
-
-    async function syncProgressWithStremio(content) {
-        try {
-            const profile = JSON.parse(localStorage.getItem('profile') || '{}');
-            const authKey = profile.auth?.key;
-            if (!authKey) return notify('Sync: No authKey found');
-
-            const libRecent = JSON.parse(localStorage.getItem('library_recent') || '{"items":{}}');
-            let item = libRecent.items[content.imdbId];
-
-            if (!item) {
-                notify(`Sync: Item ${content.imdbId} not in local library, cannot sync.`);
-                return;
-            }
-
-            const now = new Date().toISOString();
-            const videoId = `${content.imdbId}:${content.season}:${content.episode}`;
-
-            const watchedStr = `${content.imdbId}:0:${content.season}:${content.episode}:eJxjYBBgAAIAAFcAEQ==`;
-
-            item.state = item.state || {};
-            item.state.lastWatched = now;
-            item.state.video_id = videoId;
-            item.state.timesWatched = (item.state.timesWatched || 0) + 1;
-            item.state.timeWatched = item.state.duration || 1500000;
-            item.state.timeOffset = 1;
-            item.state.flaggedWatched = 1;
-            item.state.watched = watchedStr;
-            item._mtime = now;
-
-            notify(`Syncing progress for ${content.imdbId} (S${content.season}E${content.episode})...`);
-
-            return new Promise((resolve) => {
-                GM_xmlhttpRequest({
-                    method: 'POST',
-                    url: 'https://api.strem.io/api/datastorePut',
-                    headers: { 'Content-Type': 'application/json' },
-                    data: JSON.stringify({
-                        authKey: authKey,
-                        collection: 'libraryItem',
-                        changes: [item]
-                    }),
-                    onload: (r) => {
-                        if (r.status === 200) notify('Sync successful!', 'success');
-                        else log('Sync failed:', r.status);
-                        resolve();
-                    },
-                    onerror: (err) => {
-                        log('Sync XHR Error:', err);
-                        resolve();
-                    }
-                });
-            });
-        } catch (e) {
-            log('Sync Exception:', e);
-        }
     }
 
     function showToast(message, type = 'info') {
@@ -688,7 +696,6 @@
 
         createFloatingButton();
 
-        // Keyboard Shortcuts
         window.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
             if (e.key.toLowerCase() === mpvShortcut) {

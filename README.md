@@ -36,6 +36,9 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 - Anime cover display in Rich Presence
 - MyAnimeList Sync: Automatically update your watch progress
 - Stremio MPV Bridge: Open Stremio Web streams directly in MPV
+    - Smart auto-playlist support
+    - Watch progress sync for Movies and Series (IMDb-based ID's)
+    - Player compatibility for Anime (Kitsu)
 - Local cache to avoid repeated requests
 - Privacy mode
 
@@ -134,6 +137,11 @@ For detailed instructions on how to set up and authorize MAL sync, please refer 
 ## Stremio MPV Bridge
 
 You can integrate Stremio Web with MPV using the bridge. This allows you to open streams directly in MPV with smart playlist support for episodes.
+
+**Highlights:**
+- **Sync:** Watch progress for movies and series (IMDb-based ID's) is automatically synced with your Stremio account (marked as "watched" at 90%).
+- **Compatibility:** Full playback support for Kitsu content (player only, progress sync not supported).
+- **Metadata:** Enhanced identification of series titles and episodes directly from the Stremio interface.
 
 For setup and usage instructions, please refer to the [Stremio MPV Bridge Guide](docs/stremio-mpv-bridge.md).
 

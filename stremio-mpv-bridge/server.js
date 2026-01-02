@@ -20,33 +20,32 @@ const MPV_PATH = process.env.MPV_PATH || 'C:\\Program Files\\mpv\\mpv.exe';
 function decodeWatchedString(watchedStr) {
     if (!watchedStr) return null;
 
-    const parts = watchedStr.split(':');
-    if (parts.length < 5) return null;
+    const lastColon = watchedStr.lastIndexOf(':');
+    const b64Data = watchedStr.substring(lastColon + 1);
 
-    const seriesId = parts[0];
-    const lastSeason = parseInt(parts[1]);
-    const lastEpisode = parseInt(parts[2]);
-    const n = parseInt(parts[3]);
-    const b64Data = parts[4];
+    const rest = watchedStr.substring(0, lastColon).split(':');
+    if (rest.length < 4) return null;
+
+    const n = parseInt(rest.pop());
+    const lastEpisode = parseInt(rest.pop());
+    const lastSeason = parseInt(rest.pop());
+    const seriesId = rest.join(':');
 
     try {
         const compressed = Buffer.from(b64Data, 'base64');
         let decompressed;
 
-        // Try regular inflate first, then raw inflate
         try {
             decompressed = zlib.inflateSync(compressed);
         } catch (e1) {
             try {
                 decompressed = zlib.inflateRawSync(compressed);
             } catch (e2) {
-                console.error('[MPV Bridge] Both inflate methods failed:', e1.message, e2.message);
+                console.error('[MPV Bridge] Both inflate methods failed for:', seriesId);
                 return null;
             }
         }
 
-
-        // Convert to bitset array
         const bitset = [];
         for (let i = 0; i < n; i++) {
             const byteIndex = Math.floor(i / 8);
@@ -57,7 +56,6 @@ function decodeWatchedString(watchedStr) {
                 bitset[i] = false;
             }
         }
-
 
         return { seriesId, lastSeason, lastEpisode, n, bitset };
     } catch (e) {
@@ -70,7 +68,6 @@ function decodeWatchedString(watchedStr) {
  * Encode a bitset back into Stremio watched string format
  */
 function encodeWatchedString(seriesId, lastSeason, lastEpisode, n, bitset) {
-    // Build byte array from bitset
     const numBytes = Math.ceil(n / 8);
     const bytes = Buffer.alloc(numBytes, 0);
 
@@ -82,7 +79,6 @@ function encodeWatchedString(seriesId, lastSeason, lastEpisode, n, bitset) {
         }
     }
 
-    // Compress with zlib and encode base64
     const compressed = zlib.deflateSync(bytes);
     const b64Data = compressed.toString('base64');
 
@@ -96,37 +92,49 @@ function encodeWatchedString(seriesId, lastSeason, lastEpisode, n, bitset) {
  */
 function updateWatchedBitset(existingWatched, seriesId, season, episode, totalEpisodes) {
     let bitset = [];
-    let n = totalEpisodes || 28; // Default to 28 if not specified
+    let n = totalEpisodes || 25;
 
-    // If we have existing watched data, decode it and PRESERVE its N value
     if (existingWatched) {
         const decoded = decodeWatchedString(existingWatched);
         if (decoded) {
             bitset = decoded.bitset;
-            n = decoded.n; // Use the existing N from Stremio
+            n = decoded.n;
         }
     }
 
-    // Stremio uses INVERTED indexing: episodeIndex = N - episode
-    // EP1 = index N-1, EP2 = index N-2, etc.
+    if (episode > n) {
+        const oldN = n;
+        const newN = episode + 10;
+        console.log(`[MPV Bridge] Expanding bitset from N=${oldN} to N=${newN}`);
+
+        // Stremio uses inverted indexing: EP 1 is at index N-1.
+        // When N increases, we must shift bits to keep them at the same "episode number".
+        // Example: EP1 at 27 (N=28). If N=40, EP1 must move to 39.
+        // The shift is newN - oldN.
+        const shift = newN - oldN;
+        const newBitset = new Array(newN).fill(false);
+        for (let i = 0; i < bitset.length; i++) {
+            if (bitset[i]) {
+                newBitset[i + shift] = true;
+            }
+        }
+        bitset = newBitset;
+        n = newN;
+    }
+
     const episodeIndex = n - episode;
 
-
-    // Ensure bitset is large enough
     while (bitset.length < n) {
         bitset.push(false);
     }
 
-    // Validate index is in range
     if (episodeIndex < 0 || episodeIndex >= n) {
         console.error(`[MPV Bridge] ERROR: Episode index ${episodeIndex} out of range (N=${n})`);
-        return existingWatched; // Return unchanged
+        return existingWatched;
     }
 
-    // Set the bit for this episode
     bitset[episodeIndex] = true;
 
-    // Encode back to watched string
     return encodeWatchedString(seriesId, season, episode, n, bitset);
 }
 
@@ -154,9 +162,7 @@ app.post('/play', (req, res) => {
         return res.status(400).json({ error: 'Playlist or URLs array is required' });
     }
 
-    // Store session context for scrobbling - now with full episode array
     if (stremioAuth) {
-        // Build episodes array from playlist items (each now has metadata)
         const episodes = items.map((item, index) => ({
             title: item.title || '',
             imdbId: item.imdbId || stremioContext?.imdbId,
@@ -168,7 +174,8 @@ app.post('/play', (req, res) => {
         activeSession = {
             authKey: stremioAuth,
             episodes: episodes,
-            context: stremioContext, // Keep for backward compatibility
+            context: stremioContext,
+            name: stremioContext?.name,
             timestamp: Date.now()
         };
 
@@ -222,7 +229,7 @@ app.post('/play', (req, res) => {
 
 // New scrobble endpoint for progress-based sync
 app.post('/scrobble', async (req, res) => {
-    const { percent, imdbId, season, episode, type, title } = req.body;
+    const { percent, imdbId, season, episode, type, title, name, episodeTitle } = req.body;
 
     if (!activeSession) {
         return res.json({ status: 'no-session', message: 'No active session' });
@@ -233,52 +240,26 @@ app.post('/scrobble', async (req, res) => {
     }
 
     const { authKey, episodes } = activeSession;
+    const sessionSeriesName = name || activeSession.name;
 
-    // Try to find the episode by:
-    // 1. Direct match from request data (if RPC provides it)
-    // 2. Title match from stored episodes array
-    // 3. Fallback to legacy context (first episode only)
     let context = null;
 
-    // Method 1: Check if request has valid metadata
     if (imdbId && season && episode) {
-        context = { imdbId, season, episode, type: type || 'series' };
-        console.log(`[MPV Bridge] Using metadata from RPC: ${imdbId} S${season}E${episode}`);
-    }
-    // Method 2: Match by title from episodes array
-    else if (title && episodes && episodes.length > 0) {
-        const matchedEp = episodes.find(ep => ep.title && title.includes(ep.title.substring(0, 30)));
+        context = { imdbId, season, episode, type: type || 'series', name: sessionSeriesName, episodeTitle };
+    } else if ((title || episodeTitle) && episodes && episodes.length > 0) {
+        const targetTitle = episodeTitle || title;
+        const matchedEp = episodes.find(ep => ep.title && targetTitle.toLowerCase().includes(ep.title.toLowerCase().substring(0, 15)));
         if (matchedEp) {
-            context = matchedEp;
-            console.log(`[MPV Bridge] Matched by title: "${title.substring(0, 40)}..." => S${matchedEp.season}E${matchedEp.episode}`);
+            context = { ...matchedEp, name: sessionSeriesName };
+            console.log(`[MPV Bridge] Matched by title: "${targetTitle.substring(0, 40)}..." => S${matchedEp.season}E${matchedEp.episode}`);
         }
     }
-    // Method 3: Try to extract episode number from title and match
-    if (!context && title && episodes && episodes.length > 0) {
-        // First try E## pattern (more specific)
-        let epMatch = title.match(/E0*(\d+)/i);
-        // Fallback to S##E## pattern and extract episode
-        if (!epMatch) {
-            epMatch = title.match(/S\d+E0*(\d+)/i);
-        }
-        if (epMatch) {
-            const epNum = parseInt(epMatch[1]);
-            const matchedEp = episodes.find(ep => ep.episode === epNum);
-            if (matchedEp) {
-                context = matchedEp;
-                console.log(`[MPV Bridge] Matched by episode number: E${epNum} => S${matchedEp.season}E${matchedEp.episode}`);
-            }
-        }
-    }
-    // Method 4: Fallback to first episode in session
+
     if (!context && episodes && episodes.length > 0) {
-        context = episodes[0];
-        console.log(`[MPV Bridge] Fallback to first episode: S${context.season}E${context.episode}`);
+        context = { ...episodes[0], name: sessionSeriesName };
     }
-    // Method 5: Legacy fallback to context
     if (!context && activeSession.context) {
-        context = activeSession.context;
-        console.log(`[MPV Bridge] Legacy fallback: S${context.season}E${context.episode}`);
+        context = { ...activeSession.context, name: sessionSeriesName };
     }
 
     if (!context || !context.imdbId || !context.season || !context.episode) {
@@ -286,50 +267,66 @@ app.post('/scrobble', async (req, res) => {
         return res.status(400).json({ error: 'Incomplete metadata' });
     }
 
-    console.log(`[MPV Bridge] Threshold reached (${percent}%). Syncing ${context.imdbId} S${context.season}E${context.episode} with Stremio...`);
+    console.log(`[MPV Bridge] Scrobble request: ${context.name || 'Unknown'} - ID=${context.imdbId} S${context.season}E${context.episode} (${percent}%)`);
 
     try {
-        console.log(`[MPV Bridge] Fetching item ${context.imdbId} from Stremio datastore...`);
+        const isKitsu = context.imdbId.startsWith('kitsu:');
+        if (isKitsu) {
+            console.log(`[MPV Bridge] Kitsu sync is not supported. Ignoring scrobble for ${context.imdbId}.`);
+            return res.json({ status: 'ignored', reason: 'Kitsu sync not supported' });
+        }
+
+        console.log(`[MPV Bridge] Fetching item ${context.imdbId}...`);
         const getRes = await axios.post('https://api.strem.io/api/datastoreGet', {
             authKey: authKey,
             collection: 'libraryItem',
             all: false,
             ids: [context.imdbId]
         });
-
-        // Stremio API might return array directly or wrapped in result
         const items = getRes.data && (getRes.data.result || getRes.data);
-        let item = Array.isArray(items) ? items[0] : items;
+        item = Array.isArray(items) ? items[0] : items;
 
         if (!item || !item.state) {
-            console.error(`[MPV Bridge] ERROR: Item ${context.imdbId} not found or invalid in library.`);
+            console.log(`[MPV Bridge] Item ${context.imdbId} not found in library. Searching by name...`);
+            const allRes = await axios.post('https://api.strem.io/api/datastoreGet', {
+                authKey: authKey,
+                collection: 'libraryItem',
+                all: true
+            });
+            const library = allRes.data && (allRes.data.result || allRes.data) || [];
+
+            item = library.find(i => i.name && context.name && i.name.toLowerCase() === context.name.toLowerCase());
+
+            if (item) {
+                console.log(`[MPV Bridge] Found library item by name match: ${item.name} (${item._id})`);
+                context.imdbId = item._id;
+            }
+        }
+
+        if (!item || !item.state) {
+            console.error(`[MPV Bridge] ERROR: Could not find "${context.name}" in library.`);
             return res.status(404).json({ error: 'Item not in library' });
         }
 
         const now = new Date().toISOString();
         const videoId = `${context.imdbId}:${context.season}:${context.episode}`;
 
-        // Update watched bitset - accumulates episodes instead of overwriting
         const existingWatched = item.state?.watched;
-        const totalEpisodes = item.state?.duration ? 50 : 50; // Default to 50 episodes
+        const totalEpisodes = 100;
         const newWatched = updateWatchedBitset(existingWatched, context.imdbId, context.season, context.episode, totalEpisodes);
 
-        console.log(`[MPV Bridge] Updating watched bitset:`);
-        console.log(`  Previous: ${existingWatched || 'none'}`);
-        console.log(`  New:      ${newWatched}`);
-
-        // Update item state with new watched bitset
         item.state = item.state || {};
         item.state.lastWatched = now;
         item.state.video_id = videoId;
-        item.state.timesWatched = (item.state.timesWatched || 0) + 1;
-        item.state.timeWatched = item.state.duration || 1500000;
         item.state.timeOffset = 1;
-        item.state.flaggedWatched = 1;
         item.state.watched = newWatched;
+
+        delete item.state.flaggedWatched;
+        delete item.state.timesWatched;
+
         item._mtime = now;
 
-        console.log(`[MPV Bridge] Updating item in Stremio datastore...`);
+        console.log(`[MPV Bridge] Updating Stremio library: ${item.name} (EP ${context.episode})...`);
         const putRes = await axios.post('https://api.strem.io/api/datastorePut', {
             authKey: authKey,
             collection: 'libraryItem',
@@ -337,9 +334,8 @@ app.post('/scrobble', async (req, res) => {
         });
 
         if (putRes.status === 200) {
-            console.log(`[MPV Bridge] ✅ Stremio sync successful for ${context.imdbId} S${context.season}E${context.episode}!`);
-            // We NO LONGER clear activeSession here to allow playlist next items to sync
-            res.json({ success: true, message: 'Stremio sync successful' });
+            console.log(`[MPV Bridge] ✅ Sync successful for ${item.name} S${context.season}E${context.episode}!`);
+            res.json({ success: true });
         } else {
             throw new Error(`Stremio API returned status ${putRes.status}`);
         }

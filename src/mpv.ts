@@ -196,24 +196,42 @@ export async function getMpvData(): Promise<MpvData | null> {
          * Determine the best string for metadata parsing.
          * For streams, 'filename' is often a cryptic URL or hash.
          * 'media-title' populated via M3U #EXTINF is usually a clean filename.
+         * However, after loading, MPV may switch to the MKV's embedded title tag,
+         * which is often just the episode title without series/season info.
          */
         const isUrl = (s: string) => /^(https?|magnet):/i.test(s);
         const isPlaylist = (s: string) => /stremio-playlist-\d+/i.test(s);
+        const hasSeasonEpisode = (s: string) => /S\d+E\d+/i.test(s);
 
         let parseTarget = filename;
 
         // If filename is a playlist, try to use mediaTitle
         if (isPlaylist(filename)) {
             if (mediaTitle && mediaTitle !== "N/A" && !isPlaylist(mediaTitle)) {
-                parseTarget = mediaTitle;
+                // Check if mediaTitle has season/episode info - this means it's from #EXTINF
+                // If it doesn't, it might be the MKV's embedded title (just episode name)
+                if (hasSeasonEpisode(mediaTitle)) {
+                    parseTarget = mediaTitle;
+                } else {
+                    // mediaTitle is probably just the episode title from MKV metadata
+                    // Wait for a better title or return null to skip this update
+                    return null;
+                }
             } else {
                 // If we don't have a good title yet, don't parse anything
                 return null;
             }
         } else if (mediaTitle && mediaTitle !== "N/A" && mediaTitle !== filename) {
             // If filename is a URL or mediaTitle looks like a proper title, prefer mediaTitle
+            // But only if mediaTitle has season/episode info (avoid using just episode title)
             if (isUrl(filename) || !isUrl(mediaTitle)) {
-                parseTarget = mediaTitle;
+                if (hasSeasonEpisode(mediaTitle)) {
+                    parseTarget = mediaTitle;
+                } else if (isUrl(filename)) {
+                    // filename is URL and mediaTitle doesn't have S##E##
+                    // This means mediaTitle is probably just the episode title from MKV metadata
+                    return null;
+                }
             }
         }
 

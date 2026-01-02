@@ -36,6 +36,9 @@ O **MPV Discord RPC** é uma ferramenta desenvolvida em Node.js que integra o se
 - Exibição de capas de anime no Rich Presence
 - Sincronização MyAnimeList: Atualização automática do seu progresso
 - Stremio MPV Bridge: Abra streams do Stremio Web diretamente no MPV
+    - Suporte a Playlists automáticas
+    - Sincronização de progresso (Sync) para filmes e séries (IMDb-based ID's)
+    - Compatibilidade de player para animes (Kitsu)
 - Cache local para evitar requisições repetidas
 - Modo privacidade
 
@@ -134,6 +137,11 @@ Para instruções detalhadas de como configurar e autorizar a sincronização, c
 ## Stremio MPV Bridge
 
 Você pode integrar o Stremio Web com o MPV usando a bridge (ponte). Isso permite abrir streams diretamente no MPV com suporte inteligente a playlists para episódios.
+
+**Destaques:**
+- **Sincronização:** O progresso de filmes e séries (IMDb) é sincronizado automaticamente com sua conta do Stremio (marcando como "visto" ao atingir 90%).
+- **Compatibilidade:** Suporte completo para reprodução de conteúdos do Kitsu (apenas player, sincronização de progresso não suportada).
+- **Metadados:** Identificação aprimorada de títulos de séries e episódios diretamente da interface do Stremio.
 
 Para instruções de configuração e uso, consulte o [Guia do Stremio MPV Bridge](docs/stremio-mpv-bridge.md).
 
