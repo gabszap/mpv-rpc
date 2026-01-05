@@ -107,10 +107,6 @@ function updateWatchedBitset(existingWatched, seriesId, season, episode, totalEp
         const newN = episode + 10;
         console.log(`[MPV Bridge] Expanding bitset from N=${oldN} to N=${newN}`);
 
-        // Stremio uses inverted indexing: EP 1 is at index N-1.
-        // When N increases, we must shift bits to keep them at the same "episode number".
-        // Example: EP1 at 27 (N=28). If N=40, EP1 must move to 39.
-        // The shift is newN - oldN.
         const shift = newN - oldN;
         const newBitset = new Array(newN).fill(false);
         for (let i = 0; i < bitset.length; i++) {
@@ -138,7 +134,6 @@ function updateWatchedBitset(existingWatched, seriesId, season, episode, totalEp
     return encodeWatchedString(seriesId, season, episode, n, bitset);
 }
 
-// Active session storage for scrobbling
 let activeSession = null;
 
 app.use(express.json());
@@ -163,9 +158,11 @@ app.post('/play', (req, res) => {
     }
 
     if (stremioAuth) {
+        const seriesId = stremioContext?.seriesId;
         const episodes = items.map((item, index) => ({
             title: item.title || '',
             imdbId: item.imdbId || stremioContext?.imdbId,
+            seriesId: item.seriesId || seriesId,
             season: item.season ?? stremioContext?.season,
             episode: item.episode ?? (stremioContext?.episode ? stremioContext.episode + index : null),
             type: item.type || stremioContext?.type || 'series'
@@ -175,11 +172,12 @@ app.post('/play', (req, res) => {
             authKey: stremioAuth,
             episodes: episodes,
             context: stremioContext,
+            seriesId: seriesId,
             name: stremioContext?.name,
             timestamp: Date.now()
         };
 
-        console.log(`[MPV Bridge] ✅ Session stored with ${episodes.length} episode(s):`);
+        console.log(`[MPV Bridge] ✅ Session stored with ${episodes.length} episode(s) (seriesId: ${seriesId || 'none'}):`);
         episodes.forEach((ep, i) => console.log(`  [${i + 1}] ${ep.imdbId} S${ep.season}E${ep.episode}`));
     } else {
         console.warn('[MPV Bridge] ⚠️ No Stremio auth received in /play request. Sync will be disabled.');
@@ -227,7 +225,6 @@ app.post('/play', (req, res) => {
     }
 });
 
-// New scrobble endpoint for progress-based sync
 app.post('/scrobble', async (req, res) => {
     const { percent, imdbId, season, episode, type, title, name, episodeTitle } = req.body;
 
@@ -241,11 +238,12 @@ app.post('/scrobble', async (req, res) => {
 
     const { authKey, episodes } = activeSession;
     const sessionSeriesName = name || activeSession.name;
+    const sessionSeriesId = activeSession.seriesId;
 
     let context = null;
 
     if (imdbId && season && episode) {
-        context = { imdbId, season, episode, type: type || 'series', name: sessionSeriesName, episodeTitle };
+        context = { imdbId, seriesId: sessionSeriesId, season, episode, type: type || 'series', name: sessionSeriesName, episodeTitle };
     } else if ((title || episodeTitle) && episodes && episodes.length > 0) {
         const targetTitle = episodeTitle || title;
         const matchedEp = episodes.find(ep => ep.title && targetTitle.toLowerCase().includes(ep.title.toLowerCase().substring(0, 15)));
@@ -267,27 +265,36 @@ app.post('/scrobble', async (req, res) => {
         return res.status(400).json({ error: 'Incomplete metadata' });
     }
 
-    console.log(`[MPV Bridge] Scrobble request: ${context.name || 'Unknown'} - ID=${context.imdbId} S${context.season}E${context.episode} (${percent}%)`);
+    // Use seriesId for library lookup (e.g., mal:54857), falls back to imdbId
+    const libraryId = context.seriesId || context.imdbId;
+
+    console.log(`[MPV Bridge] Scrobble request: ${context.name || 'Unknown'} - LibraryID=${libraryId} S${context.season}E${context.episode} (${percent}%)`);
 
     try {
-        const isKitsu = context.imdbId.startsWith('kitsu:');
+        const isKitsu = libraryId.startsWith('kitsu:');
         if (isKitsu) {
-            console.log(`[MPV Bridge] Kitsu sync is not supported. Ignoring scrobble for ${context.imdbId}.`);
+            console.log(`[MPV Bridge] Kitsu sync is not supported. Ignoring scrobble for ${libraryId}.`);
             return res.json({ status: 'ignored', reason: 'Kitsu sync not supported' });
         }
 
-        console.log(`[MPV Bridge] Fetching item ${context.imdbId}...`);
+        const isMal = libraryId.startsWith('mal:');
+        if (isMal) {
+            console.log(`[MPV Bridge] MAL sync is not supported (bitset format incompatible). Ignoring scrobble for ${libraryId}.`);
+            return res.json({ status: 'ignored', reason: 'MAL sync not supported' });
+        }
+
+        console.log(`[MPV Bridge] Fetching item ${libraryId}...`);
         const getRes = await axios.post('https://api.strem.io/api/datastoreGet', {
             authKey: authKey,
             collection: 'libraryItem',
             all: false,
-            ids: [context.imdbId]
+            ids: [libraryId]
         });
         const items = getRes.data && (getRes.data.result || getRes.data);
         item = Array.isArray(items) ? items[0] : items;
 
         if (!item || !item.state) {
-            console.log(`[MPV Bridge] Item ${context.imdbId} not found in library. Searching by name...`);
+            console.log(`[MPV Bridge] Item ${libraryId} not found in library. Searching by name...`);
             const allRes = await axios.post('https://api.strem.io/api/datastoreGet', {
                 authKey: authKey,
                 collection: 'libraryItem',
@@ -299,7 +306,6 @@ app.post('/scrobble', async (req, res) => {
 
             if (item) {
                 console.log(`[MPV Bridge] Found library item by name match: ${item.name} (${item._id})`);
-                context.imdbId = item._id;
             }
         }
 
@@ -308,18 +314,26 @@ app.post('/scrobble', async (req, res) => {
             return res.status(404).json({ error: 'Item not in library' });
         }
 
-        const now = new Date().toISOString();
-        const videoId = `${context.imdbId}:${context.season}:${context.episode}`;
+        // itemId = library item ID (e.g., mal:54857)
+        // context.imdbId = episode IMDb ID (e.g., tt5607616) - used in watched string
+        const itemId = item._id;
+        const episodeImdbId = context.imdbId; // This is what Stremio uses in watched string
 
+        const now = new Date().toISOString();
+        const videoId = `${itemId}:${context.season}:${context.episode}`;
+
+        // IMPORTANT: watched string uses the episode's IMDb ID, not the library item ID!
         const existingWatched = item.state?.watched;
         const totalEpisodes = 100;
-        const newWatched = updateWatchedBitset(existingWatched, context.imdbId, context.season, context.episode, totalEpisodes);
+        const newWatched = updateWatchedBitset(existingWatched, episodeImdbId, context.season, context.episode, totalEpisodes);
 
         item.state = item.state || {};
         item.state.lastWatched = now;
         item.state.video_id = videoId;
         item.state.timeOffset = 1;
         item.state.watched = newWatched;
+        item.state.season = context.season;   // For UI display
+        item.state.episode = context.episode; // For UI display
 
         delete item.state.flaggedWatched;
         delete item.state.timesWatched;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stremio MPV Bridge
 // @namespace    https://github.com/gabszap/mpv-rpc
-// @version      1.7.0
+// @version      1.7.2
 // @icon         https://www.stremio.com/website/stremio-purple-small.png
 // @description  Open Stremio Web streams directly in MPV with playlist support
 // @homepage     https://github.com/gabszap/mpv-rpc
@@ -26,17 +26,29 @@
         DEBUG: false
     };
 
-    const DEFAULT_PROVIDERS = [
+    // Available providers organized by category
+    const AVAILABLE_PROVIDERS = {
+        providers: [
+            { id: 'torrentio', name: 'Torrentio' },
+            { id: 'comet', name: 'Comet' },
+            { id: 'mediafusion', name: 'MediaFusion' },
+            { id: 'sootio', name: 'Sootio' }
+        ],
+        debrid: [
+            { id: 'torbox', name: 'Torbox' },
+            { id: 'real-debrid', name: 'Real Debrid' },
+            { id: 'debrid-link', name: 'Debrid Link' }
+        ]
+    };
+
+    // Default active providers (only torrentio + custom)
+    const DEFAULT_ACTIVE = [
         { id: 'torrentio', name: 'Torrentio', url: '', enabled: true },
-        { id: 'comet', name: 'Comet', url: '', enabled: true },
-        { id: 'mediafusion', name: 'MediaFusion', url: '', enabled: true },
-        { id: 'torbox', name: 'Torbox', url: '', enabled: true },
-        { id: 'real-debrid', name: 'Real-Debrid', url: '', enabled: true },
         { id: 'custom', name: 'Custom', url: '', enabled: true }
     ];
 
     let extraEpisodes = GM_getValue('extraEpisodes', 2);
-    let playlistMode = GM_getValue('playlistMode', 'fixed');
+    let playlistMode = GM_getValue('playlistMode', 'batch');
     let mpvShortcut = GM_getValue('mpvShortcut', 'v');
 
     let storedProviders = GM_getValue('providers', []);
@@ -44,12 +56,8 @@
 
     if (storedProviders.length > 0) {
         providers = [...storedProviders];
-        DEFAULT_PROVIDERS.forEach(def => {
-            if (!providers.find(p => p.id === def.id)) providers.push(def);
-        });
-        providers = providers.filter(p => DEFAULT_PROVIDERS.find(d => d.id === p.id));
     } else {
-        providers = [...DEFAULT_PROVIDERS];
+        providers = [...DEFAULT_ACTIVE];
     }
 
     function log(...args) {
@@ -70,7 +78,10 @@
         const modal = document.createElement('div');
         modal.id = 'stremio-mpv-modal';
 
-        let providersHTML = providers.map((p, index) => `
+        let providersHTML = providers.map((p, index) => {
+            // Allow removing all providers except default torrentio and base custom
+            const isRemovable = p.id !== 'torrentio' && p.id !== 'custom';
+            return `
             <div class="mpv-form-group mpv-provider-item" data-id="${p.id}">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
@@ -81,13 +92,14 @@
                     <div style="display: flex; gap: 4px;">
                         <button class="mpv-reorder-btn" onclick="const item = this.closest('.mpv-provider-item'); if(item.previousElementSibling?.classList.contains('mpv-provider-item')) item.parentNode.insertBefore(item, item.previousElementSibling)" title="Move Up">▲</button>
                         <button class="mpv-reorder-btn" onclick="const item = this.closest('.mpv-provider-item'); if(item.nextElementSibling?.classList.contains('mpv-provider-item')) item.parentNode.insertBefore(item.nextElementSibling, item)" title="Move Down">▼</button>
+                        ${isRemovable ? '<button class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">×</button>' : ''}
                     </div>
                 </div>
                 <input type="text" data-id="${p.id}" class="mpv-input mpv-provider-input" 
                        placeholder="Paste manifest.json link here" value="${p.url}" 
                        style="${!p.enabled ? 'opacity: 0.5; pointer-events: none;' : ''}">
             </div>
-        `).join('');
+        `}).join('');
 
         modal.innerHTML = `
             <style>
@@ -100,6 +112,7 @@
                     opacity: 0; transition: opacity 0.3s ease;
                     color-scheme: dark;
                 }
+                @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
                 .mpv-modal-content {
                     background: rgba(15, 15, 15, 0.65); color: #eee;
                     padding: 24px; border-radius: 20px;
@@ -155,32 +168,121 @@
                     cursor: pointer; font-size: 10px; transition: all 0.2s ease;
                 }
                 .mpv-reorder-btn:hover { background: #8b5cf6; color: white; border-color: #8b5cf6; }
+                .mpv-btn-add { background: transparent; border: 1px dashed rgba(139, 92, 246, 0.5); color: #a78bfa; padding: 8px 16px; width: 100%; margin-bottom: 8px; position: relative; }
+                .mpv-btn-add:hover { border-color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
+                .mpv-btn-remove { background: transparent; border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; width: 24px; height: 24px; font-size: 14px; padding: 0; }
+                .mpv-btn-remove:hover { background: rgba(239, 68, 68, 0.2); border-color: #ef4444; }
+                .mpv-dropdown { position: relative; display: inline-block; width: 100%; margin-bottom: 8px; }
+                .mpv-dropdown-content { 
+                    display: none; position: fixed; 
+                    top: 50%; left: 50%;
+                    transform: translate(-50%, -50%);
+                    opacity: 0;
+                    background: rgba(15, 15, 20, 0.95); 
+                    backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+                    border: 1px solid rgba(139, 92, 246, 0.4);
+                    border-radius: 16px; padding: 20px; z-index: 100002;
+                    min-width: 320px; max-width: 400px;
+                    box-shadow: 0 25px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08) inset, 0 0 60px rgba(139, 92, 246, 0.15);
+                }
+                .mpv-dropdown-content.show { display: block; animation: submenuPop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+                @keyframes submenuPop { from { opacity: 0; transform: translate(-50%, -50%) scale(0.9); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+                .mpv-dropdown-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100001; display: none; }
+                .mpv-dropdown-overlay.show { display: block; animation: overlayFade 0.2s ease; }
+                @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
+                .mpv-dropdown-title { font-size: 16px; font-weight: 600; color: #fff; text-align: center; margin-bottom: 12px; }
+                .mpv-dropdown-category { 
+                    padding: 10px 16px 6px; font-size: 10px; color: #a78bfa; 
+                    text-transform: uppercase; letter-spacing: 1px; font-weight: 600;
+                    margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 14px;
+                }
+                .mpv-dropdown-category:first-of-type { margin-top: 0; border-top: none; padding-top: 6px; }
+                .mpv-dropdown-item { 
+                    padding: 10px 16px; cursor: pointer; border-radius: 10px; transition: all 0.2s ease;
+                    display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #eee;
+                }
+                .mpv-dropdown-item:hover { background: linear-gradient(90deg, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.05)); color: #fff; padding-left: 20px; }
+                .mpv-dropdown-item.disabled { opacity: 0.4; cursor: not-allowed; text-decoration: line-through; }
+                .mpv-radio {
+                    appearance: none; -webkit-appearance: none;
+                    width: 18px; height: 18px; border: 2px solid rgba(139, 92, 246, 0.4);
+                    border-radius: 50%; outline: none; transition: all 0.2s ease;
+                    position: relative; cursor: pointer; flex-shrink: 0;
+                    margin: 0; 
+                    display: flex; align-items: center; justify-content: center;
+                    box-sizing: border-box;
+                }
+                .mpv-radio:checked { border-color: #8b5cf6; background: rgba(139, 92, 246, 0.2); }
+                .mpv-radio:checked::after {
+                    content: '';
+                    width: 8px; height: 8px; border-radius: 50%; background: #8b5cf6;
+                    box-shadow: 0 0 5px rgba(139, 92, 246, 0.5);
+                    display: block;
+                }
+                .mpv-radio-option label { line-height: 1; }
             </style>
             <div class="mpv-modal-content">
                 <div class="mpv-modal-header">MPV Bridge Settings <span style="font-size: 14px; opacity: 0.6; font-weight: normal; margin-left: 8px;">v${GM_info.script.version}</span></div>
                 
-                ${providersHTML}
+                <div id="mpv-providers-container">
+                    ${providersHTML}
+                </div>
+                
+                <div class="mpv-dropdown">
+                    <button class="mpv-btn mpv-btn-add" id="mpv-add-provider-btn">+ Add Provider</button>
+                    <div class="mpv-dropdown-overlay" id="mpv-dropdown-overlay"></div>
+                    <div class="mpv-dropdown-content" id="mpv-provider-dropdown">
+                        <div class="mpv-dropdown-title">Select Provider</div>
+                        <div class="mpv-dropdown-category">Providers</div>
+                        ${AVAILABLE_PROVIDERS.providers.map(p => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}">${p.name}</div>`).join('')}
+                        <div class="mpv-dropdown-category">Debrid Services</div>
+                        ${AVAILABLE_PROVIDERS.debrid.map(p => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}">${p.name}</div>`).join('')}
+                        <div style="margin-top: 16px; padding: 12px 16px; font-size: 12px; color: #666; text-align: center; border-top: 1px solid rgba(255,255,255,0.08);">
+                            Missing your favorite debrid? <a href="https://github.com/gabszap/mpv-rpc/issues" target="_blank" style="color: #8b7bba; text-decoration: underline; font-size: 13px;">open an issue</a>
+                        </div>
+                    </div>
+                </div>
+                <button class="mpv-btn mpv-btn-add" id="mpv-add-custom">+ Add Custom</button>
                 <div class="mpv-help" style="margin-bottom: 20px; color: #aaa;">Copy the link from the addon's "Share" button.</div>
 
                 <div class="mpv-form-group">
                     <label class="mpv-label">Stream Mode</label>
-                    <div class="mpv-checkbox-group">
-                        <input type="checkbox" id="mpv-playlist-all" class="mpv-checkbox" ${playlistMode === 'all' ? 'checked' : ''} style="width: 18px; height: 18px; accent-color: #8b5cf6; cursor: pointer;">
-                        <div style="flex:1">
-                            <label for="mpv-playlist-all" style="cursor:pointer; user-select:none; font-size: 14px;">Load all episodes</label>
-                            <div class="mpv-help" style="margin-top:2px">Loads all remaining episodes of the current season</div>
+                    
+                    <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${playlistMode === 'single' ? 'rgba(139, 92, 246, 0.12)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${playlistMode === 'single' ? 'rgba(139, 92, 246, 0.4)' : 'rgba(255,255,255,0.08)'}; transition: all 0.2s ease;">
+                        <input type="radio" name="mpv-stream-mode" id="mpv-mode-single" value="single" class="mpv-radio" ${playlistMode === 'single' ? 'checked' : ''}>
+                        <div style="pointer-events: none; flex: 1;">
+                            <label for="mpv-mode-single" style="cursor:pointer; font-size: 15px; font-weight: 600; display: block; margin-bottom: 2px;">Single Episode</label>
+                            <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Load only the selected episode</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${playlistMode === 'batch' ? 'rgba(139, 92, 246, 0.12)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${playlistMode === 'batch' ? 'rgba(139, 92, 246, 0.4)' : 'rgba(255,255,255,0.08)'}; transition: all 0.2s ease;">
+                        <input type="radio" name="mpv-stream-mode" id="mpv-mode-batch" value="batch" class="mpv-radio" ${playlistMode === 'batch' ? 'checked' : ''}>
+                        <div style="pointer-events: none; flex: 1;">
+                            <label for="mpv-mode-batch" style="cursor:pointer; font-size: 15px; font-weight: 600; display: block; margin-bottom: 2px;">Batch Episodes</label>
+                            <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Load selected + next episodes</div>
+                        </div>
+                    </div>
+                    
+                    <div id="mpv-group-count" style="margin-bottom: 15px; padding-left: 42px; ${playlistMode !== 'batch' ? 'display:none' : ''}">
+                        <label class="mpv-label" style="font-size: 11px; color: #a78bfa; margin-bottom: 4px;">Next episodes to load</label>
+                        <input type="number" id="mpv-ep-count" class="mpv-input" value="${extraEpisodes}" min="1" max="25" style="width: 70px; padding: 8px;">
+                    </div>
+                    
+                    <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; background: ${playlistMode === 'all' ? 'rgba(139, 92, 246, 0.12)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${playlistMode === 'all' ? 'rgba(139, 92, 246, 0.4)' : 'rgba(255,255,255,0.08)'}; transition: all 0.2s ease;">
+                        <input type="radio" name="mpv-stream-mode" id="mpv-mode-all" value="all" class="mpv-radio" ${playlistMode === 'all' ? 'checked' : ''}>
+                        <div style="pointer-events: none; flex: 1;">
+                            <label for="mpv-mode-all" style="cursor:pointer; font-size: 15px; font-weight: 600; display: block; margin-bottom: 2px;">Load All</label>
+                            <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Loads all remaining episodes (may take a while)</div>
                         </div>
                     </div>
                 </div>
 
-                <div class="mpv-form-group" id="mpv-group-count" style="${playlistMode === 'all' ? 'opacity:0.3; pointer-events:none' : ''}">
-                    <label class="mpv-label">Next episodes to load</label>
-                    <input type="number" id="mpv-ep-count" class="mpv-input" value="${extraEpisodes}" min="1" max="25">
-                </div>
-
                 <div class="mpv-form-group">
                     <label class="mpv-label">Keyboard Shortcut</label>
-                    <input type="text" id="mpv-shortcut" class="mpv-input" value="${mpvShortcut}" maxlength="1" style="width: 60px; text-align: center; text-transform: uppercase; font-weight: bold;">
+                    <button type="button" id="mpv-shortcut-btn" class="mpv-input" style="width: 80px; text-align: center; text-transform: uppercase; font-weight: bold; cursor: pointer; border: 1px dashed rgba(139, 92, 246, 0.5);">${mpvShortcut.toUpperCase()}</button>
+                    <input type="hidden" id="mpv-shortcut" value="${mpvShortcut}">
+                    <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
                 </div>
 
                 <div class="mpv-actions">
@@ -193,12 +295,36 @@
         document.body.appendChild(modal);
         requestAnimationFrame(() => modal.classList.add('active'));
 
-        const checkbox = modal.querySelector('#mpv-playlist-all');
         const countGroup = modal.querySelector('#mpv-group-count');
+        const radioButtons = modal.querySelectorAll('input[name="mpv-stream-mode"]');
+        const radioOptions = modal.querySelectorAll('.mpv-radio-option');
 
-        checkbox.addEventListener('change', (e) => {
-            countGroup.style.opacity = e.target.checked ? '0.3' : '1';
-            countGroup.style.pointerEvents = e.target.checked ? 'none' : 'auto';
+        const updateRadioStyles = () => {
+            radioOptions.forEach((option, index) => {
+                const radio = option.querySelector('input[type="radio"]');
+                if (radio.checked) {
+                    option.style.background = 'rgba(139, 92, 246, 0.15)';
+                    option.style.borderColor = 'rgba(139, 92, 246, 0.4)';
+                } else {
+                    option.style.background = 'transparent';
+                    option.style.borderColor = 'rgba(255,255,255,0.08)';
+                }
+            });
+            // Show count input only for batch mode
+            const batchRadio = modal.querySelector('#mpv-mode-batch');
+            countGroup.style.display = batchRadio.checked ? 'block' : 'none';
+        };
+
+        radioButtons.forEach(radio => {
+            radio.addEventListener('change', updateRadioStyles);
+        });
+
+        radioOptions.forEach(option => {
+            option.addEventListener('click', () => {
+                const radio = option.querySelector('input[type="radio"]');
+                radio.checked = true;
+                updateRadioStyles();
+            });
         });
 
         const closeModal = () => {
@@ -212,6 +338,31 @@
             closeModal();
         });
 
+        // Keyboard shortcut capture
+        const shortcutBtn = modal.querySelector('#mpv-shortcut-btn');
+        const shortcutInput = modal.querySelector('#mpv-shortcut');
+        let capturingShortcut = false;
+
+        shortcutBtn.addEventListener('click', () => {
+            capturingShortcut = true;
+            shortcutBtn.textContent = '...';
+            shortcutBtn.style.borderColor = '#8b5cf6';
+            shortcutBtn.style.animation = 'pulse 1s infinite';
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (!capturingShortcut) return;
+            e.preventDefault();
+            e.stopPropagation();
+
+            const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+            shortcutInput.value = key;
+            shortcutBtn.textContent = key.toUpperCase();
+            shortcutBtn.style.borderColor = 'rgba(139, 92, 246, 0.5)';
+            shortcutBtn.style.animation = '';
+            capturingShortcut = false;
+        }, true);
+
         modal.querySelectorAll('.mpv-provider-toggle').forEach(toggle => {
             toggle.addEventListener('change', (e) => {
                 const input = modal.querySelector(`.mpv-provider-input[data-id="${e.target.dataset.id}"]`);
@@ -222,7 +373,134 @@
             });
         });
 
+        // Add Provider dropdown
+        const addProviderBtn = modal.querySelector('#mpv-add-provider-btn');
+        const providerDropdown = modal.querySelector('#mpv-provider-dropdown');
+        const dropdownOverlay = modal.querySelector('#mpv-dropdown-overlay');
+
+        if (addProviderBtn && providerDropdown) {
+            const showDropdown = () => {
+                // Update disabled state for already added providers
+                const container = modal.querySelector('#mpv-providers-container');
+                providerDropdown.querySelectorAll('.mpv-dropdown-item').forEach(item => {
+                    const exists = container.querySelector(`[data-id="${item.dataset.id}"]`);
+                    item.classList.toggle('disabled', !!exists);
+                });
+                providerDropdown.classList.add('show');
+                dropdownOverlay?.classList.add('show');
+            };
+
+            const hideDropdown = () => {
+                providerDropdown.classList.remove('show');
+                dropdownOverlay?.classList.remove('show');
+            };
+
+            addProviderBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (providerDropdown.classList.contains('show')) {
+                    hideDropdown();
+                } else {
+                    showDropdown();
+                }
+            });
+
+            dropdownOverlay?.addEventListener('click', hideDropdown);
+        }
+
+        providerDropdown.addEventListener('click', (e) => {
+            const item = e.target.closest('.mpv-dropdown-item');
+            if (!item || item.classList.contains('disabled')) return;
+
+            const id = item.dataset.id;
+            const name = item.dataset.name;
+            const container = modal.querySelector('#mpv-providers-container');
+
+            const newProviderHTML = `
+                <div class="mpv-form-group mpv-provider-item" data-id="${id}">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" data-id="${id}" class="mpv-provider-toggle" checked 
+                                   style="width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; accent-color: #8b5cf6; appearance: auto; -webkit-appearance: checkbox; margin: 0;">
+                            <label class="mpv-label" style="margin: 0; cursor: pointer;">${name}</label>
+                        </div>
+                        <div style="display: flex; gap: 4px;">
+                            <button class="mpv-reorder-btn" onclick="const item = this.closest('.mpv-provider-item'); if(item.previousElementSibling?.classList.contains('mpv-provider-item')) item.parentNode.insertBefore(item, item.previousElementSibling)" title="Move Up">▲</button>
+                            <button class="mpv-reorder-btn" onclick="const item = this.closest('.mpv-provider-item'); if(item.nextElementSibling?.classList.contains('mpv-provider-item')) item.parentNode.insertBefore(item.nextElementSibling, item)" title="Move Down">▼</button>
+                            <button class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">×</button>
+                        </div>
+                    </div>
+                    <input type="text" data-id="${id}" class="mpv-input mpv-provider-input" placeholder="Paste manifest.json link here" value="">
+                </div>
+            `;
+
+            // Insert before custom providers
+            const firstCustom = container.querySelector('[data-id^="custom"]');
+            if (firstCustom) {
+                firstCustom.insertAdjacentHTML('beforebegin', newProviderHTML);
+            } else {
+                container.insertAdjacentHTML('beforeend', newProviderHTML);
+            }
+
+            providerDropdown.classList.remove('show');
+            dropdownOverlay?.classList.remove('show');
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.mpv-dropdown')) {
+                providerDropdown.classList.remove('show');
+            }
+        });
+
+        // Add Custom Provider button
+        modal.querySelector('#mpv-add-custom').addEventListener('click', () => {
+            const container = modal.querySelector('#mpv-providers-container');
+            const existingCustoms = container.querySelectorAll('[data-id^="custom"]');
+            // Find the highest existing custom number
+            let maxNum = 0;
+            existingCustoms.forEach(el => {
+                const num = parseInt(el.dataset.id.replace('custom', '')) || 0;
+                if (num > maxNum) maxNum = num;
+            });
+            const newNum = maxNum + 1;
+            const newId = `custom${newNum}`;
+
+            const newProviderHTML = `
+                <div class="mpv-form-group mpv-provider-item" data-id="${newId}">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" data-id="${newId}" class="mpv-provider-toggle" checked 
+                                   style="width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; accent-color: #8b5cf6; appearance: auto; -webkit-appearance: checkbox; margin: 0;">
+                            <label class="mpv-label" style="margin: 0; cursor: pointer;">Custom ${newNum}</label>
+                        </div>
+                        <div style="display: flex; gap: 4px;">
+                            <button class="mpv-reorder-btn" onclick="const item = this.closest('.mpv-provider-item'); if(item.previousElementSibling?.classList.contains('mpv-provider-item')) item.parentNode.insertBefore(item, item.previousElementSibling)" title="Move Up">▲</button>
+                            <button class="mpv-reorder-btn" onclick="const item = this.closest('.mpv-provider-item'); if(item.nextElementSibling?.classList.contains('mpv-provider-item')) item.parentNode.insertBefore(item.nextElementSibling, item)" title="Move Down">▼</button>
+                            <button class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">×</button>
+                        </div>
+                    </div>
+                    <input type="text" data-id="${newId}" class="mpv-input mpv-provider-input" placeholder="Paste manifest.json link here" value="">
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', newProviderHTML);
+
+            // Add toggle listener to new provider
+            const newToggle = container.querySelector(`[data-id="${newId}"].mpv-provider-toggle`);
+            newToggle?.addEventListener('change', (e) => {
+                const input = container.querySelector(`.mpv-provider-input[data-id="${e.target.dataset.id}"]`);
+                if (input) {
+                    input.style.opacity = e.target.checked ? '1' : '0.5';
+                    input.style.pointerEvents = e.target.checked ? 'auto' : 'none';
+                }
+            });
+        });
+
+        // Remove provider buttons (delegated)
         modal.addEventListener('click', (e) => {
+            if (e.target.classList.contains('mpv-remove-provider')) {
+                const item = e.target.closest('.mpv-provider-item');
+                if (item) item.remove();
+            }
             if (e.target === modal) closeModal();
         });
     }
@@ -230,7 +508,7 @@
     function saveConfig() {
         const modal = document.getElementById('stremio-mpv-modal');
         const countInput = modal.querySelector('#mpv-ep-count');
-        const allCheckbox = modal.querySelector('#mpv-playlist-all');
+        const selectedMode = modal.querySelector('input[name="mpv-stream-mode"]:checked');
         const shortcutInput = modal.querySelector('#mpv-shortcut');
 
         const providerItems = Array.from(modal.querySelectorAll('.mpv-provider-item'));
@@ -239,13 +517,16 @@
             const id = item.dataset.id;
             const input = item.querySelector('.mpv-provider-input');
             const toggle = item.querySelector('.mpv-provider-toggle');
+            const label = item.querySelector('.mpv-label');
             let url = input ? input.value.trim() : '';
             if (url && url.includes('/manifest.json')) {
                 url = url.split('/manifest.json')[0];
             }
+            const allProviders = [...AVAILABLE_PROVIDERS.providers, ...AVAILABLE_PROVIDERS.debrid];
+            const knownProvider = allProviders.find(d => d.id === id);
             return {
                 id: id,
-                name: DEFAULT_PROVIDERS.find(d => d.id === id).name,
+                name: knownProvider ? knownProvider.name : (label?.textContent || id),
                 url: url,
                 enabled: toggle ? toggle.checked : true
             };
@@ -256,7 +537,7 @@
         extraEpisodes = Math.max(1, Math.min(25, parseInt(countInput.value) || 2));
         GM_setValue('extraEpisodes', extraEpisodes);
 
-        playlistMode = allCheckbox.checked ? 'all' : 'fixed';
+        playlistMode = selectedMode ? selectedMode.value : 'batch';
         GM_setValue('playlistMode', playlistMode);
 
         mpvShortcut = (shortcutInput.value || 'v').toLowerCase();
@@ -339,11 +620,19 @@
         const uiMeta = scrapeMetadata();
         const decodedHash = decodeURIComponent(hash);
 
+        let seriesId = null;
+        const seriesMatch = decodedHash.match(/\/detail\/(?:series|movie)\/([^\/]+)/);
+        if (seriesMatch) {
+            seriesId = seriesMatch[1];
+            log('Extracted seriesId:', seriesId);
+        }
+
         const imdbMatch = decodedHash.match(/(tt\d+):(\d+):(\d+)/);
         if (imdbMatch) {
             const result = {
                 type: 'series',
                 imdbId: imdbMatch[1],
+                seriesId: seriesId || imdbMatch[1],
                 name: uiMeta.seriesName,
                 season: parseInt(imdbMatch[2]),
                 episode: parseInt(imdbMatch[3])
@@ -358,6 +647,7 @@
             const result = {
                 type: 'series',
                 imdbId: `kitsu:${kitsuMatch[1]}`,
+                seriesId: seriesId || `kitsu:${kitsuMatch[1]}`,
                 name: uiMeta.seriesName,
                 episodeTitle: uiMeta.episodeTitle,
                 season: uiMeta.season || 1,
@@ -374,6 +664,7 @@
             const result = {
                 type: 'series',
                 imdbId: `${genericMatch[1]}:${genericMatch[2]}`,
+                seriesId: seriesId || `${genericMatch[1]}:${genericMatch[2]}`,
                 name: uiMeta.seriesName,
                 season: parseInt(genericMatch[3]),
                 episode: parseInt(genericMatch[4])
@@ -388,6 +679,7 @@
             return {
                 type: 'series',
                 imdbId: imdbIdMatch[1],
+                seriesId: seriesId || imdbIdMatch[1],
                 name: uiMeta.seriesName,
                 season: parseInt(decodedHash.match(/season=(\d+)/)?.[1]) || uiMeta.season || null,
                 episode: null
@@ -513,9 +805,9 @@
                 return;
             }
 
-            const limit = playlistMode === 'all' ? 50 : extraEpisodes;
-            const modeText = playlistMode === 'all' ? 'Playlist' : 'Episode Batch';
-            notify(`Fetching streams... (Mode: ${modeText})`, 'info');
+            const limit = playlistMode === 'all' ? 50 : (playlistMode === 'single' ? 0 : extraEpisodes);
+            const modeText = playlistMode === 'all' ? 'Load All' : (playlistMode === 'single' ? 'Single' : `Batch | Extra: ${extraEpisodes}`);
+            notify(`Mode: ${modeText}`, 'info');
 
             const playlist = await collectStreams(content, limit);
 
@@ -648,7 +940,7 @@
             const profile = JSON.parse(localStorage.getItem('profile') || '{}');
             const authKey = profile.auth?.key;
 
-            log(`Bridge: Sending payload with authKey: ${authKey ? 'Found' : 'MISSING'} | ID: ${title.imdbId}`);
+            log(`Bridge: Sending payload with authKey: ${authKey ? 'Found' : 'MISSING'} | seriesId: ${title.seriesId} | imdbId: ${title.imdbId}`);
 
             GM_xmlhttpRequest({
                 method: 'POST',
@@ -659,6 +951,7 @@
                     contentTitle: title.imdbId,
                     stremioAuth: authKey,
                     stremioContext: {
+                        seriesId: title.seriesId,
                         imdbId: title.imdbId,
                         name: title.name,
                         episodeTitle: title.episodeTitle,
@@ -691,8 +984,9 @@
 
         const active = providers.filter(p => p.enabled && p.url).map(p => p.name);
         notify(`Active providers: ${active.length > 0 ? active.join(', ') : 'None'}`);
-        const modeDesc = playlistMode === 'all' ? 'Playlist' : 'Episode Batch';
-        notify(`Mode: ${modeDesc} | Extra: ${extraEpisodes}`);
+
+        const modeText = playlistMode === 'all' ? 'Load All' : (playlistMode === 'single' ? 'Single' : `Batch | Extra: ${extraEpisodes}`);
+        notify(`Mode: ${modeText}`);
 
         createFloatingButton();
 
