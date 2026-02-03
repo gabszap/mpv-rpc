@@ -2,69 +2,103 @@
 
 Discord Rich Presence para o MPV Media Player com suporte automático a metadados de anime.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Node.js](https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
-![Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)
-![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
-
 <p align="center">
-  <a href="README.md"><img src="https://img.shields.io/badge/English-blue?style=for-the-badge" alt="English"></a>
-  <a href="README_PT.md"><img src="https://img.shields.io/badge/Português-green?style=for-the-badge" alt="Português"></a>
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License">
+
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white&style=for-the-badge" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white&style=for-the-badge" alt="Windows">
+  <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" alt="Linux">
+  <img src="https://img.shields.io/badge/Built%20with-Claude-D97757?logo=claude&logoColor=white&style=for-the-badge" alt="Built with Claude">
 </p>
 
 <p align="center">
   <img src="assets/demo.gif" alt="Demo" width="600">
   <br>
-  <em>Demo</em>
+  <em>RPC em ação</em>
 </p>
 
-## Sobre
+<p align="center">
+  <a href="README.md">English</a> | <a href="README_PT.md">Português</a>
+</p>
 
-O **MPV Discord RPC** é uma ferramenta desenvolvida em Node.js que integra o seu MPV Media Player ao Discord, exibindo o que você está assistindo em tempo real. O grande diferencial deste projeto é a sua capacidade de identificar automaticamente animes através do nome do arquivo e buscar informações detalhadas, como capas e títulos oficiais, utilizando a API do MyAnimeList (Jikan).
+---
 
-> [!NOTE]
-> A função **showCover** funciona apenas para animes no momento. A configuração pode ser feita via arquivo `.env`.
+## Sumário
 
+- [Visão Geral](#visão-geral)
+- [Recursos](#recursos)
+- [Requisitos](#requisitos)
+- [Início Rápido](#início-rápido)
+- [Instalação](#instalação)
+- [Configuração](#configuração)
+- [Configuração do MPV](#configuração-do-mpv)
+- [Sincronização MyAnimeList](#sincronização-myanimelist)
+- [Stremio MPV Bridge](#stremio-mpv-bridge)
+- [Capturas de Tela](#capturas-de-tela)
+- [Contribuindo](#contribuindo)
 
-### Recursos
+---
 
+## Visão Geral
+
+O **MPV Discord RPC** é uma ferramenta que integra o seu MPV Media Player ao Discord, exibindo o que você está assistindo em tempo real. O grande diferencial é a detecção automática de animes através dos nomes dos arquivos, buscando metadados detalhados (capas, títulos oficiais) usando a API do MyAnimeList via Jikan.
+
+---
+
+## Recursos
+
+**Recursos Principais**
 - Detecção automática de anime a partir do nome do arquivo
 - Busca de metadados via API Jikan (MyAnimeList)
-- Exibição de capas de anime no Rich Presence
-- Sincronização MyAnimeList: Atualização automática do seu progresso
-- Stremio MPV Bridge: Abra streams do Stremio Web diretamente no MPV
-    - Suporte a Playlists automáticas
-    - Sincronização de progresso para filmes e séries
-    - Compatibilidade de player para animes (Kitsu)
-- Cache local para evitar requisições repetidas
-- Modo privacidade
+- Exibição de capas de anime no Discord Rich Presence
+- Cache local para evitar requisições repetidas à API
+- Modo de privacidade para ocultar detalhes da mídia
+
+**Recursos de Integração**
+- **Sincronização MyAnimeList:** Atualização automática do seu progresso
+- **Stremio MPV Bridge:** Abra streams do Stremio Web diretamente no MPV
+  - Suporte inteligente a playlists automáticas
+  - Sincronização de progresso para Filmes e Séries
+  - Compatibilidade de player para Anime (Kitsu)
+
+> **Nota:** A exibição de capas funciona apenas para animes no momento. Configure isso no arquivo `.env`.
+
+---
 
 ## Requisitos
 
-- Node.js 20+
-- Python 3.12+
+- Node.js 22 ou superior
 - MPV Media Player
-- Discord Desktop
+- Aplicativo Discord Desktop
 
-> [!IMPORTANT]
-> Certifique-se de que o **Node.js** e o **Python** estejam adicionados ao **PATH** do seu sistema.
+### Opcional: Python (para GuessIt CLI local)
 
-> **Nota:** O Python é necessário para executar a biblioteca `guessit`, usada no módulo de parsing para identificar títulos, temporadas e episódios a partir dos nomes dos arquivos.
+O Python **não é mais necessário** se você usar a API GuessIt em nuvem! O parser agora suporta três modos:
+
+1. **☁️ API em Nuvem** (recomendado) - Não precisa de Python, funciona em todas as plataformas
+2. **💻 CLI Local** - Requer `pip install guessit` (Python 3.12+)
+3. **🔤 Regex Fallback** - Sempre disponível, parsing básico apenas
+
+> **Novos usuários:** Use a API em nuvem configurando `GUESSIT_API_URL` no arquivo `.env`. Veja [Configuração da API GuessIt](#configuração-da-api-guessit) abaixo.
+
+> **Usuários existentes:** Sua instalação local do `guessit` ainda funciona como fallback.
+
+---
 
 ## Início Rápido
 
+### Opção 1: API em Nuvem (Sem Python Necessário) ⭐ Recomendado
+
 ```bash
-# Clone e instale
+# Clone e instale apenas as dependências Node
 git clone https://github.com/gabszap/mpv-rpc.git && cd mpv-rpc
-pip install guessit && npm install
+npm install
 
-# Configure o .env com o ID da aplicação do Discord Developer Portal
+# Configure o ambiente
 cp .env.example .env
+# Edite .env e configure: GUESSIT_API_URL=https://sua-api.vercel.app/api/parse
 
-# Adicione ao mpv.conf
+# Adicione o servidor IPC à configuração do MPV
 echo 'input-ipc-server=\\.\pipe\mpv' >> "%APPDATA%/mpv/mpv.conf"  # Windows
 echo 'input-ipc-server=/tmp/mpv-socket' >> ~/.config/mpv/mpv.conf  # Linux
 
@@ -72,151 +106,285 @@ echo 'input-ipc-server=/tmp/mpv-socket' >> ~/.config/mpv/mpv.conf  # Linux
 npm run dev
 ```
 
+### Opção 2: GuessIt Local (Python Necessário)
+
+```bash
+# Clone e instale as dependências (incluindo Python guessit)
+git clone https://github.com/gabszap/mpv-rpc.git && cd mpv-rpc
+pip install guessit && npm install
+
+# Configure o ambiente
+cp .env.example .env
+
+# Adicione o servidor IPC à configuração do MPV
+echo 'input-ipc-server=\\.\pipe\mpv' >> "%APPDATA%/mpv/mpv.conf"  # Windows
+echo 'input-ipc-server=/tmp/mpv-socket' >> ~/.config/mpv/mpv.conf  # Linux
+
+# Compile e execute
+npm run dev
+```
+
+---
+
 ## Instalação
 
-1. Clone o repositório:
+### 1. Clonar o Repositório
+
 ```bash
 git clone https://github.com/gabszap/mpv-rpc.git
 cd mpv-rpc
 ```
 
-2. Instale o GuessIt (parsing de nomes de arquivos):
-```bash
-pip install guessit
-```
+### 2. Instalar Dependências do Node
 
-3. Instale as dependências Node:
 ```bash
 npm install
 ```
 
-4. Compile o projeto:
+### 3. (Opcional) Instalar GuessIt Localmente
+
+Apenas necessário se quiser usar CLI local em vez da API em nuvem:
+
+```bash
+pip install guessit
+```
+
+### 4. Compilar o Projeto
+
 ```bash
 npm run build
 ```
 
+---
+
+## Configuração da API GuessIt
+
+**Sem Python? Sem problema!** Agora você pode usar uma API GuessIt em nuvem em vez de instalar Python localmente.
+
+### Usando a API Pronta
+
+Você tem duas opções para usar a API em nuvem:
+
+#### Opção A: Usar Nossa API Pública (Mais Rápida) 🚀
+
+Use nossa API já deployada - nenhuma configuração necessária!
+
+1. **Simplesmente adicione ao seu arquivo `.env`**:
+   ```env
+   USE_GUESSIT_API=true
+   GUESSIT_API_URL=https://guessit-api.vercel.app/api/parse
+   ```
+
+2. **Pronto!** Inicie o mpv-rpc e ele usará nossa API em nuvem.
+
+> **Aviso de Privacidade:** 
+> - O código da API é open source e não coleta ou armazena nenhum dado do usuário
+> - A API apenas recebe nomes de arquivos e retorna metadados parseados - nada é salvo pelo nosso código
+> - Não temos motivo para coletar seus dados, e não queremos fazê-lo
+> 
+> Esta é uma API pública gratuita hospedada na Vercel. Embora nos esforcemos para mantê-la funcionando, para máxima privacidade ou uso intenso você pode querer fazer o deploy da sua própria (Opção B).
+
+#### Opção B: Fazer Deploy da Sua Própria API (Recomendado para Privacidade)
+
+O projeto inclui uma API Vercel pronta para deploy na pasta `guessit-api/`:
+
+1. **Fazer deploy da API** (configuração única):
+   ```bash
+   cd guessit-api
+   npm i -g vercel  # Instale o Vercel CLI se ainda não tiver
+   vercel
+   # Siga as instruções para fazer o deploy
+   ```
+
+2. **Copie a URL do deploy** (ex: `https://seu-projeto.vercel.app/api/parse`)
+
+3. **Configure o mpv-rpc** para usá-la:
+   ```bash
+   cd ..
+   cp .env.example .env
+   # Edite .env e adicione:
+   # USE_GUESSIT_API=true
+   # GUESSIT_API_URL=https://seu-projeto.vercel.app/api/parse
+   ```
+
+### Prioridade do Parser
+
+O parser automaticamente tenta estes métodos em ordem:
+
+1. **API em Nuvem** - Se `GUESSIT_API_URL` estiver configurado
+2. **CLI Local** - Se `guessit` estiver instalado localmente
+3. **Regex Fallback** - Matching de padrões básico (sempre funciona)
+
+### Benefícios da API em Nuvem
+
+- ✅ Não requer instalação do Python
+- ✅ Funciona identicamente no Windows, Linux e macOS
+- ✅ Sempre usa a versão mais recente do guessit
+- ✅ Cache inteligente (sem chamadas repetidas para o mesmo arquivo)
+- ✅ Zero dependências locais além do Node.js
+
+---
+
+## Configuração
+
+Copie o arquivo de ambiente de exemplo e ajuste as configurações:
+
+```bash
+cp .env.example .env
+```
+
+### Opções Disponíveis
+
+| Opção | Descrição | Padrão |
+|-------|-----------|--------|
+| `SHOW_COVER` | Exibir imagem da capa do anime | `true` |
+| `PRIVACY_MODE` | Ocultar todos os detalhes da mídia | `false` |
+| `HIDE_IDLING` | Ocultar status quando o MPV estiver ocioso | `false` |
+| `SHOW_TITLE` | Usar título do anime como nome da atividade | `true` |
+| `TITLE_LANG` | Idioma preferido do título (`english`, `romaji`, `none`) | `none` |
+| `METADATA_PROVIDER` | Fonte de metadados (`jikan`, `anilist`, `kitsu`) | `jikan` |
+| `USE_GUESSIT_API` | Usar API em nuvem para parsing de nomes de arquivo | `true` |
+| `GUESSIT_API_URL` | URL do endpoint da sua API GuessIt | (vazio) |
+| `MAL_SYNC` | Ativar sincronização com MyAnimeList | `false` |
+| `MAL_CLIENT_ID` | MyAnimeList API Client ID | (vazio) |
+| `MAL_SYNC_THRESHOLD` | Porcentagem assistida para disparar sync (0-100) | `90` |
+| `DISCORD_RPC` | Ativar Discord Rich Presence | `true` |
+
+---
+
 ## Configuração do MPV
 
-O MPV precisa ser iniciado com o servidor IPC habilitado. Adicione ao seu `mpv.conf`:
+O MPV deve ser iniciado com o servidor IPC habilitado.
+
+### Opção 1: Arquivo de Configuração
+
+Adicione ao seu `mpv.conf`:
 
 ```ini
+# Windows
 input-ipc-server=\\.\pipe\mpv
+
+# Linux
+input-ipc-server=/tmp/mpv-socket
 ```
 
-Ou inicie manualmente:
+### Opção 2: Linha de Comando
+
 ```bash
+# Windows
 mpv --input-ipc-server=\\.\pipe\mpv <arquivo>
+
+# Linux
+mpv --input-ipc-server=/tmp/mpv-socket <arquivo>
 ```
+
+---
 
 ## Uso
 
 Inicie a aplicação:
+
 ```bash
 npm start
 ```
 
-Ou compile e execute em um único comando:
+Ou compile e execute em um comando:
+
 ```bash
 npm run dev
 ```
 
-> **Nota:** Qualquer alteração feita no projeto requer a execução de `npm run build` ou `npm run dev` para recompilar e aplicar as atualizações.
+> **Nota:** Após fazer alterações no código, execute `npm run build` ou `npm run dev` para recompilar.
 
-A aplicação irá:
+**A aplicação irá:**
 1. Conectar ao Discord
-2. Procurar pelo MPV (com reconexão automática)
-3. Atualizar o Rich Presence em tempo real
+2. Monitorar instâncias do MPV (com reconexão automática)
+3. Atualizar seu status no Discord em tempo real
 4. Sincronizar progresso com o MyAnimeList (se ativado e autenticado)
 
-## Sincronização com o MAL
+---
 
-Você pode sincronizar automaticamente o seu progresso de episódios assistidos com o MyAnimeList. Isso requer uma autenticação única.
+## Sincronização MyAnimeList
 
-Para instruções detalhadas de como configurar e autorizar a sincronização, consulte o [Guia de Configuração do MyAnimeList](docs/mal-sync-setup.md).
+Sincronize automaticamente seu progresso de visualização com o MyAnimeList. Requer autenticação única.
+
+Para instruções detalhadas de configuração, consulte o [Guia de Configuração do MAL](docs/mal-sync-setup.md).
+
+---
 
 ## Stremio MPV Bridge
 
-Você pode integrar o Stremio Web com o MPV usando a bridge (ponte). Isso permite abrir streams diretamente no MPV com suporte inteligente a playlists para episódios.
+Integre o Stremio Web com o MPV para abrir streams diretamente no player com suporte inteligente a playlists.
 
-> [!IMPORTANT]
-> **Limitação de Sincronização:** O progresso de visualização (marcar como assistido) de volta para o Stremio funciona **apenas para itens baseados em IDs do IMDb (tt0000000)**. 
-> Conteúdos de catálogos como o Kitsu possuem estruturas de ID incompatíveis e funcionarão apenas no modo player (sem sincronizar o progresso no Stremio).
+> **Importante:** A sincronização de progresso de volta para o Stremio funciona **apenas para conteúdo baseado em IMDb (IDs tt0000000)**. Conteúdo do Kitsu suporta apenas reprodução (sem sync de progresso).
 
-**Destaques:**
-- **Sincronização:** O progresso de filmes e séries é sincronizado automaticamente com sua conta do Stremio (marcando como "visto" ao atingir 90%).
-- **Compatibilidade:** Suporte completo para reprodução de conteúdos do Kitsu (apenas player, sincronização de progresso não suportada).
-- **Metadados:** Identificação aprimorada de títulos de séries e episódios diretamente da interface do Stremio.
+**Recursos:**
+- Sincronização automática de progresso para filmes e séries (ao atingir 90%)
+- Suporte completo de reprodução para conteúdo do Kitsu
+- Identificação aprimorada de títulos de séries e episódios do Stremio
 
-Para instruções de configuração e uso, consulte o [Guia do Stremio MPV Bridge](docs/stremio-mpv-bridge.md).
+Para instruções de configuração, consulte o [Guia do Stremio MPV Bridge](docs/stremio-mpv-bridge.md).
 
-## Configuração
-
-As configurações podem ser ajustadas em `.env`:
-
-| Opção | Descrição | Padrão |
-|-------|-----------|--------|
-| `showCover` | Exibir capa do anime | `true` |
-| `privacyMode` | Ocultar detalhes da mídia | `false` |
-| `hideIdling` | Ocultar status quando ocioso | `false` |
-| `showTitleAsPresence` | Usar título do anime como nome da atividade | `true` |
-| `preferredTitleLanguage` | Idioma preferido do título (`english`, `romaji`, `none`) | `none` |
-| `MAL_SYNC` | Ativar sincronização com MyAnimeList | `false` |
-| `MAL_CLIENT_ID` | MyAnimeList API Client ID | (vazio) |
-| `MAL_SYNC_THRESHOLD` | % assistido para disparar sync (0-100) | `90` |
-| `DISCORD_RPC` | Ativar o Discord Rich Presence | `true` |
+---
 
 ## Como Funciona
 
-1. **Conexão IPC**: A aplicação se conecta ao MPV via named pipe para obter dados de reprodução em tempo real (título, posição, duração, estado de pausa).
+1. **Conexão IPC:** Conecta ao MPV via named pipe/Unix socket para obter dados de reprodução em tempo real (título, posição, duração, estado de pausa)
 
-2. **Parsing**: O nome do arquivo é analisado para extrair informações como título da série, temporada e episódio.
+2. **Análise do Nome do Arquivo:** Analisa o nome do arquivo para extrair título da série, temporada e informações do episódio
 
-3. **Metadados**: Se detectado como anime, a API Jikan é consultada para obter capa, títulos traduzidos e informações de episódio.
+3. **Busca de Metadados:** Se detectado como anime, consulta a API Jikan para obter imagens de capa, títulos traduzidos e dados de episódios
 
-4. **Rich Presence**: Os dados são formatados e enviados ao Discord, incluindo barra de progresso e ícones de estado.
+4. **Rich Presence:** Formata e envia os dados para o Discord com barras de progresso e ícones de estado
 
-## Exemplos
+---
 
-### Preferência de Idioma do Título
+## Capturas de Tela
+
+### Opções de Idioma do Título
 
 | Romaji | English | Filename |
 |:------:|:-------:|:--------:|
 | ![Romaji](assets/romaji.png) | ![English](assets/english.png) | ![Filename](assets/filename.png) |
 
-> *"Filename" exibe o nome original do arquivo como título.*
-
-### Exibição de Capa e Título como Atividade
+### Opções de Configuração
 
 | showCover | showTitleAsPresence |
 |:---------:|:-------------------:|
 | ![showCover](assets/filename.png) | ![showTitleAsPresence](assets/english.png) |
 
-### Modo Privacidade
+### Modo de Privacidade
 
 ![Privacy Mode](assets/privacymode.png)
 
-## Scripts Recomendados para o MPV
+---
 
-Para uma experiência ainda melhor com o MPV, confira estes scripts úteis de [Eisa01/mpv-scripts](https://github.com/Eisa01/mpv-scripts):
+## Scripts Recomendados
+
+Melhore sua experiência com o MPV usando estes scripts úteis do [Eisa01/mpv-scripts](https://github.com/Eisa01/mpv-scripts):
 
 | Script | Descrição |
 |--------|-----------|
-| [SmartSkip](https://github.com/Eisa01/mpv-scripts#smartskip) | Pula automaticamente intros, outros e silêncios em vídeos |
-| [SmartCopyPaste](https://github.com/Eisa01/mpv-scripts#smartcopypaste) | Copia/cola caminhos de vídeo, URLs e timestamps com Ctrl+C/V |
+| [SmartSkip](https://github.com/Eisa01/mpv-scripts#smartskip) | Pula automaticamente intros, outros e silêncios |
+| [SmartCopyPaste](https://github.com/Eisa01/mpv-scripts#smartcopypaste) | Copia/cola caminhos de vídeo, URLs e timestamps |
+
+---
 
 ## Dependências
 
 - [@xhayper/discord-rpc](https://www.npmjs.com/package/@xhayper/discord-rpc) - Cliente Discord RPC
 - [axios](https://www.npmjs.com/package/axios) - Cliente HTTP
 - [guessit](https://pypi.org/project/guessit/) - Parser de nomes de arquivos
-- [jikan](https://jikan.moe/) - Authless MAL API
-- [anilist](https://anilist.co/) - Anilist API
-- [kitsu](https://kitsu.io/) - Kitsu API
-- [PreMiD](https://premid.app/) - peguei alguns recursos daqui
+- [Jikan](https://jikan.moe/) - API não oficial do MyAnimeList
+- [AniList](https://anilist.co/) - API AniList
+- [Kitsu](https://kitsu.io/) - API Kitsu
+- [PreMiD](https://premid.app/) - Referência de assets
+
+---
 
 ## Contribuindo
 
-Contribuições são bem-vindas! Sinta-se à vontade para abrir issues e pull requests.
+Contribuições são bem-vindas. Sinta-se à vontade para abrir issues e pull requests.
 
 1. Faça um fork do projeto
 2. Crie sua branch de feature (`git checkout -b feature/RecursoIncrivel`)
@@ -224,19 +392,26 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues e pull re
 4. Push para a branch (`git push origin feature/RecursoIncrivel`)
 5. Abra um Pull Request
 
+---
+
 ## TODO
 
+**Concluído:**
 - [x] Suporte a Linux (Unix sockets)
 - [x] Configuração via arquivo `.env`
-- [x] Suporte para AniList API
-- [x] Suporte para Kitsu API
+- [x] Suporte a API AniList
+- [x] Suporte a API Kitsu
 - [x] Sincronização com MAL (marcar como assistido)
-- [ ] Metadados para filmes e séries (TMDb/OMDb)
-- [ ] System Tray (rodar em background)
-- [ ] Interface gráfica (GUI) para facil configuração
-- [ ] Modo Mini (Exibir apenas "Assistindo [Arquivo]" sem busca de metadados)
+- [x] **API GuessIt em Nuvem** - Sem Python necessário!
 
+**Planejado:**
+- [ ] Metadados para filmes e séries de TV (TMDb/OMDb)
+- [ ] Bandeja do sistema (rodar em background)
+- [ ] Interface gráfica (GUI) para configuração
+- [ ] Modo Mini (exibir apenas nome do arquivo sem busca de metadados)
+
+---
 
 ## Licença
 
-MIT
+Licença MIT - veja os arquivos do projeto para mais detalhes.

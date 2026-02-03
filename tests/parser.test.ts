@@ -91,4 +91,77 @@ describe('Parser Fallback Logic', () => {
         expect(result.season).toBe(2);
         expect(result.episode).toBe(7);
     });
+
+    it('should parse Jujutsu Kaisen NF WEB-DL as anime', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const filename = 'Jujutsu.Kaisen.S03E03.1080p.NF.WEB-DL.JPN.AAC2.0.H.264.MSubs-ToonsHub.mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('Jujutsu Kaisen');
+        expect(result.season).toBe(3);
+        expect(result.episode).toBe(3);
+        expect(result.media_type).toBe('anime'); // JPN + streaming service = anime
+    });
+});
+
+describe('Invalid Title Validation', () => {
+    it('should mark "0" as unknown media type (streaming URL bug)', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const result = await parser.parseFilename('0');
+
+        // Title is just a number, should be marked as unknown to prevent bad API searches
+        expect(result.media_type).toBe('unknown');
+    });
+
+    it('should mark "123" as unknown media type', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const result = await parser.parseFilename('123');
+
+        expect(result.media_type).toBe('unknown');
+    });
+
+    it('should mark single letter "X" as unknown media type', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const result = await parser.parseFilename('X');
+
+        // Only 1 letter, need at least 2 for valid title
+        expect(result.media_type).toBe('unknown');
+    });
+
+    it('should accept "Re Zero" as valid title and parse correctly', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const result = await parser.parseFilename('Re Zero - S01E01.mkv');
+
+        // Title is valid (has letters), should be parsed correctly
+        expect(result.series_title).toBe('Re Zero');
+        expect(result.season).toBe(1);
+        expect(result.episode).toBe(1);
+        // media_type may be 'unknown' since there's no anime/series indicators in filename
+        // but the title itself should NOT be rejected as invalid
+    });
 });
