@@ -57,8 +57,21 @@ function loadCache(): void {
         const cachePath = getCachePath();
         if (fs.existsSync(cachePath)) {
             const data = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+            const now = Date.now();
+            let expiredCount = 0;
             for (const [key, value] of Object.entries(data)) {
-                cache.set(key, value as CacheEntry);
+                const entry = value as CacheEntry;
+                // Only load entries that are not expired
+                if (now - entry.timestamp < CACHE_TTL) {
+                    cache.set(key, entry);
+                } else {
+                    expiredCount++;
+                }
+            }
+            if (expiredCount > 0) {
+                console.log(`[Anime] Cleaned ${expiredCount} expired cache entries`);
+                // Save immediately to persist the cleanup
+                saveCache();
             }
         }
     } catch (e) {
@@ -70,8 +83,12 @@ function saveCache(): void {
     try {
         const cachePath = getCachePath();
         const data: Record<string, CacheEntry> = {};
+        const now = Date.now();
+        // Only save entries that are still valid
         cache.forEach((value, key) => {
-            data[key] = value;
+            if (now - value.timestamp < CACHE_TTL) {
+                data[key] = value;
+            }
         });
         fs.writeFileSync(cachePath, JSON.stringify(data, null, 2));
     } catch (e) {
@@ -89,6 +106,14 @@ function getCacheKey(title: string, season: number | null): string {
  * Get anime info including cover and titles
  */
 export async function getAnimeInfo(title: string, season: number | null = null): Promise<AnimeInfo | null> {
+    // Don't search for titles that are too short or just contain numbers
+    // Minimum 3 words or 10 characters to avoid false matches like "strange" → "Orange"
+    const wordCount = title.split(/\s+/).filter(w => w.length > 0).length;
+    const isValidLength = title.length >= 10 || wordCount >= 2;
+    if (!isValidLength || /^[\d.\-_\s]+$/.test(title)) {
+        return null;
+    }
+
     const cacheKey = getCacheKey(title, season);
 
     // Check cache

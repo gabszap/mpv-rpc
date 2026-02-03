@@ -39,9 +39,12 @@ async function update(): Promise<void> {
             return;
         }
 
-        // Update Discord presence
+        // Update Discord presence (if enabled)
         if (config.settings.discordRpc) {
             await discord.setActivity(data);
+        } else {
+            // Still log status to terminal even with RPC off
+            discord.logStatus(data);
         }
 
         // MAL sync - if enabled and watching anime
@@ -117,12 +120,17 @@ async function start(): Promise<void> {
 
     // Check Parser availability
     console.log("[Main] Checking parser...");
-    const guessitAvailable = await checkAvailability();
-    if (guessitAvailable) {
-        console.log("[Main] GuessIt found! Advanced parsing enabled.");
+    if (config.guessitApi.enabled && config.guessitApi.url) {
+        console.log(`[Main] GuessIt API enabled: ${config.guessitApi.url}`);
     } else {
-        console.warn("[Main] WARNING: GuessIt not found. Using basic fallback parser.");
-        console.warn("       Install Python and run 'pip install guessit' for better accuracy.");
+        const guessitAvailable = await checkAvailability();
+        if (guessitAvailable) {
+            console.log("[Main] GuessIt CLI found! Advanced parsing enabled.");
+        } else {
+            console.warn("[Main] WARNING: No GuessIt available. Using basic fallback parser.");
+            console.warn("       Set GUESSIT_API_URL in .env for cloud-based parsing (no Python needed).");
+            console.warn("       See guessit-api/README.md for deployment instructions.");
+        }
     }
 
     // Show metadata provider

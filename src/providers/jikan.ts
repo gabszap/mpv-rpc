@@ -107,6 +107,65 @@ function isPartOfSameSeason(title: string): boolean {
     return partPatterns.some(p => p.test(title));
 }
 
+/**
+ * Normalize a title for comparison purposes
+ * Removes/normalizes special characters like /, -, _, . and extra whitespace
+ * This is only for matching, the original title is preserved
+ */
+function normalizeForComparison(title: string): string {
+    return title
+        .toLowerCase()
+        .replace(/[\/\-_.:]+/g, " ")  // Replace special chars with space
+        .replace(/\s+/g, " ")          // Collapse multiple spaces
+        .trim();
+}
+
+/**
+ * Calculate a similarity score between search query and anime title
+ * Higher score = better match
+ */
+function calculateTitleScore(query: string, animeTitle: string, englishTitle: string | null): number {
+    const normalizedQuery = normalizeForComparison(query);
+    const normalizedRomaji = normalizeForComparison(animeTitle);
+    const normalizedEnglish = englishTitle ? normalizeForComparison(englishTitle) : "";
+
+    let score = 0;
+
+    // Exact match (highest priority)
+    if (normalizedRomaji === normalizedQuery || normalizedEnglish === normalizedQuery) {
+        score += 1000;
+    }
+
+    // Starts with query (high priority)
+    if (normalizedRomaji.startsWith(normalizedQuery) || normalizedEnglish.startsWith(normalizedQuery)) {
+        score += 500;
+    }
+
+    // Contains all words from query (medium priority)
+    const queryWords = normalizedQuery.split(" ").filter(w => w.length > 1);
+    const titleWords = `${normalizedRomaji} ${normalizedEnglish}`;
+    const matchedWords = queryWords.filter(w => titleWords.includes(w));
+    if (matchedWords.length === queryWords.length) {
+        score += 300 + (matchedWords.length * 50);
+    } else {
+        // Partial word match
+        score += matchedWords.length * 30;
+    }
+
+    // Contains query as substring
+    if (normalizedRomaji.includes(normalizedQuery) || normalizedEnglish.includes(normalizedQuery)) {
+        score += 200;
+    }
+
+    // Penalize if title is much longer than query (likely wrong anime)
+    const lengthRatio = normalizedQuery.length / Math.max(normalizedRomaji.length, normalizedEnglish.length || 1);
+    if (lengthRatio < 0.3) {
+        score -= 100;
+    }
+
+    return score;
+}
+
 export class JikanProvider implements AnimeProvider {
     readonly name = "jikan";
 
@@ -116,8 +175,6 @@ export class JikanProvider implements AnimeProvider {
                 q: title,
                 limit: 10,
                 sfw: true,
-                order_by: "members",
-                sort: "desc",
             });
 
             if (!response.data || response.data.length === 0) {
@@ -126,29 +183,33 @@ export class JikanProvider implements AnimeProvider {
             }
 
             const results = response.data;
-            const titleLower = title.toLowerCase();
 
-            // Prefer exact matches
-            for (const anime of results) {
-                const romaji = (anime.title || "").toLowerCase();
-                const english = (anime.title_english || "").toLowerCase();
-
-                if (romaji === titleLower || english === titleLower) {
-                    return this.mapSearchResult(anime);
-                }
-                if (romaji.startsWith(titleLower) || english.startsWith(titleLower)) {
-                    return this.mapSearchResult(anime);
-                }
-            }
-
-            // Filter spin-offs
+            // Filter spin-offs first
             const spinoffPatterns = /chibi|theatre|theater|special|tebie|caidan|petit|mini/i;
             const mainResults = results.filter((a: any) => !spinoffPatterns.test(a.title || ""));
             const candidates = mainResults.length > 0 ? mainResults : results;
 
-            const tvResult = candidates.find((a: any) => a.type === "TV" || a.type === "ONA");
-            const selected = tvResult || candidates[0];
-            logApiCall("Jikan", "/anime", { q: title }, "DETAIL", `"${selected.title}" (MAL:${selected.mal_id})`);
+            // Score each candidate by title similarity
+            const scoredCandidates = candidates.map((anime: any) => ({
+                anime,
+                score: calculateTitleScore(title, anime.title || "", anime.title_english),
+            }));
+
+            // Sort by score (descending), then prefer TV/ONA types
+            scoredCandidates.sort((a: any, b: any) => {
+                // Primary: score
+                if (b.score !== a.score) return b.score - a.score;
+                // Secondary: prefer TV/ONA
+                const aIsTV = a.anime.type === "TV" || a.anime.type === "ONA";
+                const bIsTV = b.anime.type === "TV" || b.anime.type === "ONA";
+                if (bIsTV && !aIsTV) return 1;
+                if (aIsTV && !bIsTV) return -1;
+                return 0;
+            });
+
+            const selected = scoredCandidates[0].anime;
+            const selectedScore = scoredCandidates[0].score;
+            logApiCall("Jikan", "/anime", { q: title }, "DETAIL", `"${selected.title}" (MAL:${selected.mal_id}) [score:${selectedScore}]`);
             return this.mapSearchResult(selected);
         } catch (e) {
             console.error("[Jikan] Search error:", e);

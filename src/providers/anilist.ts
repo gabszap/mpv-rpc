@@ -214,18 +214,41 @@ export class AniListProvider implements AnimeProvider {
             const response = await anilistRequest(EPISODE_QUERY, { id: animeId }, "getEpisode");
             const episodes = response?.data?.Media?.streamingEpisodes;
 
-            if (episodes && episodes.length >= episode) {
-                // AniList episode titles often include "Episode X - Title" format
+            if (!episodes || episodes.length === 0) {
+                logApiCall("AniList", "getEpisode", { id: animeId, ep: episode }, "DETAIL", "no episode data");
+                return null;
+            }
+
+            // streamingEpisodes is NOT ordered by episode number
+            // We need to parse the episode number from the title and find the correct match
+            for (const epData of episodes) {
+                if (!epData?.title) continue;
+
+                // Parse episode number from title (e.g., "Episode 2 - Whispers of Dawn")
+                const match = epData.title.match(/Episode\s*(\d+)\s*[-:]\s*(.+)/i);
+                if (match) {
+                    const epNum = parseInt(match[1], 10);
+                    const epTitle = match[2].trim();
+
+                    if (epNum === episode) {
+                        logApiCall("AniList", "getEpisode", { id: animeId, ep: episode }, "DETAIL", `"${epTitle}"`);
+                        return epTitle;
+                    }
+                }
+            }
+
+            // Fallback: try without episode number format (some titles are just the name)
+            // In this case, use index-based but log a warning
+            if (episodes.length >= episode) {
                 const epData = episodes[episode - 1];
                 if (epData?.title) {
-                    // Try to extract just the title part
-                    const match = epData.title.match(/Episode\s*\d+\s*[-:]\s*(.+)/i);
-                    const title = match ? match[1] : epData.title;
-                    logApiCall("AniList", "getEpisode", { id: animeId, ep: episode }, "DETAIL", `"${title}"`);
+                    const title = epData.title.replace(/Episode\s*\d+\s*[-:]\s*/i, "").trim();
+                    logApiCall("AniList", "getEpisode", { id: animeId, ep: episode }, "DETAIL", `"${title}" (fallback)`);
                     return title;
                 }
             }
-            logApiCall("AniList", "getEpisode", { id: animeId, ep: episode }, "DETAIL", "no episode data");
+
+            logApiCall("AniList", "getEpisode", { id: animeId, ep: episode }, "DETAIL", "episode not found");
             return null;
         } catch {
             return null;

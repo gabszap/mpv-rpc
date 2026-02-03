@@ -83,8 +83,14 @@ export async function clearActivity(): Promise<void> {
 /**
  * Log status to terminal (avoids duplicates, ignores pause state changes)
  */
-function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}): void {
+export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}): void {
     const title = data.series_title !== "N/A" ? data.series_title : data.media_title;
+
+    // Don't log if title is invalid (just numbers, too short, or N/A)
+    if (title === "N/A" || /^[\d.\-_\s]+$/.test(title) || title.length < 2) {
+        return;
+    }
+
     // Clean title (remove "- Season X" suffix)
     const cleanTitle = title.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
 
@@ -153,6 +159,28 @@ export async function setActivity(data: MpvData): Promise<void> {
 
     const isPaused = data.pause;
     const fullTitle = data.series_title !== "N/A" ? data.series_title : data.media_title;
+
+    // Check if title is invalid (just numbers, too short, etc.)
+    // Treat as idle to avoid showing meaningless titles like "0"
+    const isInvalidTitle = fullTitle === "N/A" || /^[\d.\-_\s]+$/.test(fullTitle) || fullTitle.length < 2;
+    if (isInvalidTitle) {
+        if (config.settings.hideIdling) {
+            await clearActivity();
+            return;
+        }
+        try {
+            await client!.user?.setActivity({
+                type: ActivityType.Playing,
+                details: "Watching something...",
+                state: "Unknown media",
+                largeImageKey: config.mpvIcon,
+                largeImageText: "MPV Media Player",
+            });
+        } catch (e) {
+            console.error("[Discord] Error setting activity:", e);
+        }
+        return;
+    }
 
     // Clean title (remove "- Season X" suffix for activity name)
     const cleanTitle = fullTitle.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
