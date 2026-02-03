@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stremio MPV Bridge
 // @namespace    https://github.com/gabszap/mpv-rpc
-// @version      1.7.2
+// @version      1.7.3
 // @icon         https://www.stremio.com/website/stremio-purple-small.png
 // @description  Open Stremio Web streams directly in MPV with playlist support
 // @homepage     https://github.com/gabszap/mpv-rpc
@@ -285,6 +285,15 @@
                     <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
                 </div>
 
+                <div class="mpv-form-group" style="margin-top: 24px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <label class="mpv-label">Direct Link</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="mpv-direct-link" class="mpv-input" placeholder="Paste stream URL here..." style="flex: 1;">
+                        <button class="mpv-btn mpv-btn-save" id="mpv-open-link" style="padding: 10px 16px; white-space: nowrap;">▶ Open</button>
+                    </div>
+                    <div class="mpv-help" style="margin-top: 4px;">Open any URL directly in MPV</div>
+                </div>
+
                 <div class="mpv-actions">
                     <button class="mpv-btn mpv-btn-cancel" id="mpv-cancel">Cancel</button>
                     <button class="mpv-btn mpv-btn-save" id="mpv-save">Save</button>
@@ -336,6 +345,74 @@
         modal.querySelector('#mpv-save').addEventListener('click', () => {
             saveConfig();
             closeModal();
+        });
+
+        // Direct Link functionality
+        modal.querySelector('#mpv-open-link').addEventListener('click', async () => {
+            const linkInput = modal.querySelector('#mpv-direct-link');
+            const url = linkInput?.value?.trim();
+
+            if (!url) {
+                showToast('Please paste a URL first', 'error');
+                return;
+            }
+
+            // Block URLs with URL-encoded characters (broken links)
+            if (/%[0-9A-Fa-f]{2}/.test(url)) {
+                showToast('URL contains encoded characters - please use a clean URL', 'error');
+                return;
+            }
+
+            // Extract title from URL
+            let title;
+            try {
+                const urlObj = new URL(url);
+                const pathname = urlObj.pathname;
+                // Get filename from path
+                const filename = pathname.split('/').pop() || '';
+                // Remove extension and clean up (replace . _ - with spaces)
+                title = filename.replace(/\.[^.]+$/, '').replace(/[._-]/g, ' ').trim();
+                if (!title || title.length < 3) {
+                    title = urlObj.hostname; // Fallback to hostname
+                }
+            } catch {
+                title = 'Direct Link';
+            }
+
+            try {
+                if (!(await checkServer())) {
+                    showToast('Server offline! Run: node stremio-mpv-bridge/server.js', 'error');
+                    return;
+                }
+
+                const openBtn = modal.querySelector('#mpv-open-link');
+                openBtn.textContent = '⏳';
+                openBtn.disabled = true;
+
+                await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'POST',
+                        url: `${CONFIG.SERVER_URL}/play`,
+                        headers: { 'Content-Type': 'application/json' },
+                        data: JSON.stringify({
+                            playlist: [{ url, title }],
+                            contentTitle: title
+                        }),
+                        onload: r => r.status === 200 ? resolve() : reject(new Error('Server error')),
+                        onerror: () => reject(new Error('Connection failed'))
+                    });
+                });
+
+                showToast('Opening in MPV...', 'success');
+                linkInput.value = '';
+                openBtn.textContent = '▶ Open';
+                openBtn.disabled = false;
+            } catch (err) {
+                showToast(`Failed: ${err.message}`, 'error');
+                const openBtn = modal.querySelector('#mpv-open-link');
+                openBtn.textContent = '▶ Open';
+                openBtn.disabled = false;
+            }
         });
 
         // Keyboard shortcut capture
