@@ -6,6 +6,7 @@ import { Client } from "@xhayper/discord-rpc";
 import { config } from "./config";
 import type { MpvData } from "./mpv";
 import { ActivityType, Assets } from "./functions/types";
+import { resolveDisplayTitle, createEpisodeContext } from "./console";
 
 let client: Client | null = null;
 let isConnected = false;
@@ -94,12 +95,29 @@ export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}
     // Clean title (remove "- Season X" suffix)
     const cleanTitle = title.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
 
+    // Create episode context for override resolution
+    const episodeContext = createEpisodeContext(
+        data.filename,
+        data.series_title,
+        data.season,
+        data.episode
+    );
+
+    // Resolve episode title with potential manual override
+    const { title: episodeTitle, isOverride } = resolveDisplayTitle(
+        data.episode_title || "",
+        episodeContext
+    );
+
     let statusLog = `Watching "${cleanTitle}`;
     if (data.season !== null && data.episode !== null) {
         statusLog += ` S${String(data.season).padStart(2, "0")}E${String(data.episode).padStart(2, "0")}`;
     }
-    if (data.episode_title) {
-        statusLog += ` - ${data.episode_title}`;
+    if (episodeTitle) {
+        statusLog += ` - ${episodeTitle}`;
+        if (isOverride) {
+            statusLog += " [Manual]";
+        }
     }
     statusLog += `"`;
     if (options.privacyMode) statusLog += " (Privacy Mode)";
@@ -185,6 +203,18 @@ export async function setActivity(data: MpvData): Promise<void> {
     // Clean title (remove "- Season X" suffix for activity name)
     const cleanTitle = fullTitle.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
 
+    // Create episode context and resolve any manual override
+    const episodeContext = createEpisodeContext(
+        data.filename,
+        data.series_title,
+        data.season,
+        data.episode
+    );
+    const { title: resolvedEpisodeTitle } = resolveDisplayTitle(
+        data.episode_title || "",
+        episodeContext
+    );
+
     // Build state string
     let state = "";
     let details = fullTitle; // Default: show full title in details
@@ -193,16 +223,16 @@ export async function setActivity(data: MpvData): Promise<void> {
     if (config.settings.showTitleAsPresence) {
         if (data.season !== null && data.episode !== null) {
             // SxEx format
-            details = data.episode_title || `Episode ${data.episode}`;
+            details = resolvedEpisodeTitle || `Episode ${data.episode}`;
             state = "on MPV";
         } else if (data.episode !== null) {
             // Episode only (no season)
-            details = data.episode_title
-                ? `Episode ${data.episode} - ${data.episode_title}`
+            details = resolvedEpisodeTitle
+                ? `Episode ${data.episode} - ${resolvedEpisodeTitle}`
                 : `Episode ${data.episode}`;
             state = "on MPV";
-        } else if (data.episode_title) {
-            details = data.episode_title;
+        } else if (resolvedEpisodeTitle) {
+            details = resolvedEpisodeTitle;
             state = "on MPV";
         } else {
             details = "on MPV";
@@ -210,17 +240,17 @@ export async function setActivity(data: MpvData): Promise<void> {
         }
     } else if (data.season !== null && data.episode !== null) {
         // Discord already shows badge with season/episode, so just show title
-        state = data.episode_title || "";
+        state = resolvedEpisodeTitle || "";
     } else if (data.episode !== null) {
         // Episode only (no season) - show episode info in state
-        if (data.episode_title) {
-            state = `Episode ${data.episode} - ${data.episode_title}`;
+        if (resolvedEpisodeTitle) {
+            state = `Episode ${data.episode} - ${resolvedEpisodeTitle}`;
         } else {
             state = `Episode ${data.episode}`;
         }
-    } else if (data.episode_title) {
+    } else if (resolvedEpisodeTitle) {
         // Only have episode title (no episode number) - show title as state
-        state = data.episode_title;
+        state = resolvedEpisodeTitle;
     } else if (data.artist !== "N/A") {
         state = `by ${data.artist}`;
     } else {

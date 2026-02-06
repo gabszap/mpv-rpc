@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stremio MPV Bridge
 // @namespace    https://github.com/gabszap/mpv-rpc
-// @version      1.7.4
+// @version      1.8.0
 // @icon         https://www.stremio.com/website/stremio-purple-small.png
 // @description  Open Stremio Web streams directly in MPV with playlist support
 // @homepage     https://github.com/gabszap/mpv-rpc
@@ -40,6 +40,183 @@
             { id: 'debrid-link', name: 'Debrid Link' }
         ]
     };
+
+    // Cache for custom provider names (from manifest.json)
+    const providerNameCache = new Map();
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+    /**
+     * Get known provider by ID from AVAILABLE_PROVIDERS
+     */
+    function getKnownProvider(id) {
+        const allProviders = [...AVAILABLE_PROVIDERS.providers, ...AVAILABLE_PROVIDERS.debrid];
+        return allProviders.find(p => p.id === id) || null;
+    }
+
+    /**
+     * Extract provider name from URL domain
+     */
+    function extractNameFromUrl(url) {
+        if (!url) return null;
+        try {
+            const hostname = new URL(url).hostname.replace(/^www\./, '');
+            const name = hostname.split('.')[0];
+            return name.charAt(0).toUpperCase() + name.slice(1);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Clean up manifest name - extract the actual provider name from wrapper formats
+     * Examples:
+     *   "STREMTHRU(TB)(BRAZUCA TORRENTS)" -> "Brazuca Torrents"
+     *   "Torbox (Brazuca)" -> "Brazuca"
+     *   "My Addon Name" -> "My Addon Name"
+     */
+    function cleanManifestName(name) {
+        if (!name) return null;
+        
+        // Check for nested parentheses pattern like "WRAPPER(X)(ACTUAL NAME)"
+        const nestedMatch = name.match(/\(([^()]+)\)(?:\s*$|(?=\)))/g);
+        if (nestedMatch && nestedMatch.length > 0) {
+            const lastMatch = nestedMatch[nestedMatch.length - 1];
+            const innerName = lastMatch.replace(/^\(|\)$/g, '').trim();
+            if (innerName.length > 2) {
+                return innerName.split(' ')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                    .join(' ');
+            }
+        }
+        
+        return name.trim();
+    }
+
+    /**
+     * Fetch provider name from manifest.json for custom providers
+     */
+    async function fetchManifestName(url) {
+        return new Promise((resolve) => {
+            if (!url) {
+                resolve(null);
+                return;
+            }
+
+            let manifestUrl = url;
+            if (!manifestUrl.endsWith('/manifest.json')) {
+                manifestUrl = manifestUrl.replace(/\/$/, '') + '/manifest.json';
+            }
+
+            log(`Fetching manifest from: ${manifestUrl}`);
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: manifestUrl,
+                timeout: 5000,
+                headers: { 'Accept': 'application/json' },
+                onload: (response) => {
+                    try {
+                        if (response.status === 200) {
+                            const manifest = JSON.parse(response.responseText);
+                            if (manifest.name) {
+                                const cleanedName = cleanManifestName(manifest.name);
+                                log(`Manifest name: "${manifest.name}" -> cleaned: "${cleanedName}"`);
+                                resolve(cleanedName);
+                                return;
+                            }
+                        }
+                        resolve(null);
+                    } catch (e) {
+                        log('Failed to parse manifest:', e.message);
+                        resolve(null);
+                    }
+                },
+                onerror: () => resolve(null),
+                ontimeout: () => resolve(null)
+            });
+        });
+    }
+
+    /**
+     * Resolve provider display name with caching
+     */
+    async function resolveProviderName(provider) {
+        const known = getKnownProvider(provider.id);
+        if (known) return known.name;
+
+        if (!provider.id.startsWith('custom') && provider.name) return provider.name;
+
+        if (provider.url && providerNameCache.has(provider.url)) {
+            const cached = providerNameCache.get(provider.url);
+            if (Date.now() - cached.timestamp < CACHE_TTL) return cached.displayName;
+        }
+
+        if (provider.url && provider.id.startsWith('custom')) {
+            const manifestName = await fetchManifestName(provider.url);
+            
+            if (manifestName) {
+                const displayName = `Custom (${manifestName})`;
+                providerNameCache.set(provider.url, { name: manifestName, displayName, timestamp: Date.now() });
+                return displayName;
+            }
+
+            const domainName = extractNameFromUrl(provider.url);
+            if (domainName) {
+                const displayName = `Custom (${domainName})`;
+                providerNameCache.set(provider.url, { name: domainName, displayName, timestamp: Date.now() });
+                return displayName;
+            }
+        }
+
+        return provider.name || provider.id;
+    }
+
+    /**
+     * Update provider labels in the modal with resolved names
+     */
+    async function updateProviderLabels(modal) {
+        const providerItems = modal.querySelectorAll('.mpv-provider-item');
+
+        for (const item of providerItems) {
+            const providerId = item.dataset.id;
+            const providerUrl = item.dataset.url;
+            const label = item.querySelector('.mpv-provider-label');
+            const loadingSpan = item.querySelector('.mpv-loading-name');
+
+            if (providerId.startsWith('custom') && providerUrl && label) {
+                if (loadingSpan) loadingSpan.textContent = '(loading...)';
+
+                const provider = providers.find(p => p.id === providerId);
+                if (provider) {
+                    const resolvedName = await resolveProviderName(provider);
+                    label.textContent = resolvedName;
+                    if (loadingSpan) loadingSpan.remove();
+                }
+            }
+        }
+    }
+
+    /**
+     * Update a single provider label when URL changes
+     */
+    async function updateSingleProviderLabel(modal, providerId, url) {
+        const item = modal.querySelector(`.mpv-provider-item[data-id="${providerId}"]`);
+        if (!item) return;
+
+        const label = item.querySelector('.mpv-provider-label');
+        if (!label) return;
+
+        item.dataset.url = url;
+
+        if (providerId.startsWith('custom') && url) {
+            const originalText = label.textContent;
+            label.innerHTML = `${originalText.split('(')[0].trim()} <span style="font-size: 10px; opacity: 0.6;">(loading...)</span>`;
+
+            const provider = { id: providerId, url: url, name: originalText };
+            const resolvedName = await resolveProviderName(provider);
+            label.textContent = resolvedName;
+        }
+    }
 
     // Default active providers (only torrentio + custom)
     const DEFAULT_ACTIVE = [
@@ -81,13 +258,15 @@
         let providersHTML = providers.map((p, index) => {
             // Allow removing all providers except default torrentio and base custom
             const isRemovable = p.id !== 'torrentio' && p.id !== 'custom';
+            const isCustom = p.id.startsWith('custom');
+            const loadingIndicator = isCustom && p.url ? '<span class="mpv-loading-name" style="font-size: 10px; opacity: 0.6; margin-left: 4px;"></span>' : '';
             return `
-            <div class="mpv-form-group mpv-provider-item" data-id="${p.id}">
+            <div class="mpv-form-group mpv-provider-item" data-id="${p.id}" data-url="${p.url || ''}">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <input type="checkbox" data-id="${p.id}" class="mpv-provider-toggle" ${p.enabled ? 'checked' : ''} 
                                style="width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; accent-color: #8b5cf6; appearance: auto; -webkit-appearance: checkbox; margin: 0;">
-                        <label class="mpv-label" style="margin: 0; cursor: pointer;" onclick="this.parentElement.querySelector('input').click()">${p.name}</label>
+                        <label class="mpv-label mpv-provider-label" data-id="${p.id}" style="margin: 0; cursor: pointer;" onclick="this.parentElement.querySelector('input').click()">${p.name}${loadingIndicator}</label>
                     </div>
                     <div style="display: flex; gap: 4px;">
                         <button class="mpv-reorder-btn" onclick="const item = this.closest('.mpv-provider-item'); if(item.previousElementSibling?.classList.contains('mpv-provider-item')) item.parentNode.insertBefore(item, item.previousElementSibling)" title="Move Up">▲</button>
@@ -304,6 +483,9 @@
         document.body.appendChild(modal);
         requestAnimationFrame(() => modal.classList.add('active'));
 
+        // Resolve and update custom provider names asynchronously
+        updateProviderLabels(modal);
+
         const countGroup = modal.querySelector('#mpv-group-count');
         const radioButtons = modal.querySelectorAll('input[name="mpv-stream-mode"]');
         const radioOptions = modal.querySelectorAll('.mpv-radio-option');
@@ -348,18 +530,32 @@
         });
 
         // Direct Link functionality
-        modal.querySelector('#mpv-open-link').addEventListener('click', async () => {
+        const openDirectLink = async (forceOpen = false) => {
             const linkInput = modal.querySelector('#mpv-direct-link');
             const url = linkInput?.value?.trim();
+            const directLinkGroup = linkInput?.closest('.mpv-form-group');
+
+            // Remove any existing "Open Anyway" button
+            const existingForceBtn = directLinkGroup?.querySelector('.mpv-force-open-btn');
+            if (existingForceBtn) existingForceBtn.remove();
 
             if (!url) {
                 showToast('Please paste a URL first', 'error');
                 return;
             }
 
-            // Block URLs with URL-encoded characters (broken links)
-            if (/%[0-9A-Fa-f]{2}/.test(url)) {
-                showToast('URL contains encoded characters - please use a clean URL', 'error');
+            // Block URLs with URL-encoded characters (broken links) - unless forced
+            if (!forceOpen && /%[0-9A-Fa-f]{2}/.test(url)) {
+                showToast('URL contains encoded characters - may not work correctly', 'error');
+                
+                // Add "Open Anyway" button
+                const forceBtn = document.createElement('button');
+                forceBtn.className = 'mpv-btn mpv-force-open-btn';
+                forceBtn.textContent = '⚠️ Open Anyway';
+                forceBtn.style.cssText = 'margin-top: 8px; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.5); color: #ef4444; width: 100%; padding: 8px;';
+                forceBtn.addEventListener('click', () => openDirectLink(true));
+                
+                directLinkGroup?.appendChild(forceBtn);
                 return;
             }
 
@@ -368,12 +564,10 @@
             try {
                 const urlObj = new URL(url);
                 const pathname = urlObj.pathname;
-                // Get filename from path
                 const filename = pathname.split('/').pop() || '';
-                // Remove extension and clean up (replace . _ - with spaces)
                 title = filename.replace(/\.[^.]+$/, '').replace(/[._-]/g, ' ').trim();
                 if (!title || title.length < 3) {
-                    title = urlObj.hostname; // Fallback to hostname
+                    title = urlObj.hostname;
                 }
             } catch {
                 title = 'Direct Link';
@@ -381,7 +575,7 @@
 
             try {
                 if (!(await checkServer())) {
-                    showToast('Server offline! Run: node stremio-mpv-bridge/server.js', 'error');
+                    showToast('Server offline! Run: npm run bridge', 'error');
                     return;
                 }
 
@@ -413,7 +607,9 @@
                 openBtn.textContent = '▶ Open';
                 openBtn.disabled = false;
             }
-        });
+        };
+
+        modal.querySelector('#mpv-open-link').addEventListener('click', () => openDirectLink(false));
 
         // Keyboard shortcut capture
         const shortcutBtn = modal.querySelector('#mpv-shortcut-btn');
@@ -446,6 +642,17 @@
                 if (input) {
                     input.style.opacity = e.target.checked ? '1' : '0.5';
                     input.style.pointerEvents = e.target.checked ? 'auto' : 'none';
+                }
+            });
+        });
+
+        // Update provider name when URL input changes (on blur)
+        modal.querySelectorAll('.mpv-provider-input').forEach(input => {
+            input.addEventListener('blur', (e) => {
+                const providerId = e.target.dataset.id;
+                const url = e.target.value.trim();
+                if (providerId.startsWith('custom') && url) {
+                    updateSingleProviderLabel(modal, providerId, url);
                 }
             });
         });
@@ -1055,12 +1262,20 @@
         setTimeout(() => toast.remove(), 3000);
     }
 
-    function init() {
+    async function init() {
         const version = GM_info.script.version;
         notify(`v${version} initialized!`);
 
-        const active = providers.filter(p => p.enabled && p.url).map(p => p.name);
-        notify(`Active providers: ${active.length > 0 ? active.join(', ') : 'None'}`);
+        // Resolve provider names asynchronously for logging
+        const activeProviders = providers.filter(p => p.enabled && p.url);
+        if (activeProviders.length > 0) {
+            const resolvedNames = await Promise.all(
+                activeProviders.map(p => resolveProviderName(p))
+            );
+            notify(`Active providers: ${resolvedNames.join(', ')}`);
+        } else {
+            notify('Active providers: None');
+        }
 
         const modeText = playlistMode === 'all' ? 'Load All' : (playlistMode === 'single' ? 'Single' : `Batch | Extra: ${extraEpisodes}`);
         notify(`Mode: ${modeText}`);

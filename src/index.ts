@@ -10,7 +10,10 @@ import * as discord from "./discord";
 import { checkAvailability } from "./parser";
 import { providerName } from "./anime";
 import { syncEpisode, authorize, isAuthenticated, getUsername } from "./mal-sync/sync";
+import { ConsoleRepl, createEpisodeContext } from "./console";
 import axios from "axios";
+
+let consoleRepl: ConsoleRepl | null = null;
 
 let updateInterval: NodeJS.Timeout | null = null;
 let isRunning = false;
@@ -37,6 +40,17 @@ async function update(): Promise<void> {
             await discord.clearActivity();
             lastScrobbledFile = null; // Reset on disconnect
             return;
+        }
+
+        // Update episode context for the REPL (for manual override tracking)
+        if (consoleRepl) {
+            const context = createEpisodeContext(
+                data.filename,
+                data.series_title,
+                data.season,
+                data.episode
+            );
+            consoleRepl.updateContext(context);
         }
 
         // Update Discord presence (if enabled)
@@ -165,7 +179,22 @@ async function start(): Promise<void> {
 
     console.log("");
     console.log("[Main] Service started. Press Ctrl+C to stop.");
+    console.log("[Main] Type 'help' for available commands.");
     console.log("");
+
+    // Initialize console REPL for manual title override
+    consoleRepl = new ConsoleRepl();
+    consoleRepl.on('overrideSet', () => {
+        // Trigger immediate presence update when override is set
+        update();
+    });
+    consoleRepl.on('overrideCleared', () => {
+        // Trigger immediate presence update when override is cleared
+        update();
+    });
+    consoleRepl.on('exit', () => {
+        stop();
+    });
 
     // Start update loop
     updateInterval = setInterval(update, config.updateInterval);
@@ -184,6 +213,11 @@ async function stop(): Promise<void> {
     if (updateInterval) {
         clearInterval(updateInterval);
         updateInterval = null;
+    }
+
+    if (consoleRepl) {
+        consoleRepl.close();
+        consoleRepl = null;
     }
 
     if (config.settings.discordRpc) {
