@@ -40,7 +40,7 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 
 ## Overview
 
-**MPV Discord RPC** is a tool that integrates your MPV Media Player with Discord, displaying what you're watching in real-time. The main highlight is automatic anime detection from filenames, fetching detailed metadata (covers, official titles) using the MyAnimeList API via Jikan.
+**MPV Discord RPC** is a tool that integrates your MPV Media Player with Discord, displaying what you're watching in real-time. The main highlight is automatic anime detection from filenames, fetching detailed metadata (covers, official titles) using the MyAnimeList API.
 
 ---
 
@@ -57,7 +57,6 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 - **MyAnimeList Sync:** Automatically update your watch progress
 - **Stremio MPV Bridge:** Open Stremio Web streams directly in MPV
   - Smart auto-playlist support
-  - Watch progress sync for Movies and Series
   - Player compatibility for Anime (Kitsu)
 
 > **Note:** Cover display currently works only for anime. Configure this in your `.env` file.
@@ -315,10 +314,7 @@ For detailed setup instructions, see the [MAL Sync Setup Guide](docs/mal-sync-se
 
 Integrate Stremio Web with MPV to open streams directly in the player with smart playlist support.
 
-> **Important:** Watch progress sync back to Stremio works **only for IMDb-based content (tt0000000 IDs)**. Kitsu content supports playback only (no progress sync).
-
 **Features:**
-- Automatic watch progress sync for movies and series (at 90% completion)
 - Full playback support for Kitsu content
 - Enhanced series title and episode identification from Stremio
 

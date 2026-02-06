@@ -27,9 +27,14 @@ function createProvider(): AnimeProvider {
 
 const provider = createProvider();
 
-// Fallback provider for episode titles (only if not already using Jikan)
-const fallbackProvider: AnimeProvider | null =
-    config.metadataProvider !== "jikan" ? new JikanProvider() : null;
+// Fallback providers for episode titles
+const fallbackProviders: AnimeProvider[] = [];
+if (config.metadataProvider !== "jikan") {
+    fallbackProviders.push(new JikanProvider());
+}
+if (config.metadataProvider !== "kitsu" && !fallbackProviders.some(p => p.name === "kitsu")) {
+    fallbackProviders.push(new KitsuProvider());
+}
 
 // Export provider name for logging
 export const providerName = provider.name;
@@ -181,20 +186,33 @@ export async function getEpisodeTitle(
         // Try primary provider first
         let title = await provider.getEpisodeTitle(animeInfo.id, episode);
 
-        // Fallback to Jikan if primary provider has no episode data
-        if (!title && fallbackProvider) {
-            console.log(`[Anime] ${provider.name} has no episode data, trying Jikan fallback...`);
+        // Try fallback providers if primary has no episode data
+        if (!title && fallbackProviders.length > 0) {
+            console.log(`[Anime] ${provider.name} has no episode data, trying fallbacks...`);
 
-            // If we have the MAL ID from AniList, use it directly
-            if (animeInfo.mal_id) {
-                title = await fallbackProvider.getEpisodeTitle(animeInfo.mal_id, episode);
-            } else {
-                // Fallback: search by title if no MAL ID
-                const searchTitle = animeInfo.title_romaji || animeInfo.title_english || animeTitle;
-                const jikanSearch = await fallbackProvider.searchAnime(searchTitle);
-                if (jikanSearch) {
-                    title = await fallbackProvider.getEpisodeTitle(jikanSearch.id, episode);
+            for (const fallback of fallbackProviders) {
+                console.log(`[Anime] Trying ${fallback.name} fallback...`);
+
+                // If we have the MAL ID from AniList, use it directly (works for Jikan)
+                if (fallback.name === "jikan" && animeInfo.mal_id) {
+                    title = await fallback.getEpisodeTitle(animeInfo.mal_id, episode);
+                } else {
+                    // Fallback: search by title if no MAL ID or not Jikan
+                    const searchTitle = animeInfo.title_romaji || animeInfo.title_english || animeTitle;
+                    const searchResult = await fallback.searchAnime(searchTitle);
+                    if (searchResult) {
+                        title = await fallback.getEpisodeTitle(searchResult.id, episode);
+                    }
                 }
+
+                if (title) {
+                    console.log(`[Anime] Found episode title via ${fallback.name}`);
+                    break;
+                }
+            }
+
+            if (!title) {
+                console.log(`[Anime] No episode data found in any provider`);
             }
         }
 
