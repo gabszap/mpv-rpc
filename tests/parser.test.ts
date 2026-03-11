@@ -107,6 +107,37 @@ describe('Parser Fallback Logic', () => {
         expect(result.episode).toBe(3);
         expect(result.media_type).toBe('anime'); // JPN + streaming service = anime
     });
+    it('should parse URL-encoded filenames correctly', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const filename = '%5BErai%20raws%5D%20Oshi%20no%20Ko%203rd%20Season%20-%2009.mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('Oshi no Ko');
+        expect(result.season).toBe(3);
+        expect(result.episode).toBe(9);
+    });
+
+    it('should fix Guessit detecting "Ko" as Korean for "Oshi no Ko"', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            // Mock guessit returning "Oshi no" and language "Korean"
+            const stdout = JSON.stringify({ title: "Oshi no", language: "Korean", season: 3, episode: 9 });
+            if (callback) callback(null, stdout, "");
+            return {} as any;
+        });
+
+        const filename = '[Trix] Oshi no Ko S03E09 [WEBRip 1080p AV1] (Multi Subs).mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('Oshi no Ko');
+        expect(result.season).toBe(3);
+        expect(result.episode).toBe(9);
+    });
 });
 
 describe('Invalid Title Validation', () => {

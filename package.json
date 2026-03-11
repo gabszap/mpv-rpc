@@ -1,6 +1,6 @@
 {
   "name": "mpv-rpc",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Discord Rich Presence for MPV Media Player",
   "main": "dist/index.js",
   "scripts": {

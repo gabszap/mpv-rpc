@@ -33,7 +33,26 @@ app.post('/play', (req, res) => {
     }
 
     console.log(`[MPV Bridge] Opening ${items.length} item(s) in MPV...`);
-    items.forEach((item, i) => console.log(`  [${i + 1}] ${item.title || item.url.substring(0, 50)}`));
+    items.forEach((item, i) => {
+        let displayTitle = item.title;
+        
+        if (displayTitle && displayTitle.includes('%')) {
+            try {
+                displayTitle = decodeURIComponent(displayTitle);
+            } catch (e) {}
+        }
+
+        if (!displayTitle) {
+            try {
+                const decoded = decodeURIComponent(item.url);
+                displayTitle = decoded.split('/').pop().split('?')[0];
+            } catch (e) {
+                displayTitle = item.url.substring(0, 50);
+            }
+        }
+        item.title = displayTitle; // Save it back so the M3U gets the clean title
+        console.log(`  [${i + 1}] ${displayTitle}`);
+    });
 
     try {
         let mpvArgs = [

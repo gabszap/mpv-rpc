@@ -168,6 +168,14 @@ function processGuessitResult(
 
     let title = guessed.title || filename;
 
+    // Fix Guessit detecting "Ko" as Korean language in titles like "Oshi no Ko"
+    if (guessed.language === "Korean" && title.toLowerCase() === "oshi no") {
+        const koMatch = filename.match(/oshi no ko/i);
+        if (koMatch) {
+            title = koMatch[0];
+        }
+    }
+
     const knownReleaseGroups = [
         "subsplease", "erai-raws", "judas", "horriblesubs", "hs",
         "rarbg", "yts", "ettv", "fgt", "sparks", "axxo", "lol",
@@ -266,15 +274,12 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     }
 
     if (hasUrlEncodedChars(filename)) {
-        console.warn("[Parser] Filename has URL-encoded characters, skipping:", filename.substring(0, 80) + "...");
-        return {
-            full_title: filename,
-            series_title: filename,
-            season: null,
-            episode: null,
-            episode_title: null,
-            media_type: "unknown",
-        };
+        try {
+            filename = decodeURIComponent(filename);
+            console.log("[Parser] Decoded URL-encoded filename");
+        } catch (e) {
+            console.warn("[Parser] Failed to decode URL-encoded filename, continuing anyway");
+        }
     }
 
     const normalizedFilename = filename

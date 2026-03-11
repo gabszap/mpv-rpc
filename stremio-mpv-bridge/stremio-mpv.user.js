@@ -76,7 +76,7 @@
      */
     function cleanManifestName(name) {
         if (!name) return null;
-        
+
         // Check for nested parentheses pattern like "WRAPPER(X)(ACTUAL NAME)"
         const nestedMatch = name.match(/\(([^()]+)\)(?:\s*$|(?=\)))/g);
         if (nestedMatch && nestedMatch.length > 0) {
@@ -88,7 +88,7 @@
                     .join(' ');
             }
         }
-        
+
         return name.trim();
     }
 
@@ -153,7 +153,7 @@
 
         if (provider.url && provider.id.startsWith('custom')) {
             const manifestName = await fetchManifestName(provider.url);
-            
+
             if (manifestName) {
                 const displayName = `Custom (${manifestName})`;
                 providerNameCache.set(provider.url, { name: manifestName, displayName, timestamp: Date.now() });
@@ -264,7 +264,7 @@
             <div class="mpv-form-group mpv-provider-item" data-id="${p.id}" data-url="${p.url || ''}">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <input type="checkbox" data-id="${p.id}" class="mpv-provider-toggle" ${p.enabled ? 'checked' : ''} 
+                        <input type="checkbox" data-id="${p.id}" class="mpv-provider-toggle" ${p.enabled ? 'checked' : ''}
                                style="width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; accent-color: #8b5cf6; appearance: auto; -webkit-appearance: checkbox; margin: 0;">
                         <label class="mpv-label mpv-provider-label" data-id="${p.id}" style="margin: 0; cursor: pointer;" onclick="this.parentElement.querySelector('input').click()">${p.name}${loadingIndicator}</label>
                     </div>
@@ -274,8 +274,8 @@
                         ${isRemovable ? '<button class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">×</button>' : ''}
                     </div>
                 </div>
-                <input type="text" data-id="${p.id}" class="mpv-input mpv-provider-input" 
-                       placeholder="Paste manifest.json link here" value="${p.url}" 
+                <input type="text" data-id="${p.id}" class="mpv-input mpv-provider-input"
+                       placeholder="Paste manifest.json link here" value="${p.url}"
                        style="${!p.enabled ? 'opacity: 0.5; pointer-events: none;' : ''}">
             </div>
         `}).join('');
@@ -303,7 +303,7 @@
                 }
                 #stremio-mpv-modal.active { opacity: 1; }
                 #stremio-mpv-modal.active .mpv-modal-content { transform: scale(1); }
-                
+
                 .mpv-modal-header {
                     font-size: 22px; font-weight: bold; margin-bottom: 24px;
                     background: linear-gradient(45deg, #a78bfa, #8b5cf6);
@@ -329,7 +329,7 @@
                 .mpv-btn-cancel:hover { color: white; background: rgba(255,255,255,0.05); }
                 .mpv-btn-save { background: #8b5cf6; color: white; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); }
                 .mpv-btn-save:hover { background: #7c3aed; transform: translateY(-1px); box-shadow: 0 6px 15px rgba(139, 92, 246, 0.4); }
-                
+
                 .mpv-checkbox-group {
                     display: flex; align-items: center; gap: 12px;
                     background: rgba(255, 255, 255, 0.03); padding: 12px; border-radius: 10px;
@@ -338,7 +338,7 @@
                 .mpv-checkbox {
                     width: 18px; height: 18px; min-width: 18px; min-height: 18px;
                     cursor: pointer; accent-color: #8b5cf6;
-                    appearance: auto; -webkit-appearance: checkbox; 
+                    appearance: auto; -webkit-appearance: checkbox;
                     margin: 0; filter: invert(0.8) hue-rotate(180deg) brightness(0.7);
                 }
                 .mpv-reorder-btn {
@@ -352,12 +352,12 @@
                 .mpv-btn-remove { background: transparent; border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; width: 24px; height: 24px; font-size: 14px; padding: 0; }
                 .mpv-btn-remove:hover { background: rgba(239, 68, 68, 0.2); border-color: #ef4444; }
                 .mpv-dropdown { position: relative; display: inline-block; width: 100%; margin-bottom: 8px; }
-                .mpv-dropdown-content { 
-                    display: none; position: fixed; 
+                .mpv-dropdown-content {
+                    display: none; position: fixed;
                     top: 50%; left: 50%;
                     transform: translate(-50%, -50%);
                     opacity: 0;
-                    background: rgba(15, 15, 20, 0.95); 
+                    background: rgba(15, 15, 20, 0.95);
                     backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
                     border: 1px solid rgba(139, 92, 246, 0.4);
                     border-radius: 16px; padding: 20px; z-index: 100002;
@@ -370,13 +370,13 @@
                 .mpv-dropdown-overlay.show { display: block; animation: overlayFade 0.2s ease; }
                 @keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
                 .mpv-dropdown-title { font-size: 16px; font-weight: 600; color: #fff; text-align: center; margin-bottom: 12px; }
-                .mpv-dropdown-category { 
-                    padding: 10px 16px 6px; font-size: 10px; color: #a78bfa; 
+                .mpv-dropdown-category {
+                    padding: 10px 16px 6px; font-size: 10px; color: #a78bfa;
                     text-transform: uppercase; letter-spacing: 1px; font-weight: 600;
                     margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 14px;
                 }
                 .mpv-dropdown-category:first-of-type { margin-top: 0; border-top: none; padding-top: 6px; }
-                .mpv-dropdown-item { 
+                .mpv-dropdown-item {
                     padding: 10px 16px; cursor: pointer; border-radius: 10px; transition: all 0.2s ease;
                     display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #eee;
                 }
@@ -387,7 +387,7 @@
                     width: 18px; height: 18px; border: 2px solid rgba(139, 92, 246, 0.4);
                     border-radius: 50%; outline: none; transition: all 0.2s ease;
                     position: relative; cursor: pointer; flex-shrink: 0;
-                    margin: 0; 
+                    margin: 0;
                     display: flex; align-items: center; justify-content: center;
                     box-sizing: border-box;
                 }
@@ -402,11 +402,11 @@
             </style>
             <div class="mpv-modal-content">
                 <div class="mpv-modal-header">MPV Bridge Settings <span style="font-size: 14px; opacity: 0.6; font-weight: normal; margin-left: 8px;">v${GM_info.script.version}</span></div>
-                
+
                 <div id="mpv-providers-container">
                     ${providersHTML}
                 </div>
-                
+
                 <div class="mpv-dropdown">
                     <button class="mpv-btn mpv-btn-add" id="mpv-add-provider-btn">+ Add Provider</button>
                     <div class="mpv-dropdown-overlay" id="mpv-dropdown-overlay"></div>
@@ -426,7 +426,7 @@
 
                 <div class="mpv-form-group">
                     <label class="mpv-label">Stream Mode</label>
-                    
+
                     <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${playlistMode === 'single' ? 'rgba(139, 92, 246, 0.12)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${playlistMode === 'single' ? 'rgba(139, 92, 246, 0.4)' : 'rgba(255,255,255,0.08)'}; transition: all 0.2s ease;">
                         <input type="radio" name="mpv-stream-mode" id="mpv-mode-single" value="single" class="mpv-radio" ${playlistMode === 'single' ? 'checked' : ''}>
                         <div style="pointer-events: none; flex: 1;">
@@ -434,7 +434,7 @@
                             <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Load only the selected episode</div>
                         </div>
                     </div>
-                    
+
                     <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${playlistMode === 'batch' ? 'rgba(139, 92, 246, 0.12)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${playlistMode === 'batch' ? 'rgba(139, 92, 246, 0.4)' : 'rgba(255,255,255,0.08)'}; transition: all 0.2s ease;">
                         <input type="radio" name="mpv-stream-mode" id="mpv-mode-batch" value="batch" class="mpv-radio" ${playlistMode === 'batch' ? 'checked' : ''}>
                         <div style="pointer-events: none; flex: 1;">
@@ -442,12 +442,12 @@
                             <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Load selected + next episodes</div>
                         </div>
                     </div>
-                    
+
                     <div id="mpv-group-count" style="margin-bottom: 15px; padding-left: 42px; ${playlistMode !== 'batch' ? 'display:none' : ''}">
                         <label class="mpv-label" style="font-size: 11px; color: #a78bfa; margin-bottom: 4px;">Next episodes to load</label>
                         <input type="number" id="mpv-ep-count" class="mpv-input" value="${extraEpisodes}" min="1" max="25" style="width: 70px; padding: 8px;">
                     </div>
-                    
+
                     <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; background: ${playlistMode === 'all' ? 'rgba(139, 92, 246, 0.12)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${playlistMode === 'all' ? 'rgba(139, 92, 246, 0.4)' : 'rgba(255,255,255,0.08)'}; transition: all 0.2s ease;">
                         <input type="radio" name="mpv-stream-mode" id="mpv-mode-all" value="all" class="mpv-radio" ${playlistMode === 'all' ? 'checked' : ''}>
                         <div style="pointer-events: none; flex: 1;">
@@ -547,14 +547,14 @@
             // Block URLs with URL-encoded characters (broken links) - unless forced
             if (!forceOpen && /%[0-9A-Fa-f]{2}/.test(url)) {
                 showToast('URL contains encoded characters - may not work correctly', 'error');
-                
+
                 // Add "Open Anyway" button
                 const forceBtn = document.createElement('button');
                 forceBtn.className = 'mpv-btn mpv-force-open-btn';
                 forceBtn.textContent = '⚠️ Open Anyway';
                 forceBtn.style.cssText = 'margin-top: 8px; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.5); color: #ef4444; width: 100%; padding: 8px;';
                 forceBtn.addEventListener('click', () => openDirectLink(true));
-                
+
                 directLinkGroup?.appendChild(forceBtn);
                 return;
             }
@@ -703,7 +703,7 @@
                 <div class="mpv-form-group mpv-provider-item" data-id="${id}">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" data-id="${id}" class="mpv-provider-toggle" checked 
+                            <input type="checkbox" data-id="${id}" class="mpv-provider-toggle" checked
                                    style="width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; accent-color: #8b5cf6; appearance: auto; -webkit-appearance: checkbox; margin: 0;">
                             <label class="mpv-label" style="margin: 0; cursor: pointer;">${name}</label>
                         </div>
@@ -753,7 +753,7 @@
                 <div class="mpv-form-group mpv-provider-item" data-id="${newId}">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                         <div style="display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" data-id="${newId}" class="mpv-provider-toggle" checked 
+                            <input type="checkbox" data-id="${newId}" class="mpv-provider-toggle" checked
                                    style="width: 16px; height: 16px; min-width: 16px; min-height: 16px; cursor: pointer; accent-color: #8b5cf6; appearance: auto; -webkit-appearance: checkbox; margin: 0;">
                             <label class="mpv-label" style="margin: 0; cursor: pointer;">Custom ${newNum}</label>
                         </div>
