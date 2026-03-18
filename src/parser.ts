@@ -169,10 +169,11 @@ function processGuessitResult(
     let title = guessed.title || filename;
 
     // Fix Guessit detecting "Ko" as Korean language in titles like "Oshi no Ko"
+    // Also handles dot-separated filenames like "OSHI.NO.KO.S03E10..."
     if (guessed.language === "Korean" && title.toLowerCase() === "oshi no") {
-        const koMatch = filename.match(/oshi no ko/i);
+        const koMatch = filename.match(/oshi[.\s_-]no[.\s_-]ko/i);
         if (koMatch) {
-            title = koMatch[0];
+            title = koMatch[0].replace(/[._-]/g, " ");
         }
     }
 

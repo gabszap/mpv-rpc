@@ -138,6 +138,22 @@ describe('Parser Fallback Logic', () => {
         expect(result.season).toBe(3);
         expect(result.episode).toBe(9);
     });
+
+    it('should fix "Ko" as Korean for dot-separated filenames (OSHI.NO.KO)', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            const stdout = JSON.stringify({ title: "OSHI NO", language: "Korean", season: 3, episode: 10 });
+            if (callback) callback(null, stdout, "");
+            return {} as any;
+        });
+
+        const filename = 'OSHI.NO.KO.S03E10.Private.Audition.1080p.CR.WEB-DL.AAC2.0.H.264-VARYG.mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('OSHI NO KO');
+        expect(result.season).toBe(3);
+        expect(result.episode).toBe(10);
+    });
 });
 
 describe('Invalid Title Validation', () => {
@@ -194,5 +210,38 @@ describe('Invalid Title Validation', () => {
         expect(result.episode).toBe(1);
         // media_type may be 'unknown' since there's no anime/series indicators in filename
         // but the title itself should NOT be rejected as invalid
+    });
+});
+
+describe('Media Title Sanitization', () => {
+    // Import directly from mpv module
+    it('should strip Multi-Subs and tracker metadata from Torrentio title', async () => {
+        const { sanitizeMediaTitle } = await import('../src/mpv');
+
+        const dirtyTitle = 'OSHI NO KO S03E10 Private Audition 1080p CR WEB-DL AAC2.0 H 264-VARYG ([Oshi no Ko] Multi-Subs)\n👤 153 💾 1.39 GB ⚙️ NyaaSi\nMulti Subs / 🇬🇧 / 🇷🇺 / 🇮🇹 / 🇵🇹 / 🇪🇸 / 🇲🇽 / 🇨🇳 / 🇫🇷 / 🇩🇪 / 🇸🇦 / 🇮🇩 / 🇲🇾 / 🇹🇭';
+        const clean = sanitizeMediaTitle(dirtyTitle);
+
+        expect(clean).toBe('OSHI NO KO S03E10 Private Audition 1080p CR WEB-DL AAC2.0 H 264-VARYG');
+    });
+
+    it('should not modify clean filenames', async () => {
+        const { sanitizeMediaTitle } = await import('../src/mpv');
+
+        const clean = 'Rascal.Does.Not.Dream.of.Bunny.Girl.Senpai.S02E07.1080p.CR.WEB-DL.mkv';
+        expect(sanitizeMediaTitle(clean)).toBe(clean);
+    });
+
+    it('should handle N/A and empty strings', async () => {
+        const { sanitizeMediaTitle } = await import('../src/mpv');
+
+        expect(sanitizeMediaTitle('N/A')).toBe('N/A');
+        expect(sanitizeMediaTitle('')).toBe('');
+    });
+
+    it('should strip title with only Multi Subs parenthesis', async () => {
+        const { sanitizeMediaTitle } = await import('../src/mpv');
+
+        const title = 'Jujutsu Kaisen S03E03 1080p NF WEB-DL (Multi Subs)';
+        expect(sanitizeMediaTitle(title)).toBe('Jujutsu Kaisen S03E03 1080p NF WEB-DL');
     });
 });

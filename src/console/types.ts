@@ -83,3 +83,55 @@ export function createEpisodeContext(
         seasonNumber: season,
     };
 }
+
+/**
+ * Represents a manual override for the series name (rename command)
+ * Used when the parser fails to extract the correct anime/series title
+ */
+export interface SeriesNameOverride {
+    /** The corrected series name to use for metadata searches */
+    overrideName: string;
+    /** The original filename this override applies to (cleared on file change) */
+    filename: string;
+    /** When the override was set */
+    timestamp: Date;
+}
+
+/**
+ * Global series name override state
+ */
+let seriesNameOverride: SeriesNameOverride | null = null;
+
+/**
+ * Set the series name override
+ */
+export function setSeriesNameOverride(override: SeriesNameOverride | null): void {
+    seriesNameOverride = override;
+}
+
+/**
+ * Get the current series name override
+ */
+export function getSeriesNameOverride(): SeriesNameOverride | null {
+    return seriesNameOverride;
+}
+
+/**
+ * Clear the series name override
+ */
+export function clearSeriesNameOverride(): void {
+    seriesNameOverride = null;
+}
+
+/**
+ * Check if the series name override is still valid for the given filename
+ * Automatically clears if the file has changed
+ */
+export function checkSeriesNameOverride(currentFilename: string): SeriesNameOverride | null {
+    if (seriesNameOverride && seriesNameOverride.filename !== currentFilename) {
+        console.log(`[System] File changed. Series name override auto-cleared.`);
+        seriesNameOverride = null;
+    }
+    return seriesNameOverride;
+}
+

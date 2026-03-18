@@ -73,11 +73,12 @@ export const config = {
     discordRpc: getEnvBool("DISCORD_RPC", true),
   },
 
-  // Metadata provider (jikan, anilist, or kitsu)
+  // Metadata provider (jikan, anilist, kitsu, or tvdb)
   metadataProvider: getEnv("METADATA_PROVIDER", "jikan") as
     | "jikan"
     | "anilist"
-    | "kitsu",
+    | "kitsu"
+    | "tvdb",
 
   // Jikan API settings
   jikan: {
@@ -90,6 +91,12 @@ export const config = {
     enabled: getEnvBool("USE_GUESSIT_API", true),
     url: getEnv("GUESSIT_API_URL", ""),
     timeout: 10000,
+  },
+
+  // TheTVDB API settings
+  tvdb: {
+    apiKey: getEnv("TVDB_API_KEY", ""),
+    language: getEnv("TVDB_LANG", "eng"),
   },
 
   // MyAnimeList sync settings

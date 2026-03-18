@@ -50,7 +50,7 @@ async function update(): Promise<void> {
                 data.season,
                 data.episode
             );
-            consoleRepl.updateContext(context);
+            consoleRepl.updateContext(context, data.filename);
         }
 
         // Update Discord presence (if enabled)
@@ -60,6 +60,9 @@ async function update(): Promise<void> {
             // Still log status to terminal even with RPC off
             discord.logStatus(data);
         }
+
+        // Force a clean title in MPV (replaces ugly embedded titles like "Multi Subs / GB / RU...")
+        await mpv.updateMpvTitle(data);
 
         // MAL sync - if enabled and watching anime
         if (data.mal_id && data.episode && data.percent_pos >= config.mal.syncThreshold) {
@@ -192,6 +195,14 @@ async function start(): Promise<void> {
         // Trigger immediate presence update when override is cleared
         update();
     });
+    consoleRepl.on('renameSet', () => {
+        // Trigger immediate re-fetch when series name is overridden
+        update();
+    });
+    consoleRepl.on('renameCleared', () => {
+        // Trigger immediate re-fetch when series name override is cleared
+        update();
+    });
     consoleRepl.on('exit', () => {
         stop();
     });
@@ -224,6 +235,8 @@ async function stop(): Promise<void> {
         await discord.clearActivity();
         await discord.disconnect();
     }
+    // Clear forced title before disconnecting so MPV returns to normal titles
+    await mpv.clearForcedTitle();
     mpv.disconnect();
 
     console.log("[Main] Goodbye!");

@@ -38,7 +38,7 @@ export interface AnimeProvider {
     /**
      * Get episode title
      */
-    getEpisodeTitle(animeId: number, episode: number): Promise<string | null>;
+    getEpisodeTitle(animeId: number, episode: number, season?: number): Promise<string | null>;
 
     /**
      * Find the correct season through relations

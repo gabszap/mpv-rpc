@@ -8,6 +8,7 @@ import * as net from "net";
 import { config } from "./config";
 import { parseFilename } from "./parser";
 import { getAnimeInfo, getEpisodeTitle } from "./anime";
+import { checkSeriesNameOverride } from "./console";
 
 export interface MpvData {
     media_title: string;
@@ -157,6 +158,57 @@ async function getProperty(prop: string): Promise<any> {
 }
 
 /**
+ * Set a property on MPV
+ */
+async function setProperty(prop: string, value: string): Promise<void> {
+    try {
+        await sendCommand(["set_property", prop, value]);
+    } catch {
+        // Ignore errors when setting properties
+    }
+}
+
+/**
+ * Sanitize media-title from MPV to remove tracker/subtitle metadata
+ *
+ * Stremio/Torrentio streams often include extra info in the title like:
+ * "OSHI NO KO S03E10 ... ([Oshi no Ko] Multi-Subs)\n👤 153 💾 1.39 GB ⚙️ NyaaSi\nMulti Subs / 🇬🇧 / ..."
+ *
+ * This function strips everything after the actual filename.
+ */
+export function sanitizeMediaTitle(title: string): string {
+    if (!title || title === "N/A") return title;
+
+    // 1. Cut at first newline (tracker metadata is always on separate lines)
+    const newlineIdx = title.indexOf("\n");
+    if (newlineIdx > 0) {
+        title = title.substring(0, newlineIdx);
+    }
+
+    // 2. Remove trailing parenthesized group info like "([Oshi no Ko] Multi-Subs)"
+    //    or "(Multi Subs)" that appear after the release group
+    title = title.replace(/\s*\((?:\[[^\]]*\]\s*)?Multi[- ]?Subs?\)[^)]*$/i, "");
+    title = title.replace(/\s*\((?:\[[^\]]*\]\s*)?Multi[- ]?Audio\)[^)]*$/i, "");
+
+    // 3. Remove tracker metadata indicators (emojis + stats)
+    //    Patterns like: 👤 153 💾 1.39 GB ⚙️ NyaaSi
+    title = title.replace(/\s*[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}].*$/su, "");
+
+    // 4. Remove subtitle language flags section
+    //    Patterns like: Multi Subs / 🇬🇧 / 🇷🇺 / ...
+    title = title.replace(/\s*Multi\s*Subs?\s*\/.*$/i, "");
+
+    // 5. Remove regional indicator symbols (flag emojis) and what follows
+    title = title.replace(/\s*[\u{1F1E0}-\u{1F1FF}].*$/su, "");
+
+    // 6. Remove common tracker suffixes that might remain
+    //    e.g. "◎ NyaaSi", "▌ [S3]", etc.
+    title = title.replace(/\s*[◎▌⚙️💾👤].*$/u, "");
+
+    return title.trim();
+}
+
+/**
  * Get all MPV data needed for Discord presence
  */
 export async function getMpvData(): Promise<MpvData | null> {
@@ -167,10 +219,13 @@ export async function getMpvData(): Promise<MpvData | null> {
 
     try {
         // Get primary identifiers from MPV
-        const [filename, mediaTitle] = await Promise.all([
+        const [filename, rawMediaTitle] = await Promise.all([
             getProperty("filename/no-ext"),
             getProperty("media-title")
         ]);
+
+        // Sanitize media-title to remove tracker/subtitle metadata
+        const mediaTitle = sanitizeMediaTitle(rawMediaTitle);
 
         if (!filename || filename === "N/A") {
             // MPV is connected but no media playing
@@ -255,6 +310,12 @@ export async function getMpvData(): Promise<MpvData | null> {
         let totalEpisodes: number | null = null;
         const originalTitle = parsed.series_title; // Keep original for episode lookup
 
+        // Check for manual series name override (rename command)
+        const renameOverride = checkSeriesNameOverride(filename);
+        if (renameOverride) {
+            seriesTitle = renameOverride.overrideName;
+        }
+
         // Try to get anime info for any valid title
         // The API will return null if the title is not found, so we don't need to filter by media_type
         if (seriesTitle && seriesTitle !== "N/A") {
@@ -268,11 +329,13 @@ export async function getMpvData(): Promise<MpvData | null> {
 
                     // Choose title based on preferred language setting
                     const titlePref = config.settings.preferredTitleLanguage;
-                    if (titlePref !== "none") {
+                    if (titlePref !== "none" || renameOverride) {
+                        // When rename is active, always use API title (the whole point of rename
+                        // is to correct the search, so the API result IS the desired title)
                         const englishTitle = animeInfo.title_english;
                         const romajiTitle = animeInfo.title_romaji;
 
-                        if (titlePref === "english") {
+                        if (titlePref === "english" || (titlePref === "none" && renameOverride)) {
                             // Prefer English, fallback to Romaji
                             seriesTitle = englishTitle || romajiTitle || seriesTitle;
                         } else {
@@ -280,7 +343,7 @@ export async function getMpvData(): Promise<MpvData | null> {
                             seriesTitle = romajiTitle || englishTitle || seriesTitle;
                         }
                     }
-                    // If "none", keep the original filename title
+                    // If "none" without rename, keep the original filename title
                 }
 
                 // Get episode title if not in filename
@@ -315,5 +378,45 @@ export async function getMpvData(): Promise<MpvData | null> {
     } catch (e) {
         console.error("[MPV] Error getting data:", e);
         return null;
+    }
+}
+
+/**
+ * Build a clean display title and set it as force-media-title in MPV
+ * This overrides the ugly embedded title like "Multi Subs / GB / RU / ..."
+ */
+export async function updateMpvTitle(data: MpvData): Promise<void> {
+    if (!isConnected || !data || data.series_title === "N/A") return;
+
+    let displayTitle = data.series_title;
+
+    if (data.season !== null && data.episode !== null) {
+        const s = String(data.season).padStart(2, "0");
+        const e = String(data.episode).padStart(2, "0");
+        displayTitle += ` S${s}E${e}`;
+    } else if (data.episode !== null) {
+        displayTitle += ` E${String(data.episode).padStart(2, "0")}`;
+    }
+
+    if (data.episode_title) {
+        displayTitle += ` - ${data.episode_title}`;
+    }
+
+    try {
+        await setProperty("force-media-title", displayTitle);
+    } catch {
+        // Silently ignore - some MPV versions may not support this
+    }
+}
+
+/**
+ * Clear the forced media title, restoring MPV's default title behavior
+ */
+export async function clearForcedTitle(): Promise<void> {
+    if (!isConnected) return;
+    try {
+        await setProperty("force-media-title", "");
+    } catch {
+        // Silently ignore
     }
 }

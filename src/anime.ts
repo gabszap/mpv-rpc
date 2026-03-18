@@ -8,6 +8,7 @@ import { config } from "./config";
 import { JikanProvider } from "./providers/jikan";
 import { AniListProvider } from "./providers/anilist";
 import { KitsuProvider } from "./providers/kitsu";
+import { TvdbProvider } from "./providers/tvdb";
 import type { AnimeProvider, AnimeInfo } from "./providers/types";
 
 // Re-export AnimeInfo type for other modules
@@ -20,6 +21,8 @@ function createProvider(): AnimeProvider {
             return new AniListProvider();
         case "kitsu":
             return new KitsuProvider();
+        case "tvdb":
+            return new TvdbProvider();
         default:
             return new JikanProvider();
     }
@@ -34,6 +37,9 @@ if (config.metadataProvider !== "jikan") {
 }
 if (config.metadataProvider !== "kitsu" && !fallbackProviders.some(p => p.name === "kitsu")) {
     fallbackProviders.push(new KitsuProvider());
+}
+if (config.metadataProvider !== "tvdb" && config.tvdb.apiKey) {
+    fallbackProviders.push(new TvdbProvider());
 }
 
 // Export provider name for logging
@@ -184,7 +190,7 @@ export async function getEpisodeTitle(
         }
 
         // Try primary provider first
-        let title = await provider.getEpisodeTitle(animeInfo.id, episode);
+        let title = await provider.getEpisodeTitle(animeInfo.id, episode, season ?? undefined);
 
         // Try fallback providers if primary has no episode data
         if (!title && fallbackProviders.length > 0) {
@@ -195,13 +201,13 @@ export async function getEpisodeTitle(
 
                 // If we have the MAL ID from AniList, use it directly (works for Jikan)
                 if (fallback.name === "jikan" && animeInfo.mal_id) {
-                    title = await fallback.getEpisodeTitle(animeInfo.mal_id, episode);
+                    title = await fallback.getEpisodeTitle(animeInfo.mal_id, episode, season ?? undefined);
                 } else {
                     // Fallback: search by title if no MAL ID or not Jikan
                     const searchTitle = animeInfo.title_romaji || animeInfo.title_english || animeTitle;
                     const searchResult = await fallback.searchAnime(searchTitle);
                     if (searchResult) {
-                        title = await fallback.getEpisodeTitle(searchResult.id, episode);
+                        title = await fallback.getEpisodeTitle(searchResult.id, episode, season ?? undefined);
                     }
                 }
 
