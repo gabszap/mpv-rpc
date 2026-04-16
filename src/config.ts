@@ -2,38 +2,50 @@
  * Configuration for MPV Discord RPC
  */
 
-import * as fs from "fs";
+import * as dotenv from "dotenv";
 import * as path from "path";
 
-// Load .env file manually (no external dependency)
-function loadEnv(): Record<string, string> {
-  const envPath = path.join(process.cwd(), ".env");
-  const env: Record<string, string> = {};
+export const METADATA_PROVIDERS = ["jikan", "anilist", "kitsu", "tvdb"] as const;
+export type MetadataProvider = (typeof METADATA_PROVIDERS)[number];
 
-  if (fs.existsSync(envPath)) {
-    const content = fs.readFileSync(envPath, "utf-8");
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const [key, ...valueParts] = trimmed.split("=");
-      if (key) {
-        env[key.trim()] = valueParts.join("=").trim();
-      }
-    }
+const envPath = path.join(process.cwd(), ".env");
+const dotenvResult = dotenv.config({ path: envPath });
+
+if (dotenvResult.error) {
+  const maybeErrno = dotenvResult.error as NodeJS.ErrnoException;
+  if (maybeErrno.code !== "ENOENT") {
+    console.warn(`[Config] Failed to load .env file at ${envPath}: ${dotenvResult.error.message}`);
   }
-  return env;
 }
 
-const env = loadEnv();
+const selectedMetadataProvider = parseMetadataProvider(getEnv("METADATA_PROVIDER", "jikan"));
 
 // Helper to get env value with fallback
 function getEnv(key: string, fallback: string): string {
-  return process.env[key] || env[key] || fallback;
+  return process.env[key] || fallback;
 }
 
 function getEnvBool(key: string, fallback: boolean): boolean {
   const val = getEnv(key, String(fallback));
   return val === "true" || val === "1";
+}
+
+function isMetadataProvider(value: string): value is MetadataProvider {
+  return METADATA_PROVIDERS.includes(value as MetadataProvider);
+}
+
+function parseMetadataProvider(rawProvider: string): MetadataProvider {
+  const normalizedProvider = rawProvider.trim().toLowerCase();
+
+  if (isMetadataProvider(normalizedProvider)) {
+    return normalizedProvider;
+  }
+
+  if (normalizedProvider) {
+    console.warn(`[Config] Invalid METADATA_PROVIDER "${rawProvider}". Falling back to "jikan".`);
+  }
+
+  return "jikan";
 }
 
 // Detect OS and set default IPC path
@@ -55,6 +67,9 @@ export const config = {
   // Update interval in milliseconds
   updateInterval: 1000,
 
+  // Debug mode (enables detailed provider error logs)
+  debug: getEnvBool("DEBUG", false),
+
   // MPV icon URL
   mpvIcon: "https://i.imgur.com/gGwczqt.png",
 
@@ -74,11 +89,7 @@ export const config = {
   },
 
   // Metadata provider (jikan, anilist, kitsu, or tvdb)
-  metadataProvider: getEnv("METADATA_PROVIDER", "jikan") as
-    | "jikan"
-    | "anilist"
-    | "kitsu"
-    | "tvdb",
+  metadataProvider: selectedMetadataProvider,
 
   // Jikan API settings
   jikan: {
