@@ -232,6 +232,8 @@ Copie o arquivo de ambiente de exemplo e ajuste as configurações:
 cp .env.example .env
 ```
 
+Os valores de ambiente são carregados automaticamente via `dotenv` a partir do arquivo `.env` na inicialização.
+
 ### Opções Disponíveis
 
 | Opção | Descrição | Padrão |
@@ -370,6 +372,7 @@ Melhore sua experiência com o MPV usando estes scripts úteis do [Eisa01/mpv-sc
 
 - [@xhayper/discord-rpc](https://www.npmjs.com/package/@xhayper/discord-rpc) - Cliente Discord RPC
 - [axios](https://www.npmjs.com/package/axios) - Cliente HTTP
+- [dotenv](https://www.npmjs.com/package/dotenv) - Loader de `.env`
 - [guessit](https://pypi.org/project/guessit/) - Parser de nomes de arquivos
 - [Jikan](https://jikan.moe/) - API não oficial do MyAnimeList
 - [AniList](https://anilist.co/) - API AniList
