@@ -122,4 +122,17 @@ describe('MAL Sync Logic', () => {
         expect(result).toBe(true); // Technically success as we are already there
         expect(api.updateWatchedEpisodes).not.toHaveBeenCalled();
     });
+
+    it('should return already_synced in detailed mode when MAL progress is up to date', async () => {
+        const malId = 333;
+        const episode = 2;
+
+        vi.mocked(auth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(api.getWatchStatus).mockResolvedValue(2);
+
+        const result = await sync.syncEpisodeDetailed(malId, episode, 95);
+
+        expect(result).toBe('already_synced');
+        expect(api.updateWatchedEpisodes).not.toHaveBeenCalled();
+    });
 });

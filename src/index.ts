@@ -9,19 +9,25 @@ import * as mpv from "./mpv";
 import * as discord from "./discord";
 import { checkAvailability } from "./parser";
 import { providerName } from "./anime";
-import { syncEpisode, authorize, isAuthenticated, getUsername } from "./mal-sync/sync";
+import { syncEpisodeDetailed, authorize, isAuthenticated, getUsername } from "./mal-sync/sync";
 import { ConsoleRepl, createEpisodeContext } from "./console";
-import axios from "axios";
 
 let consoleRepl: ConsoleRepl | null = null;
 
 let updateInterval: NodeJS.Timeout | null = null;
 let isRunning = false;
 let isUpdating = false; // Mutex to prevent parallel updates
-let lastScrobbledFile: string | null = null; // Prevent scrobble spam
-let scrobbleRetryCount: number = 0; // Track retry attempts per file
-let scrobbleRetryFile: string | null = null; // Track which file we're retrying
-const MAX_SCROBBLE_RETRIES = 3; // Maximum retry attempts before giving up
+let lastMalDiagnosticKey: string | null = null; // Avoid repeating MAL diagnostic logs
+let lastMalSyncSuccessKey: string | null = null; // Avoid repeated MAL success logs
+
+function logMalDiagnostic(key: string, message: string): void {
+    if (lastMalDiagnosticKey === key) {
+        return;
+    }
+
+    lastMalDiagnosticKey = key;
+    console.log(message);
+}
 
 /**
  * Main update loop - fetches MPV data and updates Discord
@@ -38,7 +44,8 @@ async function update(): Promise<void> {
         if (!data) {
             // MPV not connected, clear Discord activity
             await discord.clearActivity();
-            lastScrobbledFile = null; // Reset on disconnect
+            lastMalDiagnosticKey = null;
+            lastMalSyncSuccessKey = null;
             return;
         }
 
@@ -64,41 +71,53 @@ async function update(): Promise<void> {
         // Force a clean title in MPV (replaces ugly embedded titles like "Multi Subs / GB / RU...")
         await mpv.updateMpvTitle(data);
 
-        // MAL sync - if enabled and watching anime
-        if (data.mal_id && data.episode && data.percent_pos >= config.mal.syncThreshold) {
-            await syncEpisode(data.mal_id, data.episode, data.percent_pos, data.total_episodes ?? undefined);
-        }
-
-        // Bridge scrobble (Stremio sync) - notifies bridge of current progress
-        // Only scrobble once per file when threshold reached
-        if (data.percent_pos >= 90 && lastScrobbledFile !== data.filename) {
-            // Reset retry count if this is a new file
-            if (scrobbleRetryFile !== data.filename) {
-                scrobbleRetryFile = data.filename;
-                scrobbleRetryCount = 0;
+        // MAL sync - diagnostics + sync attempt once threshold is reached
+        const malThresholdReached = data.percent_pos >= config.mal.syncThreshold;
+        if (config.mal.enabled && isAuthenticated() && malThresholdReached) {
+            if (!data.episode) {
+                logMalDiagnostic(
+                    `${data.filename}:missing-episode`,
+                    `[MAL] Skipped sync at ${Math.round(data.percent_pos)}%: episode number not detected (title may be missing episode marker like E02 or - 02).`
+                );
             }
 
-            // Only try if we haven't exceeded max retries
-            if (scrobbleRetryCount < MAX_SCROBBLE_RETRIES) {
-                console.log(`[Status] Sending scrobble request to bridge (${Math.round(data.percent_pos)}%)...`);
-                try {
-                    const res = await axios.post('http://127.0.0.1:9632/scrobble', {
-                        percent: data.percent_pos,
-                        imdbId: data.imdb_id,
-                        season: data.season,
-                        episode: data.episode,
-                        type: data.type,
-                        title: data.media_title // Send title for matching in server
-                    });
-                    if (res.data.success || res.status === 200) {
-                        lastScrobbledFile = data.filename;
-                        scrobbleRetryCount = 0; // Reset on success
+            if (!data.mal_id) {
+                logMalDiagnostic(
+                    `${data.filename}:missing-mal-id`,
+                    `[MAL] Skipped sync at ${Math.round(data.percent_pos)}%: MAL ID not found for "${data.series_title}".`
+                );
+            }
+
+            if (data.mal_id && data.episode) {
+                const syncStatus = await syncEpisodeDetailed(
+                    data.mal_id,
+                    data.episode,
+                    data.percent_pos,
+                    data.total_episodes ?? undefined
+                );
+
+                const syncKey = `${data.filename}:${data.mal_id}:${data.episode}`;
+                const progressLabel = data.total_episodes
+                    ? `${data.episode}/${data.total_episodes}`
+                    : `${data.episode}`;
+
+                if (syncStatus === "updated") {
+                    if (lastMalSyncSuccessKey !== syncKey) {
+                        console.log(`[MAL] Synced progress: ${data.series_title} - EP ${progressLabel} (MAL ID: ${data.mal_id})`);
+                        lastMalSyncSuccessKey = syncKey;
                     }
-                } catch (e) {
-                    scrobbleRetryCount++;
-                    if (scrobbleRetryCount >= MAX_SCROBBLE_RETRIES) {
-                        console.log(`[Status] Bridge not reachable, giving up after ${MAX_SCROBBLE_RETRIES} attempts.`);
+                    lastMalDiagnosticKey = null;
+                } else if (syncStatus === "already_synced") {
+                    if (lastMalSyncSuccessKey !== syncKey) {
+                        console.log(`[MAL] Already synced: ${data.series_title} - EP ${progressLabel} (MAL ID: ${data.mal_id})`);
+                        lastMalSyncSuccessKey = syncKey;
                     }
+                    lastMalDiagnosticKey = null;
+                } else if (syncStatus === "failed") {
+                    logMalDiagnostic(
+                        `${data.filename}:sync-failed`,
+                        `[MAL] Sync request failed (API/network/auth issue).`
+                    );
                 }
             }
         }
@@ -173,8 +192,9 @@ async function start(): Promise<void> {
     const mpvConnected = await mpv.connect();
 
     if (!mpvConnected) {
+        const ipcPath = process.platform === "win32" ? "\\\\.\\pipe\\mpv" : "/tmp/mpv-socket";
         console.log("[Main] MPV not found. Make sure MPV is running with IPC enabled:");
-        console.log("       mpv --input-ipc-server=\\\\.\\pipe\\mpv <file>");
+        console.log(`       mpv --input-ipc-server=${ipcPath} <file>`);
         console.log("[Main] Will keep checking for MPV...");
     } else {
         console.log("[Main] MPV connected!");

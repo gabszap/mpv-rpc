@@ -7,44 +7,48 @@ import { config } from "../config";
 import { isAuthenticated } from "./auth";
 import { updateWatchedEpisodes, getWatchStatus } from "./api";
 
+export type MalSyncResult = "updated" | "already_synced" | "skipped" | "failed";
+
 // Track last synced to avoid duplicate updates
 const lastSynced: Map<string, { episode: number; timestamp: number }> = new Map();
 const lastSuccess: Map<string, number> = new Map(); // Track last successful EP to avoid syncing same EP twice
 const syncInProgress: Set<string> = new Set(); // Lock to prevent parallel calls
 const SYNC_COOLDOWN = 60 * 1000; // 60 seconds cooldown per anime if EP hasn't changed
 
+type SyncGateDecision = "allow" | "in_progress" | "already_success" | "cooldown";
+
 /**
- * Check if we should sync this episode
+ * Check if this episode is allowed to sync right now
  */
-function shouldSync(malId: number, episode: number): boolean {
+function getSyncGateDecision(malId: number, episode: number): SyncGateDecision {
     const key = `${malId}:${episode}`;
 
     // Already syncing this exact episode
     if (syncInProgress.has(key)) {
-        return false;
+        return "in_progress";
     }
 
     const malIdStr = String(malId);
 
     // If we already successfully synced this episode, never sync it again
     if (lastSuccess.get(malIdStr) === episode) {
-        return false;
+        return "already_success";
     }
 
     const last = lastSynced.get(malIdStr);
-    if (!last) return true;
+    if (!last) return "allow";
 
     // If it's a new episode, sync immediately bypassing cooldown
     if (last.episode !== episode) {
-        return true;
+        return "allow";
     }
 
     // Same episode, check cooldown
     if (Date.now() - last.timestamp < SYNC_COOLDOWN) {
-        return false;
+        return "cooldown";
     }
 
-    return true;
+    return "allow";
 }
 
 /**
@@ -68,30 +72,31 @@ function recordSyncSuccess(malId: number, episode: number): void {
  * @param percentWatched - Percentage of episode watched (0-100)
  * @param totalEpisodes - Total episodes in the anime (optional)
  */
-export async function syncEpisode(
+export async function syncEpisodeDetailed(
     malId: number,
     episode: number,
     percentWatched: number,
     totalEpisodes?: number
-): Promise<boolean> {
+): Promise<MalSyncResult> {
     // Check if MAL sync is enabled
     if (!config.mal.enabled) {
-        return false;
+        return "skipped";
     }
 
     // Check authentication
     if (!isAuthenticated()) {
-        return false;
+        return "skipped";
     }
 
     // Check watch threshold
     if (percentWatched < config.mal.syncThreshold) {
-        return false;
+        return "skipped";
     }
 
     // Check cooldown and duplicate sync
-    if (!shouldSync(malId, episode)) {
-        return false;
+    const gateDecision = getSyncGateDecision(malId, episode);
+    if (gateDecision !== "allow") {
+        return "skipped";
     }
 
     // Lock this episode to prevent parallel syncs
@@ -108,7 +113,7 @@ export async function syncEpisode(
         if (currentProgress !== null && currentProgress >= episode) {
             // Already synced this or later episode on MAL
             recordSyncSuccess(malId, currentProgress);
-            return true;
+            return "already_synced";
         }
 
         // Update MAL
@@ -116,13 +121,26 @@ export async function syncEpisode(
 
         if (success) {
             recordSyncSuccess(malId, episode);
+            return "updated";
         }
 
-        return success;
+        return "failed";
+    } catch {
+        return "failed";
     } finally {
         // Always unlock
         syncInProgress.delete(lockKey);
     }
+}
+
+export async function syncEpisode(
+    malId: number,
+    episode: number,
+    percentWatched: number,
+    totalEpisodes?: number
+): Promise<boolean> {
+    const result = await syncEpisodeDetailed(malId, episode, percentWatched, totalEpisodes);
+    return result === "updated" || result === "already_synced";
 }
 
 // Re-export auth functions for convenience
