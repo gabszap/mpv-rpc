@@ -154,6 +154,43 @@ describe('Parser Fallback Logic', () => {
         expect(result.season).toBe(3);
         expect(result.episode).toBe(10);
     });
+
+    it('should recover episode number when GuessIt misses hyphenated anime episodes', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            const stdout = JSON.stringify({ title: "Dr Stone", episode_title: "New World" });
+            if (callback) callback(null, stdout, "");
+            return {} as any;
+        });
+
+        const filename = '[Erai-raws] Dr Stone - New World - 02 [1080p][HEVC][93028C2D].mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('Dr Stone - New World');
+        expect(result.episode).toBe(2);
+        expect(result.episode_title).toBeNull();
+        expect(result.full_title).toBe('Dr Stone - New World - E02');
+    });
+
+    it('should combine alternative_title when GuessIt splits season name', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            const stdout = JSON.stringify({
+                title: "Dr Stone",
+                alternative_title: "New World",
+                episode: 2
+            });
+            if (callback) callback(null, stdout, "");
+            return {} as any;
+        });
+
+        const filename = 'Dr Stone - New World - 02.mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('Dr Stone - New World');
+        expect(result.episode).toBe(2);
+        expect(result.full_title).toBe('Dr Stone - New World - E02');
+    });
 });
 
 describe('Invalid Title Validation', () => {

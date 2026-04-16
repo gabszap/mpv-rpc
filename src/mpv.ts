@@ -256,16 +256,20 @@ export async function getMpvData(): Promise<MpvData | null> {
          */
         const isUrl = (s: string) => /^(https?|magnet):/i.test(s);
         const isPlaylist = (s: string) => /stremio-playlist-\d+/i.test(s);
-        const hasSeasonEpisode = (s: string) => /S\d+E\d+/i.test(s);
+        const hasEpisodeMarker = (s: string) => {
+            return /S\d{1,2}E\d{1,3}/i.test(s)
+                || /(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*\d{1,3}(?=[^\d]|$)/.test(s)
+                || /-\s*\d{1,3}(?=\s*(?:\[|\(|v\d|$))/i.test(s);
+        };
 
         let parseTarget = filename;
 
         // If filename is a playlist, try to use mediaTitle
         if (isPlaylist(filename)) {
             if (mediaTitle && mediaTitle !== "N/A" && !isPlaylist(mediaTitle)) {
-                // Check if mediaTitle has season/episode info - this means it's from #EXTINF
+                // Check if mediaTitle has episode info (SxxExx, E##, or trailing - ##)
                 // If it doesn't, it might be the MKV's embedded title (just episode name)
-                if (hasSeasonEpisode(mediaTitle)) {
+                if (hasEpisodeMarker(mediaTitle)) {
                     parseTarget = mediaTitle;
                 } else {
                     // mediaTitle is probably just the episode title from MKV metadata
@@ -276,17 +280,26 @@ export async function getMpvData(): Promise<MpvData | null> {
                 // If we don't have a good title yet, don't parse anything
                 return null;
             }
-        } else if (mediaTitle && mediaTitle !== "N/A" && mediaTitle !== filename) {
-            // If filename is a URL or mediaTitle looks like a proper title, prefer mediaTitle
-            // But only if mediaTitle has season/episode info (avoid using just episode title)
-            if (isUrl(filename) || !isUrl(mediaTitle)) {
-                if (hasSeasonEpisode(mediaTitle)) {
+        } else if (isUrl(filename)) {
+            // If filename is a URL, we depend on mediaTitle.
+            if (mediaTitle && mediaTitle !== "N/A" && mediaTitle !== filename) {
+                if (hasEpisodeMarker(mediaTitle)) {
                     parseTarget = mediaTitle;
-                } else if (isUrl(filename)) {
-                    // filename is URL and mediaTitle doesn't have S##E##
-                    // This means mediaTitle is probably just the episode title from MKV metadata
+                } else {
+                    // URL filename + title without episode marker usually means embedded tag only.
                     return null;
                 }
+            } else {
+                return null;
+            }
+        } else if (mediaTitle && mediaTitle !== "N/A" && mediaTitle !== filename) {
+            // For non-URL files, prefer filename to avoid feedback loops caused by force-media-title.
+            // Only use mediaTitle if filename has no episode marker but mediaTitle does.
+            const filenameHasEpisodeMarker = hasEpisodeMarker(filename);
+            const mediaTitleHasEpisodeMarker = hasEpisodeMarker(mediaTitle);
+
+            if (!filenameHasEpisodeMarker && mediaTitleHasEpisodeMarker) {
+                parseTarget = mediaTitle;
             }
         }
 

@@ -129,6 +129,24 @@ function hasUrlEncodedChars(filename: string): boolean {
     return /%[0-9A-Fa-f]{2}/.test(filename);
 }
 
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractEpisodeFromFilename(filename: string): number | null {
+    const explicitEpisodeMatch = filename.match(/(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*(\d{1,3})(?=[^\d]|$)/);
+    if (explicitEpisodeMatch) {
+        return parseInt(explicitEpisodeMatch[1], 10);
+    }
+
+    const trailingEpisodeMatch = filename.match(/-\s*(\d{1,3})(?=\s*(?:\[|\(|v\d|$))/);
+    if (trailingEpisodeMatch) {
+        return parseInt(trailingEpisodeMatch[1], 10);
+    }
+
+    return null;
+}
+
 const loggedInvalidTitles: Set<string> = new Set();
 
 /**
@@ -167,6 +185,10 @@ function processGuessitResult(
     }
 
     let title = guessed.title || filename;
+
+    const alternativeTitle = typeof guessed.alternative_title === "string"
+        ? cleanTitle(guessed.alternative_title)
+        : null;
 
     // Fix Guessit detecting "Ko" as Korean language in titles like "Oshi no Ko"
     // Also handles dot-separated filenames like "OSHI.NO.KO.S03E10..."
@@ -214,13 +236,43 @@ function processGuessitResult(
 
     let season = guessed.season ?? null;
     let episode = guessed.episode ?? null;
-    const episode_title = guessed.episode_title ?? null;
+    let episode_title = guessed.episode_title ?? null;
 
     if (season === null || episode === null) {
         const seMatch = filename.match(/[Ss](\d{1,2})[Ee](\d{1,3})/);
         if (seMatch) {
             if (season === null) season = parseInt(seMatch[1], 10);
             if (episode === null) episode = parseInt(seMatch[2], 10);
+        }
+    }
+
+    // Handle patterns where GuessIt splits season/subtitle into alternative_title,
+    // e.g. "Dr Stone - New World - 02" => title="Dr Stone", alternative_title="New World".
+    if (alternativeTitle && guessed.title && guessed.episode) {
+        const normalizedTitle = cleanTitle(guessed.title);
+        const combinedPattern = new RegExp(
+            `${escapeRegex(normalizedTitle)}\\s*-\\s*${escapeRegex(alternativeTitle)}\\s*-\\s*0*${guessed.episode}(?:[^\\d]|$)`,
+            "i"
+        );
+
+        if (combinedPattern.test(filename)) {
+            title = `${normalizedTitle} - ${alternativeTitle}`;
+        }
+    }
+
+    if (episode === null) {
+        episode = extractEpisodeFromFilename(filename);
+    }
+
+    if (episode !== null && episode_title && title) {
+        const arcPattern = new RegExp(
+            `${escapeRegex(title)}\\s*-\\s*${escapeRegex(episode_title)}\\s*-\\s*0*${episode}(?:[^\\d]|$)`,
+            "i"
+        );
+
+        if (arcPattern.test(filename)) {
+            title = `${title} - ${episode_title}`;
+            episode_title = null;
         }
     }
 
