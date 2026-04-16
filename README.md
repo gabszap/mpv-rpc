@@ -34,6 +34,7 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 - [MyAnimeList Sync](#myanimelist-sync)
 - [Stremio MPV Bridge](#stremio-mpv-bridge)
 - [Screenshots](#screenshots)
+- [Releases](#releases)
 - [Contributing](#contributing)
 
 ---
@@ -384,6 +385,16 @@ Enhance your MPV experience with these useful scripts from [Eisa01/mpv-scripts](
 - [AniList](https://anilist.co/) - AniList API
 - [Kitsu](https://kitsu.io/) - Kitsu API
 - [PreMiD](https://premid.app/) - Assets reference
+
+---
+
+## Releases
+
+Project releases are automated with **semantic-release** on pushes to `main`.
+
+- Versioning and release notes are generated from **Conventional Commits**.
+- `CHANGELOG.md` is generated/updated automatically by the release workflow.
+- Do not run `npm version` manually for project releases.
 
 ---
 
