@@ -243,7 +243,9 @@ Os valores de ambiente são carregados automaticamente via `dotenv` a partir do 
 | `HIDE_IDLING` | Ocultar status quando o MPV estiver ocioso | `false` |
 | `SHOW_TITLE` | Usar título do anime como nome da atividade | `true` |
 | `TITLE_LANG` | Idioma preferido do título (`english`, `romaji`, `none`) | `none` |
-| `METADATA_PROVIDER` | Fonte de metadados (`jikan`, `anilist`, `kitsu`) | `jikan` |
+| `METADATA_PROVIDER` | Fonte de metadados (`jikan`, `anilist`, `kitsu`, `tvdb`) | `jikan` |
+| `TVDB_API_KEY` | Chave de API do TheTVDB (obrigatória ao usar `tvdb`, opcional para fallbacks) | (vazio) |
+| `TVDB_LANG` | Código de idioma preferido do TheTVDB para metadados de episódios | `eng` |
 | `USE_GUESSIT_API` | Usar API em nuvem para parsing de nomes de arquivo | `true` |
 | `GUESSIT_API_URL` | URL do endpoint da sua API GuessIt | (vazio) |
 | `MAL_SYNC` | Ativar sincronização com MyAnimeList | `false` |

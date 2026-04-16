@@ -242,7 +242,9 @@ Environment values are loaded automatically via `dotenv` from `.env` at startup.
 | `HIDE_IDLING` | Hide status when MPV is idle | `false` |
 | `SHOW_TITLE` | Use anime title as activity name | `true` |
 | `TITLE_LANG` | Preferred title language (`english`, `romaji`, `none`) | `none` |
-| `METADATA_PROVIDER` | Metadata source (`jikan`, `anilist`, `kitsu`) | `jikan` |
+| `METADATA_PROVIDER` | Metadata source (`jikan`, `anilist`, `kitsu`, `tvdb`) | `jikan` |
+| `TVDB_API_KEY` | TheTVDB API key (required when using `tvdb`, optional for fallbacks) | (empty) |
+| `TVDB_LANG` | Preferred TheTVDB language code for episode metadata | `eng` |
 | `USE_GUESSIT_API` | Use cloud API for filename parsing | `true` |
 | `GUESSIT_API_URL` | URL of your GuessIt API endpoint | (empty) |
 | `MAL_SYNC` | Enable MyAnimeList synchronization | `false` |
