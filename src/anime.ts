@@ -4,19 +4,19 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { config } from "./config";
+import { config, type MetadataProvider } from "./config";
 import { JikanProvider } from "./providers/jikan";
 import { AniListProvider } from "./providers/anilist";
 import { KitsuProvider } from "./providers/kitsu";
 import { TvdbProvider } from "./providers/tvdb";
-import type { AnimeProvider, AnimeInfo } from "./providers/types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult } from "./providers/types";
 
 // Re-export AnimeInfo type for other modules
 export type { AnimeInfo } from "./providers/types";
 
 // Select provider based on config
-function createProvider(): AnimeProvider {
-    switch (config.metadataProvider) {
+function createProvider(metadataProvider: MetadataProvider): AnimeProvider {
+    switch (metadataProvider) {
         case "anilist":
             return new AniListProvider();
         case "kitsu":
@@ -28,19 +28,35 @@ function createProvider(): AnimeProvider {
     }
 }
 
-const provider = createProvider();
+const provider = createProvider(config.metadataProvider);
 
 // Fallback providers for episode titles
-const fallbackProviders: AnimeProvider[] = [];
-if (config.metadataProvider !== "jikan") {
-    fallbackProviders.push(new JikanProvider());
+function createFallbackProviders(primaryProviderName: string): AnimeProvider[] {
+    const fallbackCandidates: AnimeProvider[] = [
+        new JikanProvider(),
+        new KitsuProvider(),
+    ];
+
+    if (config.tvdb.apiKey) {
+        fallbackCandidates.push(new TvdbProvider());
+    }
+
+    const seenProviderNames = new Set<string>([primaryProviderName]);
+    const fallbackList: AnimeProvider[] = [];
+
+    for (const fallbackCandidate of fallbackCandidates) {
+        if (seenProviderNames.has(fallbackCandidate.name)) {
+            continue;
+        }
+
+        seenProviderNames.add(fallbackCandidate.name);
+        fallbackList.push(fallbackCandidate);
+    }
+
+    return fallbackList;
 }
-if (config.metadataProvider !== "kitsu" && !fallbackProviders.some(p => p.name === "kitsu")) {
-    fallbackProviders.push(new KitsuProvider());
-}
-if (config.metadataProvider !== "tvdb" && config.tvdb.apiKey) {
-    fallbackProviders.push(new TvdbProvider());
-}
+
+const fallbackProviders = createFallbackProviders(provider.name);
 
 // Export provider name for logging
 export const providerName = provider.name;
@@ -49,11 +65,79 @@ export const providerName = provider.name;
 interface CacheEntry {
     data: AnimeInfo | null;
     timestamp: number;
+    sourceProvider?: string;
 }
 
 const cache: Map<string, CacheEntry> = new Map();
 const episodeCache: Map<string, string | null> = new Map();
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const NEGATIVE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for not-found results
+
+function isCacheEntryValid(entry: CacheEntry, now = Date.now()): boolean {
+    const ttl = entry.data === null ? NEGATIVE_CACHE_TTL : CACHE_TTL;
+    return now - entry.timestamp < ttl;
+}
+
+function normalizeProviderFields(info: AnimeInfo, providerName: string): AnimeInfo {
+    if (providerName === "jikan" && !info.mal_id) {
+        return {
+            ...info,
+            mal_id: info.id,
+        };
+    }
+
+    return info;
+}
+
+function getProvidersInResolutionOrder(): AnimeProvider[] {
+    const providersInOrder: AnimeProvider[] = [];
+    const seen = new Set<string>();
+
+    for (const currentProvider of [provider, ...fallbackProviders]) {
+        if (seen.has(currentProvider.name)) {
+            continue;
+        }
+
+        seen.add(currentProvider.name);
+        providersInOrder.push(currentProvider);
+    }
+
+    return providersInOrder;
+}
+
+async function resolveAnimeInfoWithProvider(
+    currentProvider: AnimeProvider,
+    title: string,
+    season: number | null
+): Promise<AnimeInfo | null> {
+    const searchResult = await currentProvider.searchAnime(title);
+    if (!searchResult) {
+        return null;
+    }
+
+    let animeInfo: AnimeInfo | null;
+
+    if (season && season > 1) {
+        animeInfo = await currentProvider.findSeasonAnime(searchResult.id, season);
+    } else {
+        animeInfo = await currentProvider.getAnimeById(searchResult.id);
+    }
+
+    if (!animeInfo) {
+        animeInfo = buildAnimeInfoFromSearchResult(searchResult);
+    }
+
+    return normalizeProviderFields(animeInfo, currentProvider.name);
+}
+
+function buildAnimeInfoFromSearchResult(searchResult: AnimeSearchResult): AnimeInfo {
+    return {
+        id: searchResult.id,
+        title_english: searchResult.title_english,
+        title_romaji: searchResult.title,
+        cover_url: searchResult.coverImage,
+    };
+}
 
 function getCachePath(): string {
     const cacheDir = path.join(process.cwd(), ".anime_cache");
@@ -73,7 +157,7 @@ function loadCache(): void {
             for (const [key, value] of Object.entries(data)) {
                 const entry = value as CacheEntry;
                 // Only load entries that are not expired
-                if (now - entry.timestamp < CACHE_TTL) {
+                if (isCacheEntryValid(entry, now)) {
                     cache.set(key, entry);
                 } else {
                     expiredCount++;
@@ -97,7 +181,7 @@ function saveCache(): void {
         const now = Date.now();
         // Only save entries that are still valid
         cache.forEach((value, key) => {
-            if (now - value.timestamp < CACHE_TTL) {
+            if (isCacheEntryValid(value, now)) {
                 data[key] = value;
             }
         });
@@ -110,7 +194,42 @@ function saveCache(): void {
 loadCache();
 
 function getCacheKey(title: string, season: number | null): string {
-    return `${config.metadataProvider}:${title.toLowerCase()}:${season ?? 1}`;
+    return `${provider.name}:${title.toLowerCase()}:${season ?? 1}`;
+}
+
+export function buildFallbackSearchCandidates(
+    animeTitle: string,
+    season: number | null,
+    animeInfo: Pick<AnimeInfo, "title_romaji" | "title_english">
+): string[] {
+    const parsedTitle = animeTitle.trim();
+
+    const rawCandidates: Array<string | null | undefined> = [
+        parsedTitle,
+        season && season > 1 && parsedTitle ? `${parsedTitle} season ${season}` : null,
+        animeInfo.title_romaji,
+        animeInfo.title_english,
+    ];
+
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+
+    for (const candidate of rawCandidates) {
+        const trimmed = candidate?.trim();
+        if (!trimmed) {
+            continue;
+        }
+
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        candidates.push(trimmed);
+    }
+
+    return candidates;
 }
 
 /**
@@ -129,47 +248,61 @@ export async function getAnimeInfo(title: string, season: number | null = null):
 
     // Check cache
     const cached = cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        return cached.data;
-    }
-
-    try {
-        // Search for anime
-        const searchResult = await provider.searchAnime(title);
-        if (!searchResult) {
-            cache.set(cacheKey, { data: null, timestamp: Date.now() });
-            saveCache();
-            return null;
+    if (cached && isCacheEntryValid(cached)) {
+        if (cached.data) {
+            const normalizedCached = normalizeProviderFields(cached.data, cached.sourceProvider ?? provider.name);
+            if (normalizedCached !== cached.data) {
+                cache.set(cacheKey, {
+                    data: normalizedCached,
+                    timestamp: cached.timestamp,
+                    sourceProvider: cached.sourceProvider,
+                });
+                saveCache();
+            }
+            return normalizedCached;
         }
-
-        let animeInfo: AnimeInfo | null;
-
-        // If season > 1, find correct season through relations
-        if (season && season > 1) {
-            animeInfo = await provider.findSeasonAnime(searchResult.id, season);
-        } else {
-            animeInfo = await provider.getAnimeById(searchResult.id);
-        }
-
-        if (!animeInfo) {
-            // Fallback to search result data
-            animeInfo = {
-                id: searchResult.id,
-                title_english: searchResult.title_english,
-                title_romaji: searchResult.title,
-                cover_url: searchResult.coverImage,
-            };
-        }
-
-        // Cache result
-        cache.set(cacheKey, { data: animeInfo, timestamp: Date.now() });
-        saveCache();
-
-        return animeInfo;
-    } catch (e) {
-        console.error("[Anime] Error getting anime info:", e);
         return null;
     }
+
+    let hadProviderError = false;
+    let lastNotFoundProvider: string | null = null;
+
+    for (const currentProvider of getProvidersInResolutionOrder()) {
+        try {
+            const animeInfo = await resolveAnimeInfoWithProvider(currentProvider, title, season);
+            if (!animeInfo) {
+                lastNotFoundProvider = currentProvider.name;
+                continue;
+            }
+
+            cache.set(cacheKey, {
+                data: animeInfo,
+                timestamp: Date.now(),
+                sourceProvider: currentProvider.name,
+            });
+            saveCache();
+
+            return animeInfo;
+        } catch {
+            hadProviderError = true;
+            if (config.debug) {
+                console.log(`[Anime] ${currentProvider.name} failed while resolving anime info, trying next provider`);
+            }
+        }
+    }
+
+    if (hadProviderError) {
+        console.error("[Anime] Error getting anime info: all providers failed");
+        return null;
+    }
+
+    cache.set(cacheKey, {
+        data: null,
+        timestamp: Date.now(),
+        sourceProvider: lastNotFoundProvider || "resolution-exhausted",
+    });
+    saveCache();
+    return null;
 }
 
 /**
@@ -180,17 +313,37 @@ export async function getEpisodeTitle(
     season: number | null,
     episode: number
 ): Promise<string | null> {
-    try {
-        const animeInfo = await getAnimeInfo(animeTitle, season);
-        if (!animeInfo) return null;
+        try {
+            const animeInfo = await getAnimeInfo(animeTitle, season);
+            if (!animeInfo) return null;
 
-        const episodeCacheKey = `${config.metadataProvider}:${animeInfo.id}:${episode}`;
-        if (episodeCache.has(episodeCacheKey)) {
-            return episodeCache.get(episodeCacheKey) ?? null;
-        }
+            const episodeLookupContext = {
+                searchTitle: animeTitle,
+                canonicalTitles: [animeInfo.title_english, animeInfo.title_romaji].filter(
+                    (value): value is string => Boolean(value)
+                ),
+                allowSeasonInference: season === null || season <= 1,
+            };
+
+            const episodeCacheKey = `${provider.name}:${animeInfo.id}:${season ?? 1}:${episode}`;
+            if (episodeCache.has(episodeCacheKey)) {
+                return episodeCache.get(episodeCacheKey) ?? null;
+            }
 
         // Try primary provider first
-        let title = await provider.getEpisodeTitle(animeInfo.id, episode, season ?? undefined);
+            let title: string | null = null;
+            try {
+                title = await provider.getEpisodeTitle(
+                    animeInfo.id,
+                    episode,
+                    season ?? undefined,
+                    episodeLookupContext
+                );
+            } catch {
+                if (config.debug) {
+                    console.log(`[Anime] ${provider.name} failed while fetching episode title, trying fallbacks`);
+                }
+            }
 
         // Try fallback providers if primary has no episode data
         if (!title && fallbackProviders.length > 0) {
@@ -199,15 +352,41 @@ export async function getEpisodeTitle(
             for (const fallback of fallbackProviders) {
                 console.log(`[Anime] Trying ${fallback.name} fallback...`);
 
-                // If we have the MAL ID from AniList, use it directly (works for Jikan)
-                if (fallback.name === "jikan" && animeInfo.mal_id) {
-                    title = await fallback.getEpisodeTitle(animeInfo.mal_id, episode, season ?? undefined);
-                } else {
-                    // Fallback: search by title if no MAL ID or not Jikan
-                    const searchTitle = animeInfo.title_romaji || animeInfo.title_english || animeTitle;
-                    const searchResult = await fallback.searchAnime(searchTitle);
-                    if (searchResult) {
-                        title = await fallback.getEpisodeTitle(searchResult.id, episode, season ?? undefined);
+                try {
+                    // If we have the MAL ID from AniList, use it directly (works for Jikan)
+                    if (fallback.name === "jikan" && animeInfo.mal_id) {
+                        title = await fallback.getEpisodeTitle(
+                            animeInfo.mal_id,
+                            episode,
+                            season ?? undefined,
+                            episodeLookupContext
+                        );
+                    } else {
+                        // Fallback: search by title if no MAL ID or not Jikan
+                        const searchCandidates = buildFallbackSearchCandidates(animeTitle, season, animeInfo);
+
+                        for (const candidate of searchCandidates) {
+                            if (config.debug) {
+                                console.log(`[Anime] Trying ${fallback.name} fallback query: "${candidate}"`);
+                            }
+
+                            const searchResult = await fallback.searchAnime(candidate);
+                            if (!searchResult) {
+                                continue;
+                            }
+
+                            title = await fallback.getEpisodeTitle(searchResult.id, episode, season ?? undefined, {
+                                ...episodeLookupContext,
+                                searchTitle: candidate,
+                            });
+                            if (title) {
+                                break;
+                            }
+                        }
+                    }
+                } catch {
+                    if (config.debug) {
+                        console.log(`[Anime] ${fallback.name} fallback failed, trying next fallback`);
                     }
                 }
 

@@ -4,8 +4,8 @@
 
 import axios from "axios";
 import { config } from "../config";
-import { logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult } from "./types";
+import { formatProviderErrorDetails, logApiCall } from "./types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
 
 // Rate limiting
 let lastRequestTime = 0;
@@ -85,6 +85,9 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
         }
 
         logApiCall("Jikan", endpoint, params, "ERROR", e.message || "unknown");
+        if (config.debug) {
+            logApiCall("Jikan", endpoint, params, "ERROR_DETAIL", formatProviderErrorDetails("Jikan", endpoint, e));
+        }
         circuitBreaker.recordFailure();
         throw e;
     }
@@ -166,6 +169,34 @@ function calculateTitleScore(query: string, animeTitle: string, englishTitle: st
     return score;
 }
 
+function formatCompactJikanError(error: unknown): string {
+    const err = (error ?? {}) as {
+        message?: unknown;
+        code?: unknown;
+        response?: {
+            status?: unknown;
+        };
+    };
+
+    const status = typeof err.response?.status === "number" ? err.response.status : null;
+    const code = typeof err.code === "string" ? err.code : null;
+    const message = typeof err.message === "string" ? err.message : "unknown error";
+
+    if (status !== null && code) {
+        return `status ${status} (${code}): ${message}`;
+    }
+
+    if (status !== null) {
+        return `status ${status}: ${message}`;
+    }
+
+    if (code) {
+        return `${code}: ${message}`;
+    }
+
+    return message;
+}
+
 export class JikanProvider implements AnimeProvider {
     readonly name = "jikan";
 
@@ -212,7 +243,7 @@ export class JikanProvider implements AnimeProvider {
             logApiCall("Jikan", "/anime", { q: title }, "DETAIL", `"${selected.title}" (MAL:${selected.mal_id}) [score:${selectedScore}]`);
             return this.mapSearchResult(selected);
         } catch (e) {
-            console.error("[Jikan] Search error:", e);
+            console.error(`[Jikan] Search error: ${formatCompactJikanError(e)}`);
             return null;
         }
     }
@@ -227,16 +258,23 @@ export class JikanProvider implements AnimeProvider {
 
             return {
                 id: anime.mal_id,
+                mal_id: anime.mal_id,
                 title_english: anime.title_english,
                 title_romaji: anime.title,
                 cover_url: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
+                total_episodes: anime.episodes || undefined,
             };
         } catch {
             return null;
         }
     }
 
-    async getEpisodeTitle(animeId: number, episode: number): Promise<string | null> {
+    async getEpisodeTitle(
+        animeId: number,
+        episode: number,
+        _season?: number,
+        _context?: EpisodeLookupContext
+    ): Promise<string | null> {
         try {
             const response = await jikanRequest(`/anime/${animeId}/episodes/${episode}`);
             if (response.data) {

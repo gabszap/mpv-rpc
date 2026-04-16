@@ -6,11 +6,53 @@
  */
 
 import axios from "axios";
-import { logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult } from "./types";
+import { formatProviderErrorDetails, logApiCall } from "./types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
 import { config } from "../config";
 
 const TVDB_BASE = "https://api4.thetvdb.com/v4";
+const MAX_SEASON_LOOKUP_PAGES = 3;
+const MIN_INFERENCE_SCORE = 40;
+const TITLE_HINT_STOP_WORDS = new Set([
+    "a",
+    "an",
+    "and",
+    "arc",
+    "cour",
+    "episode",
+    "of",
+    "part",
+    "season",
+    "series",
+    "the",
+    "to",
+]);
+
+type TvdbSeasonType = "official" | "default";
+
+interface TvdbEpisodeRecord {
+    id?: number | string;
+    name?: string | null;
+    seasonNumber?: number | string;
+    number?: number | string;
+}
+
+interface TvdbSeasonRecord {
+    id?: number | string;
+    name?: string | null;
+    number?: number | string;
+    seasonNumber?: number | string;
+    type?: {
+        name?: string | null;
+        type?: string | null;
+    } | string | null;
+}
+
+interface SeasonInferenceResult {
+    season: number;
+    score: number;
+    reason: string;
+}
 
 // Authentication
 let bearerToken: string | null = null;
@@ -79,6 +121,9 @@ async function authenticate(): Promise<string> {
         return bearerToken;
     } catch (e: any) {
         logApiCall("TVDB", "login", {}, "ERROR", e.message || "auth failed");
+        if (config.debug) {
+            logApiCall("TVDB", "login", {}, "ERROR_DETAIL", formatProviderErrorDetails("TVDB", "login", e));
+        }
         throw new Error(`TVDB authentication failed: ${e.message}`);
     }
 }
@@ -132,6 +177,9 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
         }
 
         logApiCall("TVDB", operation, params || {}, "ERROR", e.message || "unknown");
+        if (config.debug) {
+            logApiCall("TVDB", operation, params || {}, "ERROR_DETAIL", formatProviderErrorDetails("TVDB", operation, e));
+        }
         circuitBreaker.recordFailure();
         throw e;
     }
@@ -144,6 +192,376 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
  */
 function getTvdbLanguage(): string {
     return config.tvdb.language || "eng";
+}
+
+function normalizeEpisodeNumber(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return Math.trunc(value);
+    }
+
+    if (typeof value === "string" && value.trim().length > 0) {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+
+    return null;
+}
+
+function extractEpisodeList(response: any): TvdbEpisodeRecord[] {
+    const episodes = response?.data?.episodes;
+    return Array.isArray(episodes) ? episodes as TvdbEpisodeRecord[] : [];
+}
+
+function findExactEpisode(
+    episodes: TvdbEpisodeRecord[],
+    season: number,
+    episode: number
+): TvdbEpisodeRecord | null {
+    const seasonNum = normalizeEpisodeNumber(season);
+    const episodeNum = normalizeEpisodeNumber(episode);
+
+    if (seasonNum === null || episodeNum === null) {
+        return null;
+    }
+
+    return episodes.find((candidate) =>
+        normalizeEpisodeNumber(candidate.seasonNumber) === seasonNum
+        && normalizeEpisodeNumber(candidate.number) === episodeNum
+    ) || null;
+}
+
+function normalizeTitleForComparison(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/['`´’]+/g, "")
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function extractMeaningfulTitleTokens(value: string): string[] {
+    if (!value.trim()) {
+        return [];
+    }
+
+    return normalizeTitleForComparison(value)
+        .split(" ")
+        .filter((token) => token.length >= 3 && !TITLE_HINT_STOP_WORDS.has(token));
+}
+
+function getSeasonTypeLabel(season: TvdbSeasonRecord): string {
+    if (typeof season.type === "string") {
+        return season.type;
+    }
+
+    if (typeof season.type?.type === "string") {
+        return season.type.type;
+    }
+
+    if (typeof season.type?.name === "string") {
+        return season.type.name;
+    }
+
+    return "";
+}
+
+function extractSeasonRecords(response: any): TvdbSeasonRecord[] {
+    const directData = response?.data;
+    if (Array.isArray(directData)) {
+        return directData as TvdbSeasonRecord[];
+    }
+
+    if (Array.isArray(directData?.seasons)) {
+        return directData.seasons as TvdbSeasonRecord[];
+    }
+
+    const wrappedData = response?.data?.data;
+    if (Array.isArray(wrappedData)) {
+        return wrappedData as TvdbSeasonRecord[];
+    }
+
+    if (Array.isArray(wrappedData?.seasons)) {
+        return wrappedData.seasons as TvdbSeasonRecord[];
+    }
+
+    return [];
+}
+
+function getSeasonNumber(season: TvdbSeasonRecord): number | null {
+    return normalizeEpisodeNumber(season.number) ?? normalizeEpisodeNumber(season.seasonNumber);
+}
+
+function buildSeasonInferenceInputs(context?: EpisodeLookupContext): {
+    normalizedHints: string[];
+    hintTokens: Set<string>;
+} {
+    const rawHints: Array<string | undefined> = [
+        context?.searchTitle,
+        ...(context?.canonicalTitles || []),
+    ];
+
+    const normalizedHints: string[] = [];
+    const seenHints = new Set<string>();
+
+    for (const rawHint of rawHints) {
+        if (!rawHint) {
+            continue;
+        }
+
+        const normalizedHint = normalizeTitleForComparison(rawHint);
+        if (!normalizedHint || seenHints.has(normalizedHint)) {
+            continue;
+        }
+
+        seenHints.add(normalizedHint);
+        normalizedHints.push(normalizedHint);
+    }
+
+    const hintTokens = new Set<string>();
+    for (const hint of normalizedHints) {
+        for (const token of extractMeaningfulTitleTokens(hint)) {
+            hintTokens.add(token);
+        }
+    }
+
+    return { normalizedHints, hintTokens };
+}
+
+function computeSeasonHintScore(
+    seasonName: string,
+    normalizedHints: string[],
+    hintTokens: Set<string>
+): number {
+    const normalizedSeasonName = normalizeTitleForComparison(seasonName);
+    if (!normalizedSeasonName) {
+        return 0;
+    }
+
+    let score = 0;
+
+    for (const normalizedHint of normalizedHints) {
+        if (normalizedSeasonName.length >= 4 && normalizedHint.includes(normalizedSeasonName)) {
+            score += 120;
+            break;
+        }
+    }
+
+    const seasonTokens = extractMeaningfulTitleTokens(normalizedSeasonName);
+    if (seasonTokens.length === 0) {
+        return score;
+    }
+
+    let matchedTokenCount = 0;
+    for (const token of seasonTokens) {
+        if (!hintTokens.has(token)) {
+            continue;
+        }
+
+        matchedTokenCount++;
+        score += 25;
+    }
+
+    if (matchedTokenCount > 0 && matchedTokenCount === seasonTokens.length) {
+        score += 40;
+    }
+
+    return score;
+}
+
+function logSeasonInferenceDebug(seriesId: number, message: string): void {
+    if (!config.debug) {
+        return;
+    }
+
+    console.log(`[TVDB] Season inference (series:${seriesId}) ${message}`);
+}
+
+async function inferSeasonFromTitleHints(
+    seriesId: number,
+    context?: EpisodeLookupContext
+): Promise<SeasonInferenceResult | null> {
+    if (!context?.allowSeasonInference) {
+        logSeasonInferenceDebug(seriesId, "skip: disabled");
+        return null;
+    }
+
+    const { normalizedHints, hintTokens } = buildSeasonInferenceInputs(context);
+    if (normalizedHints.length === 0 || hintTokens.size === 0) {
+        logSeasonInferenceDebug(seriesId, "skip: no title hints");
+        return null;
+    }
+
+    try {
+        const seasonsResponse = await tvdbRequest(
+            `/series/${seriesId}/extended`,
+            { meta: "episodes" },
+            "getSeasons"
+        );
+        const allSeasonRecords = extractSeasonRecords(seasonsResponse);
+
+        const candidateSeasons: TvdbSeasonRecord[] = [];
+        for (const seasonRecord of allSeasonRecords) {
+            const seasonNum = getSeasonNumber(seasonRecord);
+            if (seasonNum === null || seasonNum <= 1) {
+                continue;
+            }
+
+            const typeLabel = getSeasonTypeLabel(seasonRecord).toLowerCase();
+            if (typeLabel && !typeLabel.includes("official") && !typeLabel.includes("default")) {
+                continue;
+            }
+
+            candidateSeasons.push(seasonRecord);
+        }
+
+        if (candidateSeasons.length === 0) {
+            logSeasonInferenceDebug(seriesId, "skip: no eligible season metadata");
+            return null;
+        }
+
+        let best: SeasonInferenceResult | null = null;
+
+        for (const seasonRecord of candidateSeasons) {
+            const seasonNum = getSeasonNumber(seasonRecord);
+            if (seasonNum === null) {
+                continue;
+            }
+
+            const seasonName = typeof seasonRecord.name === "string" ? seasonRecord.name.trim() : "";
+            if (!seasonName) {
+                continue;
+            }
+
+            const score = computeSeasonHintScore(seasonName, normalizedHints, hintTokens);
+            logSeasonInferenceDebug(seriesId, `candidate season=${seasonNum} name=\"${seasonName}\" score=${score}`);
+
+            if (score < MIN_INFERENCE_SCORE) {
+                continue;
+            }
+
+            if (!best || score > best.score || (score === best.score && seasonNum > best.season)) {
+                best = {
+                    season: seasonNum,
+                    score,
+                    reason: `title-hint match \"${seasonName}\"`,
+                };
+            }
+        }
+
+        if (!best) {
+            logSeasonInferenceDebug(seriesId, "no season candidate reached threshold");
+            return null;
+        }
+
+        logSeasonInferenceDebug(seriesId, `selected season=${best.season} score=${best.score} reason=${best.reason}`);
+        return best;
+    } catch {
+        logSeasonInferenceDebug(seriesId, "failed: season metadata unavailable");
+        return null;
+    }
+}
+
+async function lookupEpisodeForSeasonNumber(
+    seriesId: number,
+    seasonNum: number,
+    episode: number
+): Promise<{ episode: TvdbEpisodeRecord; seasonType: TvdbSeasonType } | null> {
+    for (const seasonType of ["official", "default"] as TvdbSeasonType[]) {
+        try {
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                { id: seriesId, season: seasonNum, ep: episode },
+                "DETAIL",
+                `seasonType=${seasonType} exact`
+            );
+
+            const exactResponse = await tvdbRequest(
+                `/series/${seriesId}/episodes/${seasonType}`,
+                {
+                    page: 0,
+                    season: seasonNum,
+                    episodeNumber: episode,
+                },
+                "getEpisode"
+            );
+
+            const exactEpisodes = extractEpisodeList(exactResponse);
+            const exactMatch = findExactEpisode(exactEpisodes, seasonNum, episode);
+            if (exactMatch) {
+                logApiCall(
+                    "TVDB",
+                    "getEpisode",
+                    { id: seriesId, season: seasonNum, ep: episode },
+                    "DETAIL",
+                    `seasonType=${seasonType} exact-match`
+                );
+                return {
+                    episode: exactMatch,
+                    seasonType,
+                };
+            }
+
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                { id: seriesId, season: seasonNum, ep: episode },
+                "DETAIL",
+                `seasonType=${seasonType} exact-miss -> paginated`
+            );
+
+            for (let page = 0; page < MAX_SEASON_LOOKUP_PAGES; page++) {
+                const pageResponse = await tvdbRequest(
+                    `/series/${seriesId}/episodes/${seasonType}`,
+                    {
+                        page,
+                        season: seasonNum,
+                    },
+                    "getEpisode"
+                );
+
+                const pageEpisodes = extractEpisodeList(pageResponse);
+                if (pageEpisodes.length === 0) {
+                    break;
+                }
+
+                const pageMatch = findExactEpisode(pageEpisodes, seasonNum, episode);
+                if (pageMatch) {
+                    logApiCall(
+                        "TVDB",
+                        "getEpisode",
+                        { id: seriesId, season: seasonNum, ep: episode },
+                        "DETAIL",
+                        `seasonType=${seasonType} paginated-match page=${page}`
+                    );
+                    return {
+                        episode: pageMatch,
+                        seasonType,
+                    };
+                }
+            }
+
+            if (seasonType === "official") {
+                logApiCall(
+                    "TVDB",
+                    "getEpisode",
+                    { id: seriesId, season: seasonNum, ep: episode },
+                    "DETAIL",
+                    "seasonType=official miss -> trying default"
+                );
+            }
+        } catch {
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                { id: seriesId, season: seasonNum, ep: episode },
+                "DETAIL",
+                `seasonType=${seasonType} failed`
+            );
+        }
+    }
+
+    return null;
 }
 
 export class TvdbProvider implements AnimeProvider {
@@ -262,48 +680,58 @@ export class TvdbProvider implements AnimeProvider {
         }
     }
 
-    async getEpisodeTitle(seriesId: number, episode: number, season?: number): Promise<string | null> {
+    async getEpisodeTitle(
+        seriesId: number,
+        episode: number,
+        season?: number,
+        context?: EpisodeLookupContext
+    ): Promise<string | null> {
         try {
-            const seasonNum = season ?? 1;
+            const requestedSeason = season ?? 1;
+            let resolvedSeason = requestedSeason;
 
-            const response = await tvdbRequest(
-                `/series/${seriesId}/episodes/default`,
-                {
-                    season: seasonNum,
-                    episodeNumber: episode,
-                },
-                "getEpisode"
-            );
+            if (!season || season <= 1) {
+                const inferredSeason = await inferSeasonFromTitleHints(seriesId, context);
+                if (inferredSeason) {
+                    resolvedSeason = inferredSeason.season;
+                    logSeasonInferenceDebug(
+                        seriesId,
+                        `using inferred season=${resolvedSeason} for episode=${episode}`
+                    );
+                } else {
+                    logSeasonInferenceDebug(
+                        seriesId,
+                        `using default season=${resolvedSeason} for episode=${episode}`
+                    );
+                }
+            }
 
-            const episodes = response?.data?.episodes;
-            if (!episodes || episodes.length === 0) {
-                logApiCall("TVDB", "getEpisode",
-                    { id: seriesId, season: seasonNum, ep: episode },
-                    "DETAIL", "no episodes");
+            const lookupResult = await lookupEpisodeForSeasonNumber(seriesId, resolvedSeason, episode);
+
+            if (!lookupResult) {
+                logApiCall(
+                    "TVDB",
+                    "getEpisode",
+                    { id: seriesId, season: resolvedSeason, ep: episode },
+                    "DETAIL",
+                    "no exact season+episode match"
+                );
                 return null;
             }
 
-            // Find the exact episode
-            const ep = episodes.find((e: any) =>
-                e.seasonNumber === seasonNum && e.number === episode
-            );
+            const selectedEpisode = lookupResult.episode;
+            const selectedSeasonType = lookupResult.seasonType;
 
-            if (!ep) {
-                logApiCall("TVDB", "getEpisode",
-                    { id: seriesId, season: seasonNum, ep: episode },
-                    "DETAIL", "episode not found in results");
-                return null;
-            }
-
-            let epTitle = ep.name || null;
+            let epTitle = selectedEpisode.name || null;
+            const episodeId = normalizeEpisodeNumber(selectedEpisode.id);
 
             // Try to get localized episode title
             const lang = getTvdbLanguage();
-            if (epTitle && lang !== "eng" && ep.id) {
+            if (epTitle && lang !== "eng" && episodeId !== null) {
                 try {
                     const transResponse = await tvdbRequest(
-                        `/episodes/${ep.id}/translations/${lang}`,
-                        { episodeId: ep.id, lang },
+                        `/episodes/${episodeId}/translations/${lang}`,
+                        { episodeId, lang },
                         "getEpisodeTranslation"
                     );
                     const translation = transResponse?.data;
@@ -317,8 +745,8 @@ export class TvdbProvider implements AnimeProvider {
 
             if (epTitle) {
                 logApiCall("TVDB", "getEpisode",
-                    { id: seriesId, season: seasonNum, ep: episode },
-                    "DETAIL", `"${epTitle}"`);
+                    { id: seriesId, season: resolvedSeason, ep: episode },
+                    "DETAIL", `seasonType=${selectedSeasonType || "unknown"} "${epTitle}"`);
             }
 
             return epTitle;

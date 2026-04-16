@@ -4,8 +4,9 @@
  */
 
 import axios from "axios";
-import { logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult } from "./types";
+import { formatProviderErrorDetails, logApiCall } from "./types";
+import { config } from "../config";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
 
 const ANILIST_API = "https://graphql.anilist.co";
 
@@ -77,6 +78,9 @@ async function anilistRequest(query: string, variables: Record<string, any>, ope
         }
 
         logApiCall("AniList", operation, variables, "ERROR", e.message || "unknown");
+        if (config.debug) {
+            logApiCall("AniList", operation, variables, "ERROR_DETAIL", formatProviderErrorDetails("AniList", operation, e));
+        }
         circuitBreaker.recordFailure();
         throw e;
     }
@@ -209,7 +213,12 @@ export class AniListProvider implements AnimeProvider {
         }
     }
 
-    async getEpisodeTitle(animeId: number, episode: number): Promise<string | null> {
+    async getEpisodeTitle(
+        animeId: number,
+        episode: number,
+        _season?: number,
+        _context?: EpisodeLookupContext
+    ): Promise<string | null> {
         try {
             const response = await anilistRequest(EPISODE_QUERY, { id: animeId }, "getEpisode");
             const episodes = response?.data?.Media?.streamingEpisodes;

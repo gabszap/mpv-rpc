@@ -4,8 +4,9 @@
  */
 
 import axios from "axios";
-import { logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult } from "./types";
+import { formatProviderErrorDetails, logApiCall } from "./types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
+import { config } from "../config";
 
 // Extended AnimeInfo with type for internal use
 interface KitsuAnimeInfo extends AnimeInfo {
@@ -83,6 +84,9 @@ async function kitsuRequest(endpoint: string, params?: Record<string, any>): Pro
         }
 
         logApiCall("Kitsu", endpoint, params, "ERROR", e.message || "unknown");
+        if (config.debug) {
+            logApiCall("Kitsu", endpoint, params, "ERROR_DETAIL", formatProviderErrorDetails("Kitsu", endpoint, e));
+        }
         circuitBreaker.recordFailure();
         throw e;
     }
@@ -161,7 +165,12 @@ export class KitsuProvider implements AnimeProvider {
         }
     }
 
-    async getEpisodeTitle(animeId: number, episode: number): Promise<string | null> {
+    async getEpisodeTitle(
+        animeId: number,
+        episode: number,
+        _season?: number,
+        _context?: EpisodeLookupContext
+    ): Promise<string | null> {
         try {
             const response = await kitsuRequest(`/anime/${animeId}/episodes`, {
                 "filter[number]": episode,
