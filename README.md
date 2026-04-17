@@ -396,6 +396,10 @@ Project releases are automated with **semantic-release** on pushes to `main`.
 - `CHANGELOG.md` is generated/updated automatically by the release workflow.
 - Do not run `npm version` manually for project releases.
 - For local `semantic-release` runs, use **Node.js >= 20.8.1** (the workflow uses Node 22).
+- Local release helpers:
+  - `npm run release:dry`
+  - `npm run release:local`
+  - For local runs, keep `GH_TOKEN` (or `GITHUB_TOKEN`) in `.env`.
 
 ---
 
