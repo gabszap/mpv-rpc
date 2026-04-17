@@ -395,7 +395,6 @@ Project releases are automated with **semantic-release** on pushes to `main`.
 - Versioning and release notes are generated from **Conventional Commits**.
 - `CHANGELOG.md` is generated/updated automatically by the release workflow.
 - Do not run `npm version` manually for project releases.
-- For local `semantic-release` runs, use **Node.js >= 20.8.1** (the workflow uses Node 22).
 
 ---
 
