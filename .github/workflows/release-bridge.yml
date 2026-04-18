@@ -1,0 +1,41 @@
+name: Release Bridge (stremio-mpv-bridge)
+
+on:
+    push:
+        branches:
+            - main
+        paths:
+            - "stremio-mpv-bridge/**"
+            - "release.config.js"
+            - "release.bridge.config.js"
+            - "semantic-release/**"
+
+permissions:
+    contents: write
+    issues: write
+    pull-requests: write
+
+jobs:
+    release-bridge:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v5
+              with:
+                  node-version: 22
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Run semantic-release (bridge)
+              run: npx semantic-release
+              env:
+                  RELEASE_SCOPE: bridge
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

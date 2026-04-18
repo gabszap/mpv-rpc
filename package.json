@@ -9,8 +9,12 @@
     "dev": "tsc && node dist/index.js",
     "bridge": "npm run start --workspace=stremio-mpv-bridge",
     "test": "vitest run",
-    "release:dry": "dotenv -e .env -- semantic-release --dry-run",
-    "release:local": "dotenv -e .env -- semantic-release"
+    "release:dry:root": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release --dry-run",
+    "release:root": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release",
+    "release:dry:bridge": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release --dry-run",
+    "release:bridge": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release",
+    "release:dry": "npm run release:dry:root",
+    "release:local": "npm run release:root"
   },
   "workspaces": [
     "stremio-mpv-bridge"
@@ -34,6 +38,7 @@
     "@semantic-release/git": "^10.0.1",
     "@semantic-release/github": "^12.0.6",
     "@semantic-release/release-notes-generator": "^14.1.0",
+    "@semantic-release/npm": "^13.1.2",
     "@types/node": "^22.0.0",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "dotenv-cli": "^11.0.0",

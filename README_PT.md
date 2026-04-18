@@ -386,15 +386,25 @@ Melhore sua experiência com o MPV usando estes scripts úteis do [Eisa01/mpv-sc
 
 ## Releases
 
-As releases do projeto são automatizadas com **semantic-release** em pushes para `main`.
+As releases são automatizadas com **semantic-release** em pushes para `main`, com **dois fluxos independentes**:
 
-- O versionamento e as notas de release são gerados a partir de **Conventional Commits**.
-- O `CHANGELOG.md` é gerado/atualizado automaticamente pelo workflow de release.
+- **App raiz (`mpv-rpc`)**
+  - Formato de tag: `mpv-rpc-v${version}`
+  - Changelog: `CHANGELOG.md`
+  - Inclui commits que alteram caminhos fora da bridge.
+- **App bridge (`stremio-mpv-bridge`)**
+  - Formato de tag: `bridge-v${version}`
+  - Changelog: `stremio-mpv-bridge/CHANGELOG.md`
+  - Inclui commits que alteram `stremio-mpv-bridge/**`.
+
+O versionamento e as notas de release são gerados a partir de **Conventional Commits**.
+
 - Não execute `npm version` manualmente para releases do projeto.
-- Para execuções locais do `semantic-release`, use **Node.js >= 20.8.1** (o workflow usa Node 22).
-- Atalhos locais de release:
-  - `npm run release:dry`
-  - `npm run release:local`
+- Para execuções locais do `semantic-release`, use **Node.js >= 20.8.1** (os workflows usam Node 22).
+- Atalhos locais de release (com dotenv):
+  - Raiz: `npm run release:dry:root`, `npm run release:root`
+  - Bridge: `npm run release:dry:bridge`, `npm run release:bridge`
+  - Aliases legados: `npm run release:dry` (dry-run da raiz), `npm run release:local` (release da raiz)
   - Para execuções locais, mantenha `GH_TOKEN` (ou `GITHUB_TOKEN`) no `.env`.
 
 ---
