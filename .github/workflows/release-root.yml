@@ -7,7 +7,6 @@ on:
         paths-ignore:
             - "stremio-mpv-bridge/**"
             - "release.bridge.config.js"
-            - "semantic-release/**"
 
 permissions:
     contents: write
