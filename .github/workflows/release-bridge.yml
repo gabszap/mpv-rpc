@@ -5,10 +5,11 @@ on:
         branches:
             - main
         paths:
+            # Keep bridge workflow scoped to bridge-owned files to avoid duplicate
+            # runs when shared release tooling changes trigger the root pipeline.
             - "stremio-mpv-bridge/**"
-            - "release.config.js"
+            - "docs/stremio-mpv-bridge.md"
             - "release.bridge.config.js"
-            - "semantic-release/**"
 
 permissions:
     contents: write
