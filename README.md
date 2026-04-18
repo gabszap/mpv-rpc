@@ -399,6 +399,7 @@ Releases are automated with **semantic-release** on pushes to `main`, with **two
 - **Bridge app (`stremio-mpv-bridge`)**
   - Tag format: `bridge-v${version}`
   - Changelog: `stremio-mpv-bridge/CHANGELOG.md`
+  - Syncs `stremio-mpv-bridge/package.json` and `stremio-mpv.user.js` `@version` in the same release commit.
   - Includes commits that touch `stremio-mpv-bridge/**`.
 
 Versioning and release notes are generated from **Conventional Commits**.
