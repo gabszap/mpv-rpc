@@ -30,11 +30,47 @@ jobs:
 
             - name: Guard against missing root tags
               run: |
-                  ROOT_TAG_COUNT=$(git tag -l "mpv-rpc-v*" | wc -l)
                   ROOT_VERSION=$(node -p "require('./package.json').version")
+                  ROOT_LATEST=$(git tag -l "mpv-rpc-v*" | sed "s/^mpv-rpc-v//" | sort -V | tail -n 1)
+                  LEGACY_LATEST=$(git tag -l "v*" | sed "s/^v//" | sort -V | tail -n 1)
 
-                  if [ "$ROOT_TAG_COUNT" -eq 0 ] && [ "$ROOT_VERSION" != "1.0.0" ]; then
+                  if [ -z "$ROOT_LATEST" ] && [ "$ROOT_VERSION" != "1.0.0" ]; then
                       echo "::error::No mpv-rpc-v* tag found, but package.json is $ROOT_VERSION. Refusing to publish a reset 1.0.0 release."
+                      exit 1
+                  fi
+
+                  if [ -n "$LEGACY_LATEST" ] && [ -z "$ROOT_LATEST" ]; then
+                      echo "::error::Found legacy v$LEGACY_LATEST tag but no mpv-rpc-v* tags. Create mpv-rpc-v$LEGACY_LATEST before releasing."
+                      exit 1
+                  fi
+
+                  if [ -n "$LEGACY_LATEST" ] && [ -n "$ROOT_LATEST" ]; then
+                      HIGHEST_VERSION=$(printf '%s\n%s\n' "$ROOT_LATEST" "$LEGACY_LATEST" | sort -V | tail -n 1)
+
+                      if [ "$HIGHEST_VERSION" = "$LEGACY_LATEST" ] && [ "$LEGACY_LATEST" != "$ROOT_LATEST" ]; then
+                          echo "::error::Legacy tag v$LEGACY_LATEST is ahead of mpv-rpc-v$ROOT_LATEST. Create matching mpv-rpc-v$LEGACY_LATEST before releasing."
+                          exit 1
+                      fi
+                  fi
+
+                  if [ -n "$ROOT_LATEST" ]; then
+                      echo "Using latest mpv-rpc tag: mpv-rpc-v$ROOT_LATEST"
+                  else
+                      echo "No existing mpv-rpc tags found; first release path is allowed."
+                  fi
+
+                  if [ -n "$LEGACY_LATEST" ]; then
+                      echo "Detected latest legacy tag: v$LEGACY_LATEST"
+                  else
+                      echo "No legacy v* tags detected."
+                  fi
+
+                  if [ -n "$ROOT_LATEST" ] && [ "$ROOT_VERSION" != "$ROOT_LATEST" ]; then
+                      echo "::warning::package.json is $ROOT_VERSION while latest release tag is mpv-rpc-v$ROOT_LATEST."
+                  fi
+
+                  if [ -n "$ROOT_LATEST" ] && [ "$ROOT_VERSION" = "1.0.0" ] && [ "$ROOT_LATEST" != "1.0.0" ]; then
+                      echo "::error::package.json reset to 1.0.0 while release history is at mpv-rpc-v$ROOT_LATEST."
                       exit 1
                   fi
 

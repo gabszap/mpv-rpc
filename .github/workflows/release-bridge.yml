@@ -33,11 +33,26 @@ jobs:
 
             - name: Guard against missing bridge tags
               run: |
-                  BRIDGE_TAG_COUNT=$(git tag -l "bridge-v*" | wc -l)
                   BRIDGE_VERSION=$(node -p "require('./stremio-mpv-bridge/package.json').version")
+                  BRIDGE_LATEST=$(git tag -l "bridge-v*" | sed "s/^bridge-v//" | sort -V | tail -n 1)
 
-                  if [ "$BRIDGE_TAG_COUNT" -eq 0 ] && [ "$BRIDGE_VERSION" != "1.0.0" ]; then
+                  if [ -z "$BRIDGE_LATEST" ] && [ "$BRIDGE_VERSION" != "1.0.0" ]; then
                       echo "::error::No bridge-v* tag found, but stremio-mpv-bridge/package.json is $BRIDGE_VERSION. Refusing to publish a reset 1.0.0 release."
+                      exit 1
+                  fi
+
+                  if [ -n "$BRIDGE_LATEST" ]; then
+                      echo "Using latest bridge tag: bridge-v$BRIDGE_LATEST"
+                  else
+                      echo "No existing bridge tags found; first release path is allowed."
+                  fi
+
+                  if [ -n "$BRIDGE_LATEST" ] && [ "$BRIDGE_VERSION" != "$BRIDGE_LATEST" ]; then
+                      echo "::warning::stremio-mpv-bridge/package.json is $BRIDGE_VERSION while latest release tag is bridge-v$BRIDGE_LATEST."
+                  fi
+
+                  if [ -n "$BRIDGE_LATEST" ] && [ "$BRIDGE_VERSION" = "1.0.0" ] && [ "$BRIDGE_LATEST" != "1.0.0" ]; then
+                      echo "::error::stremio-mpv-bridge/package.json reset to 1.0.0 while release history is at bridge-v$BRIDGE_LATEST."
                       exit 1
                   fi
 
