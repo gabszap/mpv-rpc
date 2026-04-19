@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v1.0.0...mpv-rpc-v1.0.1) (2026-04-19)
+
+### Bug Fixes
+
+* **release:** revert mistaken root 1.0.0 release and fetch full tag history ([48b4b2c](https://github.com/gabszap/mpv-rpc/commit/48b4b2cc0fe1134ec6ae7263bf2c5366c38b88c7))
+
 # Changelog
 
 ## 2.0.0 - 2026-04-16
