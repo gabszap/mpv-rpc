@@ -170,6 +170,8 @@ describe('Parser Fallback Logic', () => {
         expect(result.episode).toBe(2);
         expect(result.episode_title).toBeNull();
         expect(result.full_title).toBe('Dr Stone - New World - E02');
+        expect(result.release_group).toBe('Erai-raws');
+        expect(result.parse_method).toBe('ptt');
     });
 
     it('should combine alternative_title when GuessIt splits season name', async () => {
@@ -190,6 +192,44 @@ describe('Parser Fallback Logic', () => {
         expect(result.series_title).toBe('Dr Stone - New World');
         expect(result.episode).toBe(2);
         expect(result.full_title).toBe('Dr Stone - New World - E02');
+        expect(result.parse_method).toBe('ptt');
+    });
+
+    it('should parse subtitle-heavy anime titles via parse-torrent-title PoC', async () => {
+        const filename = "[SubsPlease] KonoSuba - God's Blessing on This Wonderful World! 3 - 08 (1080p) [ABC12345].mkv";
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe("KonoSuba - God's Blessing on This Wonderful World! 3");
+        expect(result.episode).toBe(8);
+        expect(result.release_group).toBe('SubsPlease');
+        expect(result.parse_method).toBe('ptt');
+    });
+
+    it('should map parse-torrent-title languages/group without breaking parser shape', async () => {
+        const filename = '[Trix] Oshi no Ko S03E09 [WEBRip 1080p AV1] (Multi Subs).mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('Oshi no Ko');
+        expect(result.season).toBe(3);
+        expect(result.episode).toBe(9);
+        expect(result.release_group).toBe('Trix');
+        expect(result.languages).toContain('multi subs');
+        expect(result.parse_method).toBe('ptt');
+    });
+
+    it('should fall back when ptt misses episode in explicit episode-marker filename', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const filename = 'Anime Name 第02話.mkv';
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe('Anime Name');
+        expect(result.episode).toBe(2);
+        expect(result.parse_method).not.toBe('ptt');
     });
 });
 
@@ -280,5 +320,47 @@ describe('Media Title Sanitization', () => {
 
         const title = 'Jujutsu Kaisen S03E03 1080p NF WEB-DL (Multi Subs)';
         expect(sanitizeMediaTitle(title)).toBe('Jujutsu Kaisen S03E03 1080p NF WEB-DL');
+    });
+});
+
+describe('Episode Marker Extraction', () => {
+    it('should extract season and episode from SxxExx marker', () => {
+        const marker = parser.extractEpisodeMarker('Dr.Stone.S03E12.1080p.WEB-DL.mkv');
+
+        expect(marker).toEqual({
+            hasMarker: true,
+            season: 3,
+            episode: 12
+        });
+    });
+
+    it('should extract episode from explicit Episode marker', () => {
+        const marker = parser.extractEpisodeMarker('One Piece - Episode 100.mkv');
+
+        expect(marker).toEqual({
+            hasMarker: true,
+            season: null,
+            episode: 100
+        });
+    });
+
+    it('should extract episode from cjk marker', () => {
+        const marker = parser.extractEpisodeMarker('Anime Name 第02話.mkv');
+
+        expect(marker).toEqual({
+            hasMarker: true,
+            season: null,
+            episode: 2
+        });
+    });
+
+    it('should return no marker when input has no episode pattern', () => {
+        const marker = parser.extractEpisodeMarker('Some Random Title Without Episode Info');
+
+        expect(marker).toEqual({
+            hasMarker: false,
+            season: null,
+            episode: null
+        });
     });
 });

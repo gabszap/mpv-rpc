@@ -1,11 +1,16 @@
 /**
- * Filename Parser Module - Uses GuessIt API with CLI fallback
+ * Filename Parser Module - PoC with parse-torrent-title and legacy fallback
  */
 
 import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
+import * as path from "node:path";
 import { promisify } from "node:util";
+import type { ParsedResult as ParseTorrentTitleResult } from "@viren070/parse-torrent-title";
 import axios from "axios";
 import { config } from "./config";
+
+export type ParseMethod = "ptt" | "api" | "cli" | "regex";
 
 export interface ParsedFilename {
     full_title: string;
@@ -14,12 +19,202 @@ export interface ParsedFilename {
     episode: number | null;
     episode_title: string | null;
     media_type: "anime" | "series" | "unknown";
+    release_group: string | null;
+    languages: string[] | null;
+    parse_method: ParseMethod;
 }
 
 const execFileAsync = promisify(execFile);
+const moduleRequire = typeof require === "function"
+    ? require
+    : createRequire(path.join(process.cwd(), "noop.js"));
+
+type ParseTorrentTitleModule = {
+    parseTorrentTitle: (title: string) => ParseTorrentTitleResult;
+};
 
 // Cache for parsed filenames to avoid repeated API calls
 const parseCache: Map<string, ParsedFilename> = new Map();
+const loggedParseMethods: Set<string> = new Set();
+
+let parseTorrentTitleModulePromise: Promise<ParseTorrentTitleModule | null> | null = null;
+let hasLoggedParseTorrentTitleModuleError = false;
+let hasLoggedParseTorrentTitleRuntimeError = false;
+
+function logParseMethodOnce(method: ParseMethod): void {
+    if (loggedParseMethods.has(method)) {
+        return;
+    }
+
+    console.log(`[Parser][PoC] Using parser method: ${method}`);
+    loggedParseMethods.add(method);
+}
+
+function buildFullTitle(
+    title: string,
+    season: number | null,
+    episode: number | null,
+    episodeTitle: string | null
+): string {
+    let fullTitle = title;
+
+    if (season !== null && episode !== null) {
+        fullTitle += ` - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+    } else if (episode !== null) {
+        fullTitle += ` - E${String(episode).padStart(2, "0")}`;
+    }
+
+    if (episodeTitle) {
+        fullTitle += ` - ${episodeTitle}`;
+    }
+
+    return fullTitle;
+}
+
+function normalizeLanguages(languages: unknown): string[] | null {
+    if (!Array.isArray(languages) || languages.length === 0) {
+        return null;
+    }
+
+    const normalizedLanguages = languages
+        .filter((language): language is string => typeof language === "string")
+        .map((language) => language.trim())
+        .filter((language) => language.length > 0);
+
+    if (normalizedLanguages.length === 0) {
+        return null;
+    }
+
+    return Array.from(new Set(normalizedLanguages));
+}
+
+function normalizeGuessitLanguages(guessed: Record<string, any>): string[] | null {
+    if (Array.isArray(guessed.language)) {
+        return normalizeLanguages(guessed.language);
+    }
+
+    if (typeof guessed.language === "string" && guessed.language.trim().length > 0) {
+        return [guessed.language.trim()];
+    }
+
+    return null;
+}
+
+function getFirstNumber(value: unknown): number | null {
+    if (!Array.isArray(value) || value.length === 0) {
+        return null;
+    }
+
+    const firstValue = value[0];
+    if (typeof firstValue !== "number" || !Number.isFinite(firstValue)) {
+        return null;
+    }
+
+    return firstValue;
+}
+
+export function extractEpisodeMarker(input: string): {
+    hasMarker: boolean;
+    season: number | null;
+    episode: number | null;
+} {
+    const seMatch = input.match(/[Ss](\d{1,2})[Ee](\d{1,3})/);
+    if (seMatch) {
+        return {
+            hasMarker: true,
+            season: parseInt(seMatch[1], 10),
+            episode: parseInt(seMatch[2], 10),
+        };
+    }
+
+    const explicitEpisodeMatch = input.match(/(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*(\d{1,3})(?=[^\d]|$)/);
+    if (explicitEpisodeMatch) {
+        return {
+            hasMarker: true,
+            season: null,
+            episode: parseInt(explicitEpisodeMatch[1], 10),
+        };
+    }
+
+    const trailingEpisodeMatch = input.match(/-\s*(\d{1,3})(?=\s*(?:\[|\(|v\d|$))/i);
+    if (trailingEpisodeMatch) {
+        return {
+            hasMarker: true,
+            season: null,
+            episode: parseInt(trailingEpisodeMatch[1], 10),
+        };
+    }
+
+    const cjkEpisodeMatch = input.match(/第\s*(\d{1,3})\s*話/);
+    if (cjkEpisodeMatch) {
+        return {
+            hasMarker: true,
+            season: null,
+            episode: parseInt(cjkEpisodeMatch[1], 10),
+        };
+    }
+
+    return {
+        hasMarker: false,
+        season: null,
+        episode: null,
+    };
+}
+
+function hasEpisodeMarker(filename: string): boolean {
+    return extractEpisodeMarker(filename).hasMarker;
+}
+
+function shouldUsePttResult(result: ParsedFilename, normalizedFilename: string): boolean {
+    if (!isValidSearchTitle(result.series_title)) {
+        return false;
+    }
+
+    if (!hasEpisodeMarker(normalizedFilename)) {
+        return true;
+    }
+
+    return result.episode !== null;
+}
+
+async function loadParseTorrentTitleModule(): Promise<ParseTorrentTitleModule | null> {
+    if (parseTorrentTitleModulePromise) {
+        return parseTorrentTitleModulePromise;
+    }
+
+    parseTorrentTitleModulePromise = (async () => {
+        try {
+            const modulePath = path.join(
+                process.cwd(),
+                "node_modules",
+                "@viren070",
+                "parse-torrent-title",
+                "dist",
+                "index.js"
+            );
+            const loadedModule = moduleRequire(modulePath) as Partial<ParseTorrentTitleModule>;
+            if (typeof loadedModule.parseTorrentTitle !== "function") {
+                if (!hasLoggedParseTorrentTitleModuleError) {
+                    console.warn("[Parser][PoC] parse-torrent-title loaded without parse function; using legacy parser");
+                    hasLoggedParseTorrentTitleModuleError = true;
+                }
+                return null;
+            }
+
+            return {
+                parseTorrentTitle: loadedModule.parseTorrentTitle,
+            };
+        } catch {
+            if (!hasLoggedParseTorrentTitleModuleError) {
+                console.warn("[Parser][PoC] Failed to load parse-torrent-title; using legacy parser");
+                hasLoggedParseTorrentTitleModuleError = true;
+            }
+            return null;
+        }
+    })();
+
+    return parseTorrentTitleModulePromise;
+}
 
 /**
  * Call GuessIt via HTTP API
@@ -116,6 +311,7 @@ function cleanTitle(title: string): string {
     return title
         .replace(/\./g, " ")
         .replace(/_/g, " ")
+        .replace(/第\s*\d{1,3}\s*話/g, "")
         .replace(/\[.*?\]/g, "")
         .replace(/\(.*\)/g, "")
         .replace(/\s+/g, " ")
@@ -134,17 +330,7 @@ function escapeRegex(value: string): string {
 }
 
 function extractEpisodeFromFilename(filename: string): number | null {
-    const explicitEpisodeMatch = filename.match(/(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*(\d{1,3})(?=[^\d]|$)/);
-    if (explicitEpisodeMatch) {
-        return parseInt(explicitEpisodeMatch[1], 10);
-    }
-
-    const trailingEpisodeMatch = filename.match(/-\s*(\d{1,3})(?=\s*(?:\[|\(|v\d|$))/);
-    if (trailingEpisodeMatch) {
-        return parseInt(trailingEpisodeMatch[1], 10);
-    }
-
-    return null;
+    return extractEpisodeMarker(filename).episode;
 }
 
 const loggedInvalidTitles: Set<string> = new Set();
@@ -178,7 +364,8 @@ function isValidSearchTitle(title: string): boolean {
 function processGuessitResult(
     guessed: Record<string, any>,
     filename: string,
-    normalizedFilename: string
+    normalizedFilename: string,
+    parseMethod: "api" | "cli"
 ): ParsedFilename | null {
     if (!guessed || Object.keys(guessed).length === 0) {
         return null;
@@ -231,6 +418,9 @@ function processGuessitResult(
             episode: guessed.episode ?? null,
             episode_title: guessed.episode_title ?? null,
             media_type: "unknown",
+            release_group: typeof guessed.release_group === "string" ? guessed.release_group : null,
+            languages: normalizeGuessitLanguages(guessed),
+            parse_method: parseMethod,
         };
     }
 
@@ -285,15 +475,7 @@ function processGuessitResult(
         }
     }
 
-    let full_title = title;
-    if (season !== null && episode !== null) {
-        full_title += ` - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
-    } else if (episode !== null) {
-        full_title += ` - E${String(episode).padStart(2, "0")}`;
-    }
-    if (episode_title) {
-        full_title += ` - ${episode_title}`;
-    }
+    const full_title = buildFullTitle(title, season, episode, episode_title);
 
     return {
         full_title,
@@ -302,11 +484,40 @@ function processGuessitResult(
         episode,
         episode_title,
         media_type: detectMediaType(filename),
+        release_group: typeof guessed.release_group === "string" ? guessed.release_group : null,
+        languages: normalizeGuessitLanguages(guessed),
+        parse_method: parseMethod,
+    };
+}
+
+function processParseTorrentTitleResult(
+    parsedResult: ParseTorrentTitleResult,
+    filename: string
+): ParsedFilename | null {
+    const title = cleanTitle(parsedResult.title || "");
+    if (!isValidSearchTitle(title)) {
+        return null;
+    }
+
+    const season = getFirstNumber(parsedResult.seasons);
+    const episode = getFirstNumber(parsedResult.episodes);
+    const full_title = buildFullTitle(title, season, episode, null);
+
+    return {
+        full_title,
+        series_title: title,
+        season,
+        episode,
+        episode_title: null,
+        media_type: detectMediaType(filename),
+        release_group: parsedResult.group ?? null,
+        languages: normalizeLanguages(parsedResult.languages),
+        parse_method: "ptt",
     };
 }
 
 /**
- * Parse a filename using GuessIt API with CLI fallback
+ * Parse a filename using parse-torrent-title PoC with legacy fallback
  */
 export async function parseFilename(filename: string): Promise<ParsedFilename> {
     // Check cache first
@@ -323,6 +534,9 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             episode: null,
             episode_title: null,
             media_type: "unknown",
+            release_group: null,
+            languages: null,
+            parse_method: "regex",
         };
     }
 
@@ -338,6 +552,24 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     const normalizedFilename = filename
         .replace(/\+/g, "-")
         .replace(/\//g, "-");
+
+    const parseTorrentTitleModule = await loadParseTorrentTitleModule();
+    if (parseTorrentTitleModule) {
+        try {
+            const pttResult = parseTorrentTitleModule.parseTorrentTitle(normalizedFilename);
+            const mappedPttResult = processParseTorrentTitleResult(pttResult, filename);
+            if (mappedPttResult && shouldUsePttResult(mappedPttResult, normalizedFilename)) {
+                logParseMethodOnce("ptt");
+                parseCache.set(filename, mappedPttResult);
+                return mappedPttResult;
+            }
+        } catch {
+            if (!hasLoggedParseTorrentTitleRuntimeError) {
+                console.warn("[Parser][PoC] parse-torrent-title failed during parsing; using legacy parser");
+                hasLoggedParseTorrentTitleRuntimeError = true;
+            }
+        }
+    }
 
     let guessed: Record<string, any> | null = null;
     let usedMethod: "api" | "cli" | "none" = "none";
@@ -359,10 +591,13 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     }
 
     // Process result if we got one
-    if (guessed) {
-        const result = processGuessitResult(guessed, filename, normalizedFilename);
+    if (guessed && usedMethod !== "none") {
+        const result = processGuessitResult(guessed, filename, normalizedFilename, usedMethod);
         if (result) {
             // Cache the result
+            if (usedMethod === "api" || usedMethod === "cli") {
+                logParseMethodOnce(usedMethod);
+            }
             parseCache.set(filename, result);
             return result;
         }
@@ -371,6 +606,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     // Final fallback: regex parsing
     const fallbackResult = fallbackParse(filename);
     // Cache the fallback result too
+    logParseMethodOnce("regex");
     parseCache.set(filename, fallbackResult);
     return fallbackResult;
 }
@@ -393,9 +629,17 @@ function fallbackParse(filename: string): ParsedFilename {
         }
     } else {
         const epMatch = filename.match(/(?:Episode\s*|[Ee]|[-_]\s*)(\d+)(?:[^\d]|$)/);
+        const cjkEpisodeMatch = filename.match(/第\s*(\d{1,3})\s*話/);
+
         if (epMatch) {
             episode = parseInt(epMatch[1], 10);
             const idx = filename.indexOf(epMatch[0]);
+            if (idx > 0) {
+                title = filename.substring(0, idx);
+            }
+        } else if (cjkEpisodeMatch) {
+            episode = parseInt(cjkEpisodeMatch[1], 10);
+            const idx = filename.indexOf(cjkEpisodeMatch[0]);
             if (idx > 0) {
                 title = filename.substring(0, idx);
             }
@@ -405,12 +649,7 @@ function fallbackParse(filename: string): ParsedFilename {
     title = cleanTitle(title);
     title = title.replace(/\s*-\s*$/, "").trim();
 
-    let full_title = title;
-    if (season !== null && episode !== null) {
-        full_title += ` - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
-    } else if (episode !== null) {
-        full_title += ` - E${String(episode).padStart(2, "0")}`;
-    }
+    const full_title = buildFullTitle(title, season, episode, null);
 
     return {
         full_title,
@@ -419,5 +658,8 @@ function fallbackParse(filename: string): ParsedFilename {
         episode,
         episode_title: null,
         media_type: isValidSearchTitle(title) ? detectMediaType(filename) : "unknown",
+        release_group: null,
+        languages: null,
+        parse_method: "regex",
     };
 }

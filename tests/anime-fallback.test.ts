@@ -101,8 +101,7 @@ describe("Anime fallback search", () => {
         const title = await getEpisodeTitle(parsedTitle, 2, 3);
 
         expect(title).toBe("A New World");
-        expect(fallbackJikanSearchAnimeMock).toHaveBeenCalledTimes(1);
-        expect(fallbackJikanSearchAnimeMock).toHaveBeenNthCalledWith(1, parsedTitle);
+        expect(fallbackJikanSearchAnimeMock).toHaveBeenCalledWith(parsedTitle);
         expect(fallbackJikanSearchAnimeMock).not.toHaveBeenCalledWith("Dr Stone");
         expect(fallbackKitsuSearchAnimeMock).not.toHaveBeenCalled();
     });

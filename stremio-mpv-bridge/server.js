@@ -9,6 +9,46 @@ const app = express();
 const PORT = process.env.PORT || 9632;
 const MPV_PATH = process.env.MPV_PATH || 'C:\\Program Files\\mpv\\mpv.exe';
 
+function isObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toBase64UrlJson(payload) {
+    const json = JSON.stringify(payload);
+    return Buffer.from(json, 'utf8')
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+}
+
+function removeUndefinedValues(payload) {
+    if (!isObject(payload)) {
+        return null;
+    }
+
+    const cleaned = {};
+    for (const [key, value] of Object.entries(payload)) {
+        if (value !== undefined) {
+            cleaned[key] = value;
+        }
+    }
+
+    return Object.keys(cleaned).length > 0 ? cleaned : null;
+}
+
+function getItemContext(reqBody, item) {
+    const requestContext = isObject(reqBody.stremioContext) ? reqBody.stremioContext : null;
+    const playlistItemContext = isObject(item.stremioContext) ? item.stremioContext : null;
+
+    const merged = {
+        ...(requestContext || {}),
+        ...(playlistItemContext || {})
+    };
+
+    return removeUndefinedValues(merged);
+}
+
 
 
 app.use(express.json());
@@ -60,7 +100,19 @@ app.post('/play', (req, res) => {
             '--keep-open=yes',
         ];
 
-        const m3uContent = ['#EXTM3U', ...items.map(item => `#EXTINF:-1,${item.title || 'Stream'}\n${item.url}`)].join('\n');
+        const m3uLines = ['#EXTM3U'];
+
+        items.forEach((item) => {
+            const itemContext = getItemContext(req.body, item);
+            if (itemContext) {
+                m3uLines.push(`#MPVRPC-CTX:${toBase64UrlJson(itemContext)}`);
+            }
+
+            m3uLines.push(`#EXTINF:-1,${item.title || 'Stream'}`);
+            m3uLines.push(item.url);
+        });
+
+        const m3uContent = m3uLines.join('\n');
         const tmpPath = path.join(os.tmpdir(), `stremio-playlist-${Date.now()}.m3u`);
         fs.writeFileSync(tmpPath, m3uContent);
 

@@ -117,7 +117,8 @@ describe("Anime module with invalid metadata provider config", () => {
 
         const cachePath = path.join(testCwd, ".anime_cache", "anime_cache.json");
         const cacheData = JSON.parse(fs.readFileSync(cachePath, "utf-8")) as Record<string, unknown>;
-        expect(cacheData["jikan:attack on titan:1"]).toBeDefined();
-        expect(cacheData["mal:attack on titan:1"]).toBeUndefined();
+        expect(cacheData["jikan:attack on titan:1:1"]).toBeDefined();
+        expect(cacheData["mal:attack on titan:1:any"]).toBeUndefined();
+        expect(cacheData["mal:attack on titan:1:1"]).toBeUndefined();
     });
 });

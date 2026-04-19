@@ -6,7 +6,7 @@
 
 import * as net from "net";
 import { config } from "./config";
-import { parseFilename } from "./parser";
+import { extractEpisodeMarker, parseFilename } from "./parser";
 import { getAnimeInfo, getEpisodeTitle } from "./anime";
 import { checkSeriesNameOverride } from "./console";
 
@@ -208,6 +208,326 @@ export function sanitizeMediaTitle(title: string): string {
     return title.trim();
 }
 
+type ParseSource = "filename" | "streamTitleRaw" | "mediaTitle";
+type SkipReason = "waiting_for_title" | "ambiguous_context";
+
+interface ParseSourceDebugState {
+    contextKey: string | null;
+    source: ParseSource | null;
+    skipReason: SkipReason | null;
+    conflictSignature: string | null;
+}
+
+interface EpisodeMarkerInfo {
+    hasMarker: boolean;
+    season: number | null;
+    episode: number | null;
+}
+
+interface ParseTargetDecision {
+    target: string | null;
+    source: ParseSource | null;
+    skipReason: SkipReason | null;
+    conflictSignature: string | null;
+}
+
+interface MediaTitleContext {
+    cleanedTitle: string;
+    context: Record<string, unknown> | null;
+}
+
+interface StreamItemContext {
+    streamTitleRaw: string | null;
+    behaviorHintsFilename: string | null;
+}
+
+const MPVRPC_CONTEXT_PREFIX = "#MPVRPC-CTX:";
+const parseSourceDebugState: ParseSourceDebugState = {
+    contextKey: null,
+    source: null,
+    skipReason: null,
+    conflictSignature: null,
+};
+
+function logDebug(message: string): void {
+    if (!config.debug) {
+        return;
+    }
+
+    console.log(`[MPV][DEBUG] ${message}`);
+}
+
+function resetParseSourceDebugState(): void {
+    parseSourceDebugState.contextKey = null;
+    parseSourceDebugState.source = null;
+    parseSourceDebugState.skipReason = null;
+    parseSourceDebugState.conflictSignature = null;
+}
+
+function buildParseContextKey(filename: string, mediaTitle: string, streamTitleRaw: string | null): string {
+    return `${filename}\u0000${mediaTitle}\u0000${streamTitleRaw ?? "N/A"}`;
+}
+
+function shouldLogParseSourceSelection(contextKey: string, source: ParseSource): boolean {
+    const contextChanged = parseSourceDebugState.contextKey !== contextKey;
+    const sourceChanged = parseSourceDebugState.source !== source;
+
+    return contextChanged || sourceChanged;
+}
+
+function shouldLogParseSkipReason(contextKey: string, skipReason: SkipReason): boolean {
+    const contextChanged = parseSourceDebugState.contextKey !== contextKey;
+    const reasonChanged = parseSourceDebugState.skipReason !== skipReason;
+
+    return contextChanged || reasonChanged;
+}
+
+function shouldLogParseConflict(contextKey: string, conflictSignature: string): boolean {
+    const contextChanged = parseSourceDebugState.contextKey !== contextKey;
+    const conflictChanged = parseSourceDebugState.conflictSignature !== conflictSignature;
+
+    return contextChanged || conflictChanged;
+}
+
+function rememberParseDebugState(
+    contextKey: string,
+    source: ParseSource | null,
+    skipReason: SkipReason | null,
+    conflictSignature: string | null
+): void {
+    parseSourceDebugState.contextKey = contextKey;
+    parseSourceDebugState.source = source;
+    parseSourceDebugState.skipReason = skipReason;
+    parseSourceDebugState.conflictSignature = conflictSignature;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function toNullableString(value: unknown): string | null {
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const trimmedValue = value.trim();
+    return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function decodeBase64UrlJson(encodedValue: string): Record<string, unknown> | null {
+    if (!encodedValue) {
+        return null;
+    }
+
+    const normalized = encodedValue
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+    const padLength = (4 - (normalized.length % 4)) % 4;
+    const padded = normalized + "=".repeat(padLength);
+
+    try {
+        const decoded = Buffer.from(padded, "base64").toString("utf8");
+        const parsed = JSON.parse(decoded) as unknown;
+        if (!isRecord(parsed)) {
+            return null;
+        }
+
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function mergeContext(
+    targetContext: Record<string, unknown> | null,
+    parsedContext: Record<string, unknown> | null
+): Record<string, unknown> | null {
+    if (!parsedContext) {
+        return targetContext;
+    }
+
+    if (!targetContext) {
+        return { ...parsedContext };
+    }
+
+    return {
+        ...targetContext,
+        ...parsedContext,
+    };
+}
+
+function extractInlineContextMarkers(line: string): {
+    cleanedLine: string;
+    context: Record<string, unknown> | null;
+} {
+    const markerPattern = /#MPVRPC-CTX:([A-Za-z0-9_-]+)/g;
+    let currentContext: Record<string, unknown> | null = null;
+    let cleanedLine = line;
+
+    for (const match of line.matchAll(markerPattern)) {
+        const encodedPayload = match[1];
+        const parsed = decodeBase64UrlJson(encodedPayload);
+        currentContext = mergeContext(currentContext, parsed);
+        cleanedLine = cleanedLine.replace(match[0], "");
+    }
+
+    return {
+        cleanedLine: cleanedLine.trim(),
+        context: currentContext,
+    };
+}
+
+function stripAndExtractMpvRpcContextFromTitle(rawTitle: string): MediaTitleContext {
+    if (!rawTitle || rawTitle === "N/A") {
+        return {
+            cleanedTitle: rawTitle,
+            context: null,
+        };
+    }
+
+    const rawLines = rawTitle.split(/\r?\n/);
+    const cleanedLines: string[] = [];
+    let context: Record<string, unknown> | null = null;
+
+    for (const rawLine of rawLines) {
+        const trimmedLine = rawLine.trim();
+
+        if (trimmedLine.startsWith(MPVRPC_CONTEXT_PREFIX)) {
+            const encodedPayload = trimmedLine.slice(MPVRPC_CONTEXT_PREFIX.length).trim();
+            const parsed = decodeBase64UrlJson(encodedPayload);
+            context = mergeContext(context, parsed);
+            continue;
+        }
+
+        const { cleanedLine, context: inlineContext } = extractInlineContextMarkers(rawLine);
+        context = mergeContext(context, inlineContext);
+
+        if (cleanedLine.length > 0) {
+            cleanedLines.push(cleanedLine);
+        }
+    }
+
+    return {
+        cleanedTitle: cleanedLines.join("\n").trim(),
+        context,
+    };
+}
+
+function normalizeStreamItemContext(rawContext: Record<string, unknown> | null): StreamItemContext {
+    if (!rawContext) {
+        return {
+            streamTitleRaw: null,
+            behaviorHintsFilename: null,
+        };
+    }
+
+    return {
+        streamTitleRaw: toNullableString(rawContext.streamTitleRaw),
+        behaviorHintsFilename: toNullableString(rawContext.behaviorHintsFilename),
+    };
+}
+
+function markerFromInput(input: string | null): EpisodeMarkerInfo {
+    if (!input || input === "N/A") {
+        return {
+            hasMarker: false,
+            season: null,
+            episode: null,
+        };
+    }
+
+    return extractEpisodeMarker(input);
+}
+
+function markersConflict(left: EpisodeMarkerInfo, right: EpisodeMarkerInfo): boolean {
+    if (!left.hasMarker || !right.hasMarker) {
+        return false;
+    }
+
+    if (
+        left.season !== null
+        && right.season !== null
+        && left.season !== right.season
+    ) {
+        return true;
+    }
+
+    if (
+        left.episode !== null
+        && right.episode !== null
+        && left.episode !== right.episode
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+function chooseParseTarget(
+    filename: string,
+    streamTitleRaw: string | null,
+    mediaTitle: string
+): ParseTargetDecision {
+    const filenameMarker = markerFromInput(filename);
+    const streamMarker = markerFromInput(streamTitleRaw);
+    const mediaMarker = markerFromInput(mediaTitle);
+
+    const filenameVsStreamConflict = markersConflict(filenameMarker, streamMarker);
+    const filenameVsMediaConflict = markersConflict(filenameMarker, mediaMarker);
+    const streamVsMediaConflict = markersConflict(streamMarker, mediaMarker);
+
+    const conflictSignature = filenameVsStreamConflict || filenameVsMediaConflict || streamVsMediaConflict
+        ? `filename/stream=${filenameVsStreamConflict}, filename/media=${filenameVsMediaConflict}, stream/media=${streamVsMediaConflict}`
+        : null;
+
+    const filenameSufficient = filenameMarker.hasMarker
+        && !filenameVsStreamConflict
+        && !filenameVsMediaConflict;
+
+    if (filenameSufficient) {
+        return {
+            target: filename,
+            source: "filename",
+            skipReason: null,
+            conflictSignature,
+        };
+    }
+
+    const streamReliable = !!streamTitleRaw
+        && streamMarker.hasMarker
+        && !streamVsMediaConflict;
+    const mediaReliable = !!mediaTitle
+        && mediaTitle !== "N/A"
+        && mediaMarker.hasMarker
+        && !streamVsMediaConflict;
+
+    if (streamReliable && streamTitleRaw) {
+        return {
+            target: streamTitleRaw,
+            source: "streamTitleRaw",
+            skipReason: null,
+            conflictSignature,
+        };
+    }
+
+    if (mediaReliable) {
+        return {
+            target: mediaTitle,
+            source: "mediaTitle",
+            skipReason: null,
+            conflictSignature,
+        };
+    }
+
+    const hasAnySecondaryMarker = streamMarker.hasMarker || mediaMarker.hasMarker;
+    return {
+        target: null,
+        source: null,
+        skipReason: hasAnySecondaryMarker ? "ambiguous_context" : "waiting_for_title",
+        conflictSignature,
+    };
+}
+
 /**
  * Get all MPV data needed for Discord presence
  */
@@ -224,10 +544,15 @@ export async function getMpvData(): Promise<MpvData | null> {
             getProperty("media-title")
         ]);
 
+        const titleWithContext = typeof rawMediaTitle === "string" ? rawMediaTitle : "N/A";
+        const { cleanedTitle, context: rawStreamContext } = stripAndExtractMpvRpcContextFromTitle(titleWithContext);
         // Sanitize media-title to remove tracker/subtitle metadata
-        const mediaTitle = sanitizeMediaTitle(rawMediaTitle);
+        const mediaTitle = sanitizeMediaTitle(cleanedTitle);
+        const streamContext = normalizeStreamItemContext(rawStreamContext);
+        const streamTitleRaw = streamContext.streamTitleRaw ? sanitizeMediaTitle(streamContext.streamTitleRaw) : null;
 
         if (!filename || filename === "N/A") {
+            resetParseSourceDebugState();
             // MPV is connected but no media playing
             return {
                 media_title: "N/A",
@@ -247,61 +572,42 @@ export async function getMpvData(): Promise<MpvData | null> {
             };
         }
 
-        /**
-         * Determine the best string for metadata parsing.
-         * For streams, 'filename' is often a cryptic URL or hash.
-         * 'media-title' populated via M3U #EXTINF is usually a clean filename.
-         * However, after loading, MPV may switch to the MKV's embedded title tag,
-         * which is often just the episode title without series/season info.
-         */
-        const isUrl = (s: string) => /^(https?|magnet):/i.test(s);
-        const isPlaylist = (s: string) => /stremio-playlist-\d+/i.test(s);
-        const hasEpisodeMarker = (s: string) => {
-            return /S\d{1,2}E\d{1,3}/i.test(s)
-                || /(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*\d{1,3}(?=[^\d]|$)/.test(s)
-                || /-\s*\d{1,3}(?=\s*(?:\[|\(|v\d|$))/i.test(s);
-        };
+        const parseContextKey = buildParseContextKey(filename, mediaTitle, streamTitleRaw);
+        const parseDecision = chooseParseTarget(filename, streamTitleRaw, mediaTitle);
 
-        let parseTarget = filename;
+        const shouldLogConflict = parseDecision.conflictSignature
+            ? shouldLogParseConflict(parseContextKey, parseDecision.conflictSignature)
+            : false;
+        const shouldLogSkip = parseDecision.skipReason
+            ? shouldLogParseSkipReason(parseContextKey, parseDecision.skipReason)
+            : false;
+        const shouldLogSource = parseDecision.source
+            ? shouldLogParseSourceSelection(parseContextKey, parseDecision.source)
+            : false;
 
-        // If filename is a playlist, try to use mediaTitle
-        if (isPlaylist(filename)) {
-            if (mediaTitle && mediaTitle !== "N/A" && !isPlaylist(mediaTitle)) {
-                // Check if mediaTitle has episode info (SxxExx, E##, or trailing - ##)
-                // If it doesn't, it might be the MKV's embedded title (just episode name)
-                if (hasEpisodeMarker(mediaTitle)) {
-                    parseTarget = mediaTitle;
-                } else {
-                    // mediaTitle is probably just the episode title from MKV metadata
-                    // Wait for a better title or return null to skip this update
-                    return null;
-                }
-            } else {
-                // If we don't have a good title yet, don't parse anything
-                return null;
-            }
-        } else if (isUrl(filename)) {
-            // If filename is a URL, we depend on mediaTitle.
-            if (mediaTitle && mediaTitle !== "N/A" && mediaTitle !== filename) {
-                if (hasEpisodeMarker(mediaTitle)) {
-                    parseTarget = mediaTitle;
-                } else {
-                    // URL filename + title without episode marker usually means embedded tag only.
-                    return null;
-                }
-            } else {
-                return null;
-            }
-        } else if (mediaTitle && mediaTitle !== "N/A" && mediaTitle !== filename) {
-            // For non-URL files, prefer filename to avoid feedback loops caused by force-media-title.
-            // Only use mediaTitle if filename has no episode marker but mediaTitle does.
-            const filenameHasEpisodeMarker = hasEpisodeMarker(filename);
-            const mediaTitleHasEpisodeMarker = hasEpisodeMarker(mediaTitle);
+        rememberParseDebugState(
+            parseContextKey,
+            parseDecision.source,
+            parseDecision.skipReason,
+            parseDecision.conflictSignature
+        );
 
-            if (!filenameHasEpisodeMarker && mediaTitleHasEpisodeMarker) {
-                parseTarget = mediaTitle;
-            }
+        if (shouldLogConflict && parseDecision.conflictSignature) {
+            logDebug(`marker conflict detected (${parseDecision.conflictSignature})`);
         }
+
+        if (!parseDecision.target) {
+            if (shouldLogSkip) {
+                logDebug(`skipping parse target selection (${parseDecision.skipReason ?? "waiting_for_title"})`);
+            }
+            return null;
+        }
+
+        if (parseDecision.source && shouldLogSource) {
+            logDebug(`selected parse source: ${parseDecision.source}`);
+        }
+
+        const parseTarget = parseDecision.target;
 
         // Parse the target string
         const parsed = await parseFilename(parseTarget);
@@ -334,7 +640,7 @@ export async function getMpvData(): Promise<MpvData | null> {
         if (seriesTitle && seriesTitle !== "N/A") {
             try {
                 // Try to get anime info
-                const animeInfo = await getAnimeInfo(seriesTitle, parsed.season);
+                const animeInfo = await getAnimeInfo(seriesTitle, parsed.season, parsed.episode);
                 if (animeInfo) {
                     coverImage = animeInfo.cover_url;
                     malId = animeInfo.mal_id || null;

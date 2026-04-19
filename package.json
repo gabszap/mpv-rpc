@@ -27,6 +27,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@viren070/parse-torrent-title": "^0.7.5",
     "@xhayper/discord-rpc": "^1.2.0",
     "axios": "^1.7.0",
     "discord-api-types": "^0.38.47",

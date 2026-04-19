@@ -97,6 +97,10 @@ Only features that exist in the current code/userscript are listed here.
 - **Local server endpoints**:
   - `GET /health` (returns `{ status: "ok", mpvPath: ... }`)
   - `POST /play` (accepts a playlist and starts MPV)
+- **Ambiguity-gated context transport (new)**:
+  - The userscript can attach per-item stream context (`streamTitleRaw`, optional `behaviorHintsFilename`).
+  - The bridge writes this into playlist comments as `#MPVRPC-CTX:<base64url-json>` right before each `#EXTINF`.
+  - MPV-RPC only uses rich title context when filename parsing is ambiguous (missing/conflicting episode markers), preserving legacy behavior when filename is already sufficient.
 
 Non-features (intentionally not claimed):
 
@@ -421,6 +425,10 @@ Somente recursos que existem no código/userscript atual estão listados aqui.
 - **Endpoints do servidor local**:
   - `GET /health`
   - `POST /play`
+- **Transporte de contexto com gate por ambiguidade (novo)**:
+  - O userscript pode anexar contexto por item (`streamTitleRaw`, `behaviorHintsFilename` opcional).
+  - O bridge grava isso em comentários da playlist como `#MPVRPC-CTX:<base64url-json>` imediatamente antes de cada `#EXTINF`.
+  - O MPV-RPC só usa esse contexto quando o filename está ambíguo (sem marcador de episódio ou com conflito), mantendo o comportamento legado quando o filename já é suficiente.
 
 Não é recurso (não afirmar):
 

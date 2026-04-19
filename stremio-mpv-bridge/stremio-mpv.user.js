@@ -589,7 +589,15 @@
                         url: `${CONFIG.SERVER_URL}/play`,
                         headers: { 'Content-Type': 'application/json' },
                         data: JSON.stringify({
-                            playlist: [{ url, title }],
+                            playlist: [{
+                                url,
+                                title,
+                                stremioContext: {
+                                    streamTitleRaw: title,
+                                    // Manual URL flow has no Stremio behaviorHints-derived filename, so keep this explicitly null.
+                                    behaviorHintsFilename: null
+                                }
+                            }],
                             contentTitle: title
                         }),
                         onload: r => r.status === 200 ? resolve() : reject(new Error('Server error')),
@@ -1205,6 +1213,12 @@
         }
 
         let title = stream.title || stream.description || stream.name || "";
+        const streamTitleRaw = (typeof title === 'string' && title.trim().length > 0) ? title : null;
+        const behaviorHintsFilename =
+            (typeof stream.behaviorHints?.filename === 'string' && stream.behaviorHints.filename.trim().length > 0)
+                ? stream.behaviorHints.filename
+                : null;
+
         const lines = title.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
         const fileLine = lines.find(l => /\.(mkv|mp4|avi|mov|m4v|flv|webm|ts)$/i.test(l));
@@ -1215,6 +1229,22 @@
         }
 
         title = title.replace(/^[^\w\[\(]+/, "").trim();
+
+        const itemContext = {};
+        if (streamTitleRaw !== null) {
+            itemContext.streamTitleRaw = streamTitleRaw;
+        }
+        if (behaviorHintsFilename !== null) {
+            itemContext.behaviorHintsFilename = behaviorHintsFilename;
+        }
+
+        if (Object.keys(itemContext).length > 0) {
+            return {
+                url,
+                title,
+                stremioContext: itemContext
+            };
+        }
 
         return { url, title };
     }
