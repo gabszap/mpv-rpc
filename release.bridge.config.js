@@ -19,6 +19,8 @@ module.exports = {
             "@semantic-release/changelog",
             {
                 changelogFile: "stremio-mpv-bridge/CHANGELOG.md",
+                changelogTitle:
+                    "# Changelog\n\nThis file is managed by semantic-release.",
             },
         ],
         [
