@@ -2,6 +2,12 @@
 
 This file is managed by semantic-release.
 
+## [2.0.2](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.0.1...mpv-rpc-v2.0.2) (2026-04-19)
+
+### Bug Fixes
+
+* **release:** normalize root changelog header and dedupe 2.0.1 notes ([8338cb9](https://github.com/gabszap/mpv-rpc/commit/8338cb9a42af6c0c3ca5201225a06f0d4acc5b2b))
+
 ## [2.0.1](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.0.0...mpv-rpc-v2.0.1) (2026-04-19)
 
 ### Bug Fixes
