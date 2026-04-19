@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stremio MPV Bridge
 // @namespace    https://github.com/gabszap/mpv-rpc
-// @version      1.8.0
+// @version      1.0.0
 // @icon         https://www.stremio.com/website/stremio-purple-small.png
 // @description  Open Stremio Web streams directly in MPV with playlist support
 // @homepage     https://github.com/gabszap/mpv-rpc

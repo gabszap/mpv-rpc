@@ -1,6 +1,6 @@
 {
     "name": "stremio-mpv-bridge",
-    "version": "1.8.0",
+    "version": "1.0.0",
     "description": "A bridge to open and stream content from Stremio Web directly in the MPV media player.",
     "main": "server.js",
     "scripts": {
