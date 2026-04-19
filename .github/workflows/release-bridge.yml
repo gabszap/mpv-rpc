@@ -1,6 +1,7 @@
 name: Release Bridge (stremio-mpv-bridge)
 
 on:
+    workflow_dispatch:
     push:
         branches:
             - main
