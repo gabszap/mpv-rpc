@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 9632;
@@ -22,14 +23,12 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', mpvPath: MPV_PATH });
 });
 
-let lastPlaylist = null;
-
 app.post('/play', (req, res) => {
-    const { playlist, urls, contentTitle } = req.body;
+    const { playlist, urls, contentTitle, args } = req.body;
     const items = playlist || (urls ? urls.map(u => ({ url: u, title: contentTitle })) : []);
 
-    if (!items || items.length === 0) {
-        return res.status(400).json({ error: 'Playlist or URLs array is required' });
+    if (!items || !Array.isArray(items) || items.length === 0 || !items.every(item => item && item.url && typeof item.url === 'string' && item.url.trim().length > 0)) {
+        return res.status(400).json({ error: 'Playlist or URLs array with valid urls is required' });
     }
 
     console.log(`[MPV Bridge] Opening ${items.length} item(s) in MPV...`);
@@ -60,14 +59,27 @@ app.post('/play', (req, res) => {
             '--keep-open=yes',
         ];
 
-        const m3uContent = ['#EXTM3U', ...items.map(item => `#EXTINF:-1,${item.title || 'Stream'}\n${item.url}`)].join('\n');
-        const tmpPath = path.join(os.tmpdir(), `stremio-playlist-${Date.now()}.m3u`);
-        fs.writeFileSync(tmpPath, m3uContent);
-
-        if (lastPlaylist && fs.existsSync(lastPlaylist)) {
-            try { fs.unlinkSync(lastPlaylist); } catch (e) { }
+        if (args && typeof args === 'string') {
+            const parsedArgs = args.match(/(?:[^\s"]+|"[^"]*")+/g);
+            if (parsedArgs) {
+                mpvArgs.push(...parsedArgs.map(a => a.replace(/^"|"$/g, '')));
+            }
+        } else if (args && Array.isArray(args)) {
+            mpvArgs.push(...args);
         }
-        lastPlaylist = tmpPath;
+
+        const m3uContent = ['#EXTM3U', ...items.map(item => {
+            const safeTitle = (item.title || 'Stream').replace(/[\r\n]+/g, ' - ');
+            return `#EXTINF:-1,${safeTitle}\n${item.url}`;
+        })].join('\n');
+        const tmpPath = path.join(os.tmpdir(), `stremio-playlist-${crypto.randomBytes(8).toString('hex')}.m3u`);
+        
+        try {
+            fs.writeFileSync(tmpPath, m3uContent);
+        } catch (writeError) {
+            console.error('[MPV Bridge] Failed to write playlist file:', writeError.message);
+            return res.status(500).json({ error: 'Failed to write playlist file' });
+        }
 
         mpvArgs.push(tmpPath);
 
@@ -112,12 +124,6 @@ const server = app.listen(PORT, () => {
 
 function shutdown() {
     console.log('\n[MPV Bridge] Shutting down...');
-    if (lastPlaylist && fs.existsSync(lastPlaylist)) {
-        try {
-            fs.unlinkSync(lastPlaylist);
-            console.log('[MPV Bridge] Cleaned up temporary playlist.');
-        } catch (e) { }
-    }
     server.close(() => {
         console.log('[MPV Bridge] Server stopped.');
         process.exit(0);
