@@ -1,0 +1,67 @@
+{
+    "$schema": "https://biomejs.dev/schemas/2.4.13/schema.json",
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": true,
+            "correctness": {
+                "noUnusedVariables": "warn",
+                "noUnusedImports": "warn"
+            },
+            "suspicious": {
+                "noExplicitAny": "off"
+            },
+            "style": {
+                "useConst": "warn"
+            }
+        }
+    },
+    "formatter": {
+        "enabled": true,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineWidth": 120
+    },
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "double",
+            "semicolons": "always"
+        }
+    },
+    "files": {
+        "includes": [
+            "src/**",
+            "tests/**",
+            "stremio-mpv-bridge/**",
+            "scripts/**",
+            "biome.json",
+            "tsconfig.json",
+            "!!**/node_modules",
+            "!!**/dist",
+            "!!**/legacy",
+            "!!**/.anime_cache",
+            "!!**/.opencode",
+            "!!**/*.min.js"
+        ]
+    },
+    "overrides": [
+        {
+            "includes": ["stremio-mpv-bridge/stremio-mpv.user.js"],
+            "linter": {
+                "rules": {
+                    "recommended": true,
+                    "correctness": {
+                        "noUnusedVariables": "off",
+                        "noUnusedImports": "off"
+                    },
+                    "suspicious": {
+                        "noExplicitAny": "off"
+                    }
+                }
+            },
+            "javascript": {
+                "globals": ["GM_xmlhttpRequest", "GM_notification", "GM_setValue", "GM_getValue", "GM_info"]
+            }
+        }
+    ]
+}

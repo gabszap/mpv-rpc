@@ -5,6 +5,6 @@ dist/
 .mal_tokens.json
 guessit-api/.vercel
 scripts/
-.opencode
 .ocx
 .anime_cache/
+bun.lock
