@@ -437,6 +437,8 @@ Contribuições são bem-vindas. Sinta-se à vontade para abrir issues e pull re
 - [ ] Bandeja do sistema (rodar em background)
 - [ ] Interface gráfica (GUI) para configuração
 - [ ] Modo Mini (exibir apenas nome do arquivo sem busca de metadados)
+- [ ] Painel de estatísticas de uso
+- [ ] Integração com Trakt.tv (auto-scrobble)
 
 ---
 

@@ -441,6 +441,8 @@ Contributions are welcome. Feel free to open issues and pull requests.
 - [ ] System tray (run in background)
 - [ ] Graphical interface (GUI) for configuration
 - [ ] Mini Mode (show only filename without metadata fetch)
+- [ ] Usage statistics dashboard
+- [ ] Trakt.tv integration (auto-scrobble)
 
 ---
 
