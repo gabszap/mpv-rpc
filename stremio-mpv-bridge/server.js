@@ -1,51 +1,80 @@
-const express = require('express');
-const cors = require('cors');
-const { spawn } = require('child_process');
-const os = require('os');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
+const express = require("express");
+const cors = require("cors");
+const { spawn } = require("node:child_process");
+const os = require("node:os");
+const path = require("node:path");
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+
+// Load .env from project root (shared with mpv-rpc)
+try {
+    const envFile = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", ".env"), "utf-8");
+    for (const line of envFile.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+            const eqIdx = trimmed.indexOf("=");
+            if (eqIdx > 0) {
+                const key = trimmed.slice(0, eqIdx).trim();
+                let val = trimmed.slice(eqIdx + 1).trim();
+                // Strip surrounding quotes (single or double)
+                if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                    val = val.slice(1, -1);
+                }
+                if (!process.env[key]) {
+                    process.env[key] = val;
+                }
+            }
+        }
+    }
+} catch (_) {
+    // .env file is optional — no warning needed
+}
 
 const app = express();
 const PORT = process.env.PORT || 9632;
-const MPV_PATH = process.env.MPV_PATH || 'C:\\Program Files\\mpv\\mpv.exe';
-
-
+const MPV_PATH = process.env.MPV_PATH || "mpv";
 
 app.use(express.json());
-app.use(cors({
-    origin: ['https://web.stremio.com', 'http://localhost:8080'],
-    methods: ['GET', 'POST'],
-    credentials: true
-}));
+app.use(
+    cors({
+        origin: ["https://web.stremio.com", "http://localhost:8080"],
+        methods: ["GET", "POST"],
+        credentials: true,
+    }),
+);
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', mpvPath: MPV_PATH });
+app.get("/health", (_req, res) => {
+    res.json({ status: "ok", mpvPath: MPV_PATH });
 });
 
-app.post('/play', (req, res) => {
+app.post("/play", (req, res) => {
     const { playlist, urls, contentTitle, args } = req.body;
-    const items = playlist || (urls ? urls.map(u => ({ url: u, title: contentTitle })) : []);
+    const items = playlist || (urls ? urls.map((u) => ({ url: u, title: contentTitle })) : []);
 
-    if (!items || !Array.isArray(items) || items.length === 0 || !items.every(item => item && item.url && typeof item.url === 'string' && item.url.trim().length > 0)) {
-        return res.status(400).json({ error: 'Playlist or URLs array with valid urls is required' });
+    if (
+        !items ||
+        !Array.isArray(items) ||
+        items.length === 0 ||
+        !items.every((item) => item?.url && typeof item.url === "string" && item.url.trim().length > 0)
+    ) {
+        return res.status(400).json({ error: "Playlist or URLs array with valid urls is required" });
     }
 
     console.log(`[MPV Bridge] Opening ${items.length} item(s) in MPV...`);
     items.forEach((item, i) => {
         let displayTitle = item.title;
-        
-        if (displayTitle && displayTitle.includes('%')) {
+
+        if (displayTitle?.includes("%")) {
             try {
                 displayTitle = decodeURIComponent(displayTitle);
-            } catch (e) {}
+            } catch (_e) {}
         }
 
         if (!displayTitle) {
             try {
                 const decoded = decodeURIComponent(item.url);
-                displayTitle = decoded.split('/').pop().split('?')[0];
-            } catch (e) {
+                displayTitle = decoded.split("/").pop().split("?")[0];
+            } catch (_e) {
                 displayTitle = item.url.substring(0, 50);
             }
         }
@@ -54,38 +83,45 @@ app.post('/play', (req, res) => {
     });
 
     try {
-        let mpvArgs = [
-            '--force-window=immediate',
-            '--keep-open=yes',
-        ];
+        const mpvArgs = ["--force-window=immediate", "--keep-open=yes"];
 
-        if (args && typeof args === 'string') {
+        if (args && typeof args === "string") {
             const parsedArgs = args.match(/(?:[^\s"]+|"[^"]*")+/g);
             if (parsedArgs) {
-                mpvArgs.push(...parsedArgs.map(a => a.replace(/^"|"$/g, '')));
+                mpvArgs.push(...parsedArgs.map((a) => a.replace(/^"|"$/g, "")));
             }
         } else if (args && Array.isArray(args)) {
             mpvArgs.push(...args);
         }
 
-        const m3uContent = ['#EXTM3U', ...items.map(item => {
-            const safeTitle = (item.title || 'Stream').replace(/[\r\n]+/g, ' - ');
-            return `#EXTINF:-1,${safeTitle}\n${item.url}`;
-        })].join('\n');
-        const tmpPath = path.join(os.tmpdir(), `stremio-playlist-${crypto.randomBytes(8).toString('hex')}.m3u`);
-        
+        const m3uContent = [
+            "#EXTM3U",
+            ...items.map((item) => {
+                const safeTitle = (item.title || "Stream").replace(/[\r\n]+/g, " - ");
+                return `#EXTINF:-1,${safeTitle}\n${item.url}`;
+            }),
+        ].join("\n");
+        const tmpPath = path.join(os.tmpdir(), `stremio-playlist-${crypto.randomBytes(8).toString("hex")}.m3u`);
+
         try {
             fs.writeFileSync(tmpPath, m3uContent);
         } catch (writeError) {
-            console.error('[MPV Bridge] Failed to write playlist file:', writeError.message);
-            return res.status(500).json({ error: 'Failed to write playlist file' });
+            console.error("[MPV Bridge] Failed to write playlist file:", writeError.message);
+            return res.status(500).json({ error: "Failed to write playlist file" });
         }
 
         mpvArgs.push(tmpPath);
 
         const mpvProcess = spawn(MPV_PATH, mpvArgs, {
             detached: true,
-            stdio: 'ignore'
+            stdio: "ignore",
+        });
+
+        mpvProcess.once("error", (err) => {
+            console.error(`[MPV Bridge] Failed to start MPV: ${err.message}`);
+            // Clean up temporary playlist file on spawn failure
+            try { fs.unlinkSync(tmpPath); } catch (_) {}
+            // Note: response already sent if error fires after response
         });
 
         mpvProcess.unref();
@@ -96,16 +132,13 @@ app.post('/play', (req, res) => {
         res.json({
             success: true,
             message: `Opening ${items.length} item(s) in MPV`,
-            pid: mpvProcess.pid
+            pid: mpvProcess.pid,
         });
-
     } catch (error) {
-        console.error('[MPV Bridge] Error opening MPV:', error.message);
+        console.error("[MPV Bridge] Error opening MPV:", error.message);
         res.status(500).json({ error: error.message });
     }
 });
-
-
 
 const server = app.listen(PORT, () => {
     console.log(`
@@ -123,14 +156,14 @@ const server = app.listen(PORT, () => {
 });
 
 function shutdown() {
-    console.log('\n[MPV Bridge] Shutting down...');
+    console.log("\n[MPV Bridge] Shutting down...");
     server.close(() => {
-        console.log('[MPV Bridge] Server stopped.');
+        console.log("[MPV Bridge] Server stopped.");
         process.exit(0);
     });
 
     setTimeout(() => process.exit(0), 2000);
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
