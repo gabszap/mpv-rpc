@@ -1924,7 +1924,7 @@
             return null;
         };
 
-        log(`Fetching S${content.season}E${content.episode}...`);
+        notify(`Fetching S${content.season}E${content.episode}...`);
         const firstItem = await fetchWithProviders(content.season, content.episode);
         if (firstItem) addItem(firstItem);
 
@@ -1958,7 +1958,7 @@
                     .slice(0, limit);
 
                 for (const ep of nextEpisodes) {
-                    log(`Fetching S${ep.season}E${ep.episode}${ep.title ? ` - ${ep.title}` : ""}...`);
+                    notify(`Fetching S${ep.season}E${ep.episode}${ep.title ? ` - ${ep.title}` : ""}...`);
                     const nextItem = await fetchWithProviders(ep.season, ep.episode);
                     if (nextItem) {
                         addItem(nextItem);
@@ -1972,7 +1972,7 @@
                 let failures = 0;
                 for (let i = 1; i <= limit; i++) {
                     const nextEp = content.episode + i;
-                    log(`Fetching S${content.season}E${nextEp}...`);
+                    notify(`Fetching S${content.season}E${nextEp}...`);
                     const nextItem = await fetchWithProviders(content.season, nextEp);
                     if (nextItem) {
                         const added = addItem(nextItem);
@@ -2001,14 +2001,12 @@
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             if (attempt > 0) {
-                log(`Retrying stream fetch for S${season}E${episode} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`);
+                notify(`Retrying stream fetch for S${season}E${episode} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`);
                 await new Promise((r) => setTimeout(r, 1000));
             }
 
             const result = await new Promise((resolve) => {
-                if (attempt > 0) {
-                    log(`Fetching streams from: ${url}`);
-                }
+                log(`Fetching streams from: ${url}`);
                 GM_xmlhttpRequest({
                     method: "GET",
                     url,
@@ -2288,15 +2286,13 @@
 
     async function init() {
         const version = GM_info.script.version;
-        notify(`v${version} initialized!`);
 
         // Resolve provider names asynchronously for logging
         const activeProviders = providers.filter((p) => p.enabled && p.url);
+        let providerSummary = "None";
         if (activeProviders.length > 0) {
             const resolvedNames = await Promise.all(activeProviders.map((p) => resolveProviderName(p)));
-            notify(`Active providers: ${resolvedNames.join(", ")}`);
-        } else {
-            notify("Active providers: None");
+            providerSummary = resolvedNames.join(", ");
         }
 
         const modeText =
@@ -2305,7 +2301,8 @@
                 : playlistMode === "single"
                   ? "Single"
                   : `Batch | Extra: ${extraEpisodes}`;
-        notify(`Mode: ${modeText}`);
+
+        notify(`v${version} initialized — ${providerSummary} — ${modeText}`);
 
         // Check bridge server and show connected toast
         try {
