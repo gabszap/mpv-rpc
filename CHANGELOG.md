@@ -2,6 +2,12 @@
 
 This file is managed by semantic-release.
 
+## [2.1.1](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.1.0...mpv-rpc-v2.1.1) (2026-04-25)
+
+### Bug Fixes
+
+* **ci:** serialize root and bridge releases with concurrency group ([b497151](https://github.com/gabszap/mpv-rpc/commit/b4971511afed62c9ae2436986e93cba1329cafc7))
+
 ## [2.1.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.0.2...mpv-rpc-v2.1.0) (2026-04-25)
 
 ### Features
