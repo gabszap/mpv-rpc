@@ -1,0 +1,3 @@
+# Force LF line endings for markdown files
+# Prevents semantic-release changelog title mismatch on Windows
+*.md text eol=lf
