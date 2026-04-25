@@ -2,6 +2,16 @@
 
 This file is managed by semantic-release.
 
+## [2.1.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.0.2...mpv-rpc-v2.1.0) (2026-04-25)
+
+### Features
+
+* **bridge-userscript:** implement stacked toast notifications ([e3c1e91](https://github.com/gabszap/mpv-rpc/commit/e3c1e91c807d396f8611c59005cf46bb3e7bd99a))
+
+### Bug Fixes
+
+* **scripts:** route stdin to RPC REPL in concurrent start:all ([0d2e238](https://github.com/gabszap/mpv-rpc/commit/0d2e238a422e8e295fd45492d1ee179a332697e3))
+
 ## [2.0.2](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.0.1...mpv-rpc-v2.0.2) (2026-04-19)
 
 ### Bug Fixes
