@@ -33,7 +33,6 @@
             "src/**",
             "tests/**",
             "stremio-mpv-bridge/**",
-            "scripts/**",
             "biome.json",
             "tsconfig.json",
             "!!**/node_modules",
@@ -41,7 +40,8 @@
             "!!**/legacy",
             "!!**/.anime_cache",
             "!!**/.opencode",
-            "!!**/*.min.js"
+            "!!**/*.min.js",
+            "!!**/scripts/"
         ]
     },
     "overrides": [

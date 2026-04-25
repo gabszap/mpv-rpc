@@ -2001,7 +2001,9 @@
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             if (attempt > 0) {
-                notify(`Retrying stream fetch for S${season}E${episode} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`);
+                notify(
+                    `Retrying stream fetch for S${season}E${episode} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`,
+                );
                 await new Promise((r) => setTimeout(r, 1000));
             }
 
@@ -2148,16 +2150,95 @@
         });
     }
 
+    let toastCounter = 0;
+    const MAX_TOASTS = 5;
+    const TOAST_DURATION = 3000;
+
+    function getToastContainer() {
+        let container = document.getElementById("stremio-mpv-toast-container");
+        if (!container) {
+            container = document.createElement("div");
+            container.id = "stremio-mpv-toast-container";
+            container.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                display: flex;
+                flex-direction: column-reverse;
+                align-items: center;
+                gap: 8px;
+                z-index: 999999;
+                pointer-events: none;
+            `;
+            document.body.appendChild(container);
+        }
+        return container;
+    }
+
     function showToast(message, type = "info") {
-        const existing = document.getElementById("stremio-mpv-toast");
-        if (existing) existing.remove();
+        const container = getToastContainer();
         const color = type === "error" ? "#ef4444" : type === "success" ? "#22c55e" : "#3b82f6";
+
+        // Enforce max toasts
+        const toasts = container.querySelectorAll(".stremio-mpv-toast");
+        if (toasts.length >= MAX_TOASTS) {
+            toasts[toasts.length - 1].remove(); // remove oldest (last in column-reverse = bottom)
+        }
+
+        const id = `stremio-mpv-toast-${++toastCounter}`;
         const toast = document.createElement("div");
-        toast.id = "stremio-mpv-toast";
-        toast.style.cssText = `position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: ${color}; color: white; padding: 12px 24px; border-radius: 8px; font-size: 14px; z-index: 999999; box-shadow: 0 4px 15px rgba(0,0,0,0.3);`;
+        toast.id = id;
+        toast.className = "stremio-mpv-toast";
+        toast.style.cssText = `
+            background: ${color};
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: 'Roboto', sans-serif;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            pointer-events: auto;
+            cursor: pointer;
+            animation: mpv-toast-in 0.25s ease-out;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        `;
         toast.textContent = message;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+
+        // Click to dismiss
+        toast.addEventListener("click", () => dismissToast(toast));
+
+        // Inject keyframes once
+        if (!document.getElementById("mpv-toast-styles")) {
+            const style = document.createElement("style");
+            style.id = "mpv-toast-styles";
+            style.textContent = `
+                @keyframes mpv-toast-in {
+                    from { opacity: 0; transform: translateY(12px); }
+                    to   { opacity: 1; transform: translateY(0); }
+                }
+                @keyframes mpv-toast-out {
+                    from { opacity: 1; transform: scale(1); }
+                    to   { opacity: 0; transform: scale(0.95); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        // prepend so newest is at top (column-reverse makes it bottom but visually top of stack)
+        container.prepend(toast);
+
+        // Auto-dismiss
+        const timer = setTimeout(() => dismissToast(toast), TOAST_DURATION);
+        toast._dismissTimer = timer;
+    }
+
+    function dismissToast(toast) {
+        if (toast._dismissed) return;
+        toast._dismissed = true;
+        clearTimeout(toast._dismissTimer);
+        toast.style.animation = "mpv-toast-out 0.2s ease forwards";
+        toast.addEventListener("animationend", () => toast.remove(), { once: true });
     }
 
     function showNowPlayingWidget(title) {
