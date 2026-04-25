@@ -17,7 +17,7 @@ One file, bilingual, mirrored sections.
 - [Architecture at a glance](#en-architecture)
 - [Features (current)](#en-features)
 - [Install / setup](#en-install)
-- [Concurrent usage (two terminals)](#en-concurrent)
+- [Concurrent usage (single terminal recommended)](#en-concurrent)
 - [Configuration](#en-configuration)
 - [Usage flows](#en-usage-flows)
 - [Troubleshooting](#en-troubleshooting)
@@ -49,9 +49,9 @@ The Bridge and the RPC app solve different parts of the workflow:
 
 Practical daily workflow (typical):
 
-1) Start MPV-RPC (`npm start`) so it can monitor MPV.
-2) Start the Bridge (`npm run bridge`) so the browser can trigger playback.
-3) In Stremio Web, click the MPV button (or your shortcut) to open the episode in MPV.
+1) Start both services with a single command: `npm run start:all`
+   (or run them separately: `npm start` + `npm run bridge`)
+2) In Stremio Web, click the MPV button (or your shortcut) to open the episode in MPV.
 
 Benefits:
 
@@ -90,8 +90,8 @@ Only features that exist in the current code/userscript are listed here.
   - batch mode (loads current + N next episodes; `extraEpisodes`, default `2`, range `1..25`)
   - “all” mode (attempt to load all remaining episodes)
 - **Provider list + ordering** inside a settings modal (built-in + debrid + custom manifests).
-  - Built-in providers include: Torrentio, Comet, MediaFusion, Sootio
-  - Debrid options include: Torbox, Real Debrid, Debrid Link
+  - Built-in providers include: Torrentio, Comet, MediaFusion, Sootio, AIOStreams
+  - Debrid options include: Torbox, Real Debrid
   - Custom providers: paste an addon URL (the userscript can resolve a display name via `/manifest.json`)
 - **Open arbitrary URL** from the settings modal (handy for quick testing).
 - **Local server endpoints**:
@@ -150,9 +150,22 @@ and confirm the script is enabled for that site.
 > If you change the server port (via `PORT`), you must also update the userscript’s `SERVER_URL` constant to match.
 
 <a id="en-concurrent"></a>
-### Concurrent usage (two terminals)
+### Concurrent usage (single terminal recommended)
 
-If you want **Bridge + MPV-RPC** at the same time, run them side-by-side:
+### Single terminal (recommended)
+
+Use the `start:all` script to run both the RPC app and the bridge in one terminal with a single command:
+
+```bash
+npm run start:all
+```
+
+This launches both services. The RPC app's interactive REPL (for commands like `status`, `set`, `rename`) receives keyboard input, while the bridge server runs silently in the background.
+
+> [!TIP]
+> Commands typed into the terminal go to the RPC REPL by default. Use `help` to see available commands.
+
+Can also be run in separate terminals:
 
 Terminal A (MPV-RPC app):
 
@@ -166,10 +179,6 @@ Terminal B (Bridge server):
 npm run bridge
 ```
 
-> [!IMPORTANT]
-> This repository’s bridge script is **`npm run bridge`**.
-> If you see older references like `npm run start:bridge`, those are outdated.
-
 <a id="en-configuration"></a>
 ### Configuration
 
@@ -179,14 +188,20 @@ The bridge server reads:
 
 - `PORT` — server port (default: `9632`)
 - `MPV_PATH` — full path to your MPV executable
-  - default in code: `C:\\Program Files\\mpv\\mpv.exe`
+  - default in code: `"mpv"` (resolves via system `PATH` on Linux/macOS; Windows users should set it explicitly)
 
-Examples:
+> [!TIP]
+> The recommended way is to set `MPV_PATH` in the **`.env` file** at the project root (shared with the RPC app).
+> Example `.env` entry:
+> ```
+> MPV_PATH=C:\Program Files\mpv\mpv.exe
+> ```
+
+Can also be passed via environment variable:
 
 Windows (PowerShell):
 
 ```powershell
-$env:PORT="9632"
 $env:MPV_PATH="C:\\Program Files\\mpv\\mpv.exe"
 npm run bridge
 ```
@@ -194,7 +209,7 @@ npm run bridge
 macOS / Linux (bash/zsh):
 
 ```bash
-PORT=9632 MPV_PATH=/usr/bin/mpv npm run bridge
+MPV_PATH=/usr/bin/mpv npm run bridge
 ```
 
 #### Userscript settings (inside Stremio Web)
@@ -232,9 +247,11 @@ If your bridge is not on `9632`, edit that value in `stremio-mpv-bridge/stremio-
 
 #### Daily use flow
 
-1) Start your two processes (recommended):
-   - `npm start` (MPV-RPC)
-   - `npm run bridge` (Bridge)
+1) Start both services (recommended):
+   ```bash
+   npm run start:all
+   ```
+   (Or run them separately: `npm start` + `npm run bridge` in two terminals.)
 2) Browse in Stremio Web and pick an episode.
 3) Click the MPV button (or press the shortcut).
 4) MPV opens with a temporary `.m3u` playlist.
@@ -341,7 +358,7 @@ The userscript can send multiple URLs (current + next episodes) and the bridge c
 - [Arquitetura em resumo](#pt-arquitetura)
 - [Recursos (atuais)](#pt-recursos)
 - [Instalação / configuração](#pt-instalacao)
-- [Uso simultâneo (dois terminais)](#pt-uso-simultaneo)
+- [Uso simultâneo (terminal único recomendado)](#pt-uso-simultaneo)
 - [Configuração](#pt-configuracao)
 - [Fluxos de uso](#pt-fluxos)
 - [Solução de problemas](#pt-troubleshooting)
@@ -373,9 +390,9 @@ O Bridge e o app principal (MPV-RPC) resolvem partes diferentes do fluxo:
 
 Fluxo prático do dia a dia (comum):
 
-1) Inicie o MPV-RPC (`npm start`) para monitorar o MPV.
-2) Inicie o Bridge (`npm run bridge`) para o navegador conseguir disparar a reprodução.
-3) No Stremio Web, clique no botão do MPV (ou use o atalho) para abrir o episódio no MPV.
+1) Inicie ambos os serviços com um único comando: `npm run start:all`
+   (ou separadamente: `npm start` + `npm run bridge`)
+2) No Stremio Web, clique no botão do MPV (ou use o atalho) para abrir o episódio no MPV.
 
 Benefícios:
 
@@ -414,8 +431,8 @@ Somente recursos que existem no código/userscript atual estão listados aqui.
   - modo em lote (episódio atual + N próximos; `extraEpisodes`, padrão `2`, intervalo `1..25`)
   - modo “all” (tentar enfileirar todos os episódios restantes)
 - **Lista de provedores + ordem** dentro de um modal de configurações (embutidos + debrid + manifests custom).
-  - Provedores embutidos: Torrentio, Comet, MediaFusion, Sootio
-  - Opções de debrid: Torbox, Real Debrid, Debrid Link
+  - Provedores embutidos: Torrentio, Comet, MediaFusion, Sootio, AIOStreams
+  - Opções de debrid: Torbox, Real Debrid
   - Provedores custom: cole a URL do addon (o userscript pode resolver o nome via `/manifest.json`)
 - **Abrir URL manualmente** a partir do modal (útil para testes rápidos).
 - **Endpoints do servidor local**:
@@ -474,7 +491,22 @@ e confirme que o script está ativo.
 > Se você mudar a porta do servidor (via `PORT`), também precisa atualizar a constante `SERVER_URL` no userscript.
 
 <a id="pt-uso-simultaneo"></a>
-### Uso simultâneo (dois terminais)
+### Uso simultâneo (terminal único recomendado)
+
+### Terminal único (recomendado)
+
+Use o script `start:all` para rodar o app RPC e o bridge em um único terminal com um só comando:
+
+```bash
+npm run start:all
+```
+
+Isso inicia ambos os serviços. O REPL interativo do app RPC (comandos como `status`, `set`, `rename`) recebe o input do teclado, enquanto o servidor bridge roda silenciosamente em segundo plano.
+
+> [!TIP]
+> Comandos digitados no terminal vão para o REPL do RPC por padrão. Use `help` para ver os comandos disponíveis.
+
+### Dois terminais (ainda funciona)
 
 Para usar **Bridge + MPV-RPC** ao mesmo tempo, rode os dois em paralelo:
 
@@ -503,14 +535,20 @@ O servidor do bridge lê:
 
 - `PORT` — porta do servidor (padrão: `9632`)
 - `MPV_PATH` — caminho completo para o executável do MPV
-  - padrão no código: `C:\\Program Files\\mpv\\mpv.exe`
+  - padrão no código: `"mpv"` (resolve via `PATH` do sistema no Linux/macOS; usuários Windows devem definir explicitamente)
 
-Exemplos:
+> [!TIP]
+> O jeito recomendado é definir `MPV_PATH` no arquivo **`.env`** na raiz do projeto (compartilhado com o app RPC).
+> Exemplo de entrada no `.env`:
+> ```
+> MPV_PATH=C:\Program Files\mpv\mpv.exe
+> ```
+
+Também pode ser passado via variável de ambiente:
 
 Windows (PowerShell):
 
 ```powershell
-$env:PORT="9632"
 $env:MPV_PATH="C:\\Program Files\\mpv\\mpv.exe"
 npm run bridge
 ```
@@ -518,7 +556,7 @@ npm run bridge
 macOS / Linux (bash/zsh):
 
 ```bash
-PORT=9632 MPV_PATH=/usr/bin/mpv npm run bridge
+MPV_PATH=/usr/bin/mpv npm run bridge
 ```
 
 #### Configurações do userscript (dentro do Stremio Web)
@@ -556,9 +594,11 @@ Se seu bridge não estiver na porta `9632`, edite esse valor em `stremio-mpv-bri
 
 #### Uso diário
 
-1) Inicie os dois processos (recomendado):
-   - `npm start` (MPV-RPC)
-   - `npm run bridge` (Bridge)
+1) Inicie ambos os serviços (recomendado):
+   ```bash
+   npm run start:all
+   ```
+   (Ou inicie separadamente: `npm start` + `npm run bridge` em dois terminais.)
 2) Escolha um episódio no Stremio Web.
 3) Clique no botão do MPV (ou use o atalho).
 4) O MPV abre com uma playlist `.m3u` temporária.

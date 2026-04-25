@@ -3,11 +3,12 @@
 Discord Rich Presence for MPV Media Player with automatic anime metadata support.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?style=for-the-badge&color=22c55e" alt="Version">
+  <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?filename=stremio-mpv-bridge%2Fpackage.json&style=for-the-badge&label=bridge&color=8b5cf6" alt="Bridge Version">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white&style=for-the-badge" alt="TypeScript">
   <img src="https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white&style=for-the-badge" alt="Windows">
   <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" alt="Linux">
-  <img src="https://img.shields.io/badge/Built%20with-Claude-D97757?logo=claude&logoColor=white&style=for-the-badge" alt="Built with Claude">
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License">
 </p>
 
 <p align="center">
