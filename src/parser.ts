@@ -326,12 +326,39 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
         };
     }
 
-    if (hasUrlEncodedChars(filename)) {
+    // Ignore Stremio playlist filenames (internal MPV artifacts)
+    if (/stremio-playlist-/i.test(filename)) {
+        return {
+            full_title: "N/A",
+            series_title: "N/A",
+            season: null,
+            episode: null,
+            episode_title: null,
+            media_type: "unknown",
+        };
+    }
+
+    // If we extracted torrent_name, use it as the working filename
+    if (extractedTorrentName) {
+        filename = extractedTorrentName;
+    } else if (hasUrlEncodedChars(filename)) {
         try {
             filename = decodeURIComponent(filename);
             console.log("[Parser] Decoded URL-encoded filename");
         } catch (e) {
             console.warn("[Parser] Failed to decode URL-encoded filename, continuing anyway");
+        }
+    }
+
+    // Extract torrent_name from URL query parameters (Comet/Stremio streams)
+    const torrentNameMatch = filename.match(/[?&]torrent_name=([^&]+)/);
+    if (torrentNameMatch) {
+        try {
+            filename = decodeURIComponent(torrentNameMatch[1]);
+            console.log("[Parser] Extracted torrent_name from URL");
+        } catch (e) {
+            filename = torrentNameMatch[1];
+            console.warn("[Parser] Failed to decode torrent_name, using raw value");
         }
     }
 

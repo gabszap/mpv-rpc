@@ -172,6 +172,22 @@ describe('Parser Fallback Logic', () => {
         expect(result.full_title).toBe('Dr Stone - New World - E02');
     });
 
+    it('should extract torrent_name from URL query parameters (Comet streams)', async () => {
+        const execFileMock = vi.spyOn(child_process, 'execFile');
+        execFileMock.mockImplementation((file, args, options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        // Simulates a Comet/Stremio URL where the real filename is in torrent_name param
+        const urlWithTorrentName = 'https://comet.example.com/playback/abc123/0/18/4/3?torrent_name=Dr.STONE.S04E03.Light.Trap.in.the.Darkness.1080p.CR.WEB-DL.DUAL.AAC2.0.H.264-VARYG.mkv&name=Dr.%20Stone';
+        const result = await parser.parseFilename(urlWithTorrentName);
+
+        expect(result.series_title).toBe('Dr STONE');
+        expect(result.season).toBe(4);
+        expect(result.episode).toBe(3);
+    });
+
     it('should combine alternative_title when GuessIt splits season name', async () => {
         const execFileMock = vi.spyOn(child_process, 'execFile');
         execFileMock.mockImplementation((file, args, options, callback) => {
