@@ -148,6 +148,7 @@ function extractEpisodeFromFilename(filename: string): number | null {
 }
 
 const loggedInvalidTitles: Set<string> = new Set();
+const loggedTorrentExtractions: Set<string> = new Set();
 
 /**
  * Check if a title is valid for API searches
@@ -309,8 +310,27 @@ function processGuessitResult(
  * Parse a filename using GuessIt API with CLI fallback
  */
 export async function parseFilename(filename: string): Promise<ParsedFilename> {
-    // Check cache first
-    const cached = parseCache.get(filename);
+    // Extract torrent_name from URL query parameters early (Comet/Stremio streams)
+    // This ensures consistent cache keys even if the URL path changes
+    let extractedTorrentName: string | null = null;
+    const torrentNameMatch = filename.match(/[?&]torrent_name=([^&]+)/);
+    if (torrentNameMatch) {
+        try {
+            extractedTorrentName = decodeURIComponent(torrentNameMatch[1]);
+        } catch (e) {
+            extractedTorrentName = torrentNameMatch[1];
+        }
+
+        // Log only once per unique torrent_name to avoid spam
+        if (!loggedTorrentExtractions.has(extractedTorrentName)) {
+            console.log("[Parser] Extracted torrent_name from URL");
+            loggedTorrentExtractions.add(extractedTorrentName);
+        }
+    }
+
+    // Use extracted torrent_name as cache key if available, otherwise use original filename
+    const cacheKey = extractedTorrentName ?? filename;
+    const cached = parseCache.get(cacheKey);
     if (cached) {
         return cached;
     }
@@ -350,18 +370,6 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
         }
     }
 
-    // Extract torrent_name from URL query parameters (Comet/Stremio streams)
-    const torrentNameMatch = filename.match(/[?&]torrent_name=([^&]+)/);
-    if (torrentNameMatch) {
-        try {
-            filename = decodeURIComponent(torrentNameMatch[1]);
-            console.log("[Parser] Extracted torrent_name from URL");
-        } catch (e) {
-            filename = torrentNameMatch[1];
-            console.warn("[Parser] Failed to decode torrent_name, using raw value");
-        }
-    }
-
     const normalizedFilename = filename
         .replace(/\+/g, "-")
         .replace(/\//g, "-");
@@ -389,8 +397,8 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     if (guessed) {
         const result = processGuessitResult(guessed, filename, normalizedFilename);
         if (result) {
-            // Cache the result
-            parseCache.set(filename, result);
+            // Cache the result using the cache key
+            parseCache.set(cacheKey, result);
             return result;
         }
     }
@@ -398,7 +406,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     // Final fallback: regex parsing
     const fallbackResult = fallbackParse(filename);
     // Cache the fallback result too
-    parseCache.set(filename, fallbackResult);
+    parseCache.set(cacheKey, fallbackResult);
     return fallbackResult;
 }
 
