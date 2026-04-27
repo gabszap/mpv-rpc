@@ -114,7 +114,7 @@ async function resolveAnimeInfoWithProvider(
     // This handles cases where the sequel chain is broken or titles don't have explicit season numbers
     if (season && season > 1) {
         const seasonSearchTitle = `${title} Season ${season}`;
-        const seasonSearchResult = await currentProvider.searchAnime(seasonSearchTitle);
+        const seasonSearchResult = await currentProvider.searchAnime(seasonSearchTitle, season);
         if (seasonSearchResult) {
             const animeInfo = await currentProvider.getAnimeById(seasonSearchResult.id);
             if (animeInfo) {

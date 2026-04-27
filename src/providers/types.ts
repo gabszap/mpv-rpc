@@ -20,6 +20,7 @@ export interface AnimeSearchResult {
     title_english: string | null;
     type: string;                  // TV, Movie, OVA, etc.
     coverImage: string | null;
+    titles?: Array<{ type: string; title: string }>;
 }
 
 export interface EpisodeLookupContext {
@@ -34,7 +35,7 @@ export interface AnimeProvider {
     /**
      * Search for anime by title
      */
-    searchAnime(title: string): Promise<AnimeSearchResult | null>;
+    searchAnime(title: string, expectedSeason?: number): Promise<AnimeSearchResult | null>;
 
     /**
      * Get full anime info by ID

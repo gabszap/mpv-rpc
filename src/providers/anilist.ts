@@ -166,7 +166,7 @@ function isPartOfSameSeason(title: string): boolean {
 export class AniListProvider implements AnimeProvider {
     readonly name = "anilist";
 
-    async searchAnime(title: string): Promise<AnimeSearchResult | null> {
+    async searchAnime(title: string, _expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
             const response = await anilistRequest(SEARCH_QUERY, { search: title }, "search");
             const media = response?.data?.Media;

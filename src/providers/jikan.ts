@@ -111,6 +111,33 @@ function isPartOfSameSeason(title: string): boolean {
 }
 
 /**
+ * Extract season number from Jikan titles array (synonyms, etc.)
+ * Handles patterns like "4th Season", "Season 4", "Part 4", "Cour 2", etc.
+ */
+function extractSeasonFromTitles(titles: any[]): number | null {
+    if (!titles || !Array.isArray(titles)) return null;
+
+    const seasonPatterns = [
+        /(\d+)(?:st|nd|rd|th)\s*season/i,
+        /season\s*(\d+)/i,
+        /part\s*(\d+)/i,
+        /cour\s*(\d+)/i,
+    ];
+
+    for (const entry of titles) {
+        const title = entry?.title || entry;
+        if (typeof title !== "string") continue;
+
+        for (const pattern of seasonPatterns) {
+            const match = title.match(pattern);
+            if (match) return parseInt(match[1], 10);
+        }
+    }
+
+    return null;
+}
+
+/**
  * Normalize a title for comparison purposes
  * Removes/normalizes special characters like /, -, _, . and extra whitespace
  * This is only for matching, the original title is preserved
@@ -200,7 +227,7 @@ function formatCompactJikanError(error: unknown): string {
 export class JikanProvider implements AnimeProvider {
     readonly name = "jikan";
 
-    async searchAnime(title: string): Promise<AnimeSearchResult | null> {
+    async searchAnime(title: string, expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
             const response = await jikanRequest("/anime", {
                 q: title,
@@ -221,16 +248,24 @@ export class JikanProvider implements AnimeProvider {
             const candidates = mainResults.length > 0 ? mainResults : results;
 
             // Score each candidate by title similarity
-            const scoredCandidates = candidates.map((anime: any) => ({
-                anime,
-                score: calculateTitleScore(title, anime.title || "", anime.title_english),
-            }));
+            const scoredCandidates = candidates.map((anime: any) => {
+                let score = calculateTitleScore(title, anime.title || "", anime.title_english);
+
+                // 2FA: Check synonyms for season match when expectedSeason is provided
+                if (expectedSeason && expectedSeason > 1) {
+                    const synonymSeason = extractSeasonFromTitles(anime.titles || []);
+                    if (synonymSeason === expectedSeason) {
+                        score += 2000;
+                        logApiCall("Jikan", "/anime", { q: title }, "DETAIL", `Synonym match: "${anime.title}" has season ${synonymSeason} in titles`);
+                    }
+                }
+
+                return { anime, score };
+            });
 
             // Sort by score (descending), then prefer TV/ONA types
             scoredCandidates.sort((a: any, b: any) => {
-                // Primary: score
                 if (b.score !== a.score) return b.score - a.score;
-                // Secondary: prefer TV/ONA
                 const aIsTV = a.anime.type === "TV" || a.anime.type === "ONA";
                 const bIsTV = b.anime.type === "TV" || b.anime.type === "ONA";
                 if (bIsTV && !aIsTV) return 1;
@@ -366,6 +401,7 @@ export class JikanProvider implements AnimeProvider {
             title_english: anime.title_english,
             type: anime.type,
             coverImage: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
+            titles: anime.titles || [],
         };
     }
 }

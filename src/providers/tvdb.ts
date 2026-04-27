@@ -567,7 +567,7 @@ async function lookupEpisodeForSeasonNumber(
 export class TvdbProvider implements AnimeProvider {
     readonly name = "tvdb";
 
-    async searchAnime(title: string): Promise<AnimeSearchResult | null> {
+    async searchAnime(title: string, _expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
             const response = await tvdbRequest("/search", {
                 query: title,

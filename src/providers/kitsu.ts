@@ -111,7 +111,7 @@ function isPartOfSameSeason(title: string): boolean {
 export class KitsuProvider implements AnimeProvider {
     readonly name = "kitsu";
 
-    async searchAnime(title: string): Promise<AnimeSearchResult | null> {
+    async searchAnime(title: string, _expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
             const response = await kitsuRequest("/anime", {
                 "filter[text]": title,
