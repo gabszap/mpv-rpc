@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "start:all": "concurrently -n \"rpc,bridge\" -c \"cyan,magenta\" --handle-input --default-input-target 0 \"npm run start\" \"npm run bridge\"",
+    "start:all": "concurrently -n \"rpc,bridge\" -c \"cyan,magenta\" --handle-input --default-input-target 0 --kill-others \"npm run start\" \"npm run bridge\"",
     "dev": "tsc && npm run start",
     "bridge": "npm run start --workspace=stremio-mpv-bridge",
     "test": "vitest run",

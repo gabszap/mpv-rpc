@@ -9,11 +9,11 @@
         "edit": "deny",
         "write": "deny",
         "bash": {
-          "*": "deny"
+          "*": "deny",
         },
         "task": "allow",
-        "worktree_*": "allow"
-      }
+        "worktree_*": "allow",
+      },
     },
     "build": {
       "temperature": 0.3,
@@ -24,11 +24,11 @@
         "edit": "deny",
         "write": "deny",
         "bash": {
-          "*": "deny"
+          "*": "deny",
         },
         "task": "allow",
-        "worktree_*": "allow"
-      }
+        "worktree_*": "allow",
+      },
     },
     "coder": {
       "temperature": 0.2,
@@ -45,8 +45,8 @@
         "grep": "allow",
         "bash": "allow",
         "plan_read": "deny",
-        "todoread": "deny"
-      }
+        "todoread": "deny",
+      },
     },
     "explore": {
       "model": "opencode/minimax-m2.5-free",
@@ -83,9 +83,9 @@
           "hostname": "allow",
           "whoami": "allow",
           "which *": "allow",
-          "realpath *": "allow"
-        }
-      }
+          "realpath *": "allow",
+        },
+      },
     },
     "researcher": {
       "model": "opencode/minimax-m2.5-free",
@@ -140,9 +140,9 @@
           "uniq *": "allow",
           "cut *": "allow",
           "awk *": "allow",
-          "tr *": "allow"
-        }
-      }
+          "tr *": "allow",
+        },
+      },
     },
     "scribe": {
       "model": "github-copilot/gpt-5.2",
@@ -151,18 +151,18 @@
       "textVerbosity": "high",
       "permission": {
         "bash": {
-          "*": "deny"
+          "*": "deny",
         },
         "edit": "allow",
         "glob": "allow",
         "read": "allow",
         "write": "allow",
         "plan_read": "deny",
-        "todoread": "deny"
-      }
+        "todoread": "deny",
+      },
     },
     "reviewer": {
-      "model": "github-copilot/gpt-5.3-codex",
+      "model": "github-copilot/gpt-5.2-codex",
       "temperature": 0.1,
       "reasoningEffort": "high",
       "textVerbosity": "medium",
@@ -175,13 +175,13 @@
           "git log*": "allow",
           "git show*": "allow",
           "git blame*": "allow",
-          "rg *": "allow"
+          "rg *": "allow",
         },
         "plan_read": "allow",
         "delegation_read": "allow",
-        "delegation_list": "allow"
-      }
-    }
+        "delegation_list": "allow",
+      },
+    },
   },
   "permission": {
     "task": "deny",
@@ -190,29 +190,25 @@
     "gh_grep_*": "deny",
     "kagi_*": "deny",
     "webfetch": "deny",
-    "worktree_*": "deny"
+    "worktree_*": "deny",
   },
   "mcp": {
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp",
-      "enabled": true
+      "enabled": true,
     },
     "exa": {
       "type": "remote",
       "url": "https://mcp.exa.ai/mcp",
-      "enabled": true
+      "enabled": true,
     },
     "gh_grep": {
       "type": "remote",
       "url": "https://mcp.grep.app",
-      "enabled": true
-    }
+      "enabled": true,
+    },
   },
-  "instructions": [
-    "./tools/philosophy.md"
-  ],
-  "plugin": [
-    "@franlol/opencode-md-table-formatter@0.0.6"
-  ]
+  "instructions": ["./tools/philosophy.md"],
+  "plugin": ["@franlol/opencode-md-table-formatter@0.0.6"],
 }

@@ -21,6 +21,28 @@ Your output MUST strictly follow Conventional Commits and be compatible with com
 - Automatically detect BREAKING CHANGES
 - Automatically apply "!" in the header when breaking
 - NEVER finalize without user approval
+- When rules conflict, prioritize:
+  1. Clarity
+  2. Conciseness
+  3. Semantic correctness
+
+---
+
+## Conciseness Rules (STRICT)
+
+- Maximum 5 bullet points per commit
+- Prefer grouping related changes into single bullets
+- Avoid low-level implementation details unless critical
+- Focus on intent and impact, not every change
+- Prefer fewer, high-impact bullets over many small ones
+
+Bad:
+- Add function X
+- Add type Y
+- Add interface Z
+
+Good:
+- Introduce overflow resolution system with provider-aware traversal
 
 ---
 
@@ -75,6 +97,19 @@ Goal: maximize clarity, not exhaustiveness.
 
 ---
 
+## Noise Filtering
+
+Do NOT include:
+
+- Obvious changes implied by the feature
+- Trivial refactors
+- Repeated patterns across files
+- Internal naming unless externally relevant
+
+Goal: maximize signal-to-noise ratio
+
+---
+
 ## Commit Format Rules
 
 Each commit must follow:
@@ -88,6 +123,14 @@ type(scope): summary
 Optional footer:
 
 BREAKING CHANGE: description
+
+---
+
+## Redundancy Rules
+
+- DO NOT repeat the commit title in the body
+- The body must add new information only
+- Avoid restating obvious context from the header
 
 ---
 
@@ -148,6 +191,13 @@ Mark as breaking when:
 - Response/data format changes
 - Navigation or UX flow changes significantly
 
+Do NOT mark as breaking when:
+
+- Changes are internal only
+- Refactors do not affect external behavior
+
+Only mark as breaking if it affects consumers or integrations
+
 When breaking:
 
 1. Add "!" after type(scope)
@@ -203,10 +253,46 @@ Prefer:
 
 ---
 
+## Commit Density Mode
+
+Default: balanced
+
+If input is already structured or high quality:
+- Prefer shorter commits
+- Reduce bullet count
+- Avoid over-explaining
+- Do not restate obvious context
+
+If input is messy or ambiguous:
+- Expand commits slightly for clarity
+- Add minimal necessary context
+
+Goal: adapt verbosity to input quality
+
+---
+
+## Bullet Point Rules
+
+Each bullet must:
+
+- Add new information not obvious from the title
+- Be high-level (feature, behavior, impact)
+- Avoid naming internal variables/types unless necessary
+- Prefer grouping related changes instead of listing individually
+
+Use bullets to explain:
+- What changed
+- Why it changed
+- Impact or side effects
+
+---
+
 ## Output Format
 
 - Return commits in separate code blocks
-- No explanations unless requested
+- No explanations outside commits
+- Do not describe your reasoning
+- Output only final commit messages
 - Clean spacing between sections
 
 ---
@@ -219,6 +305,7 @@ Prefer:
 - Detect implicit breaking changes
 - Normalize inconsistent terminology
 - Enforce consistent naming across commits
+- Avoid overengineering commit messages when input is already clear
 
 ---
 
