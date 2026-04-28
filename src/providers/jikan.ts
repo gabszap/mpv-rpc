@@ -112,7 +112,9 @@ function isPartOfSameSeason(title: string): boolean {
 
 /**
  * Extract season number from Jikan titles array (synonyms, etc.)
- * Handles patterns like "4th Season", "Season 4", "Part 4", "Cour 2", etc.
+ * Handles patterns like "4th Season", "Season 4", etc.
+ * Note: "Part X" and "Cour X" are sub-season divisions, not season indicators —
+ * they are handled separately by isPartOfSameSeason().
  */
 function extractSeasonFromTitles(titles: any[]): number | null {
     if (!titles || !Array.isArray(titles)) return null;
@@ -120,8 +122,6 @@ function extractSeasonFromTitles(titles: any[]): number | null {
     const seasonPatterns = [
         /(\d+)(?:st|nd|rd|th)\s*season/i,
         /season\s*(\d+)/i,
-        /part\s*(\d+)/i,
-        /cour\s*(\d+)/i,
     ];
 
     for (const entry of titles) {
