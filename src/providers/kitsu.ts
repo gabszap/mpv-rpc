@@ -159,6 +159,7 @@ export class KitsuProvider implements AnimeProvider {
                 title_english: attrs.titles?.en || null,
                 title_romaji: attrs.titles?.en_jp || attrs.canonicalTitle,
                 cover_url: attrs.posterImage?.large || attrs.posterImage?.original || null,
+                total_episodes: attrs.episodeCount || undefined,
             };
         } catch {
             return null;
@@ -287,6 +288,7 @@ export class KitsuProvider implements AnimeProvider {
                             title_english: attrs.titles?.en || null,
                             title_romaji: attrs.titles?.en_jp || attrs.canonicalTitle,
                             cover_url: attrs.posterImage?.large || attrs.posterImage?.original || null,
+                            total_episodes: attrs.episodeCount || undefined,
                             type: attrs.subtype,
                         };
                     }
