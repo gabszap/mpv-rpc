@@ -7,7 +7,7 @@
 import * as net from "net";
 import { config } from "./config";
 import { parseFilename } from "./parser";
-import { getAnimeInfo, getEpisodeTitle } from "./anime";
+import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "./anime";
 import { checkSeriesNameOverride } from "./console";
 
 export interface MpvData {
@@ -25,6 +25,7 @@ export interface MpvData {
     cover_image: string | null;
     mal_id: number | null;        // For MAL sync
     total_episodes: number | null; // For MAL sync (mark as completed)
+    adjusted_episode: number | null;  // Adjusted episode for split cour (null if no overflow)
     imdb_id?: string;            // For Stremio sync
     type?: string;               // For Stremio sync
 }
@@ -244,6 +245,7 @@ export async function getMpvData(): Promise<MpvData | null> {
                 cover_image: null,
                 mal_id: null,
                 total_episodes: null,
+                adjusted_episode: null,
             };
         }
 
@@ -321,6 +323,7 @@ export async function getMpvData(): Promise<MpvData | null> {
         let seriesTitle = parsed.series_title;
         let malId: number | null = null;
         let totalEpisodes: number | null = null;
+        let adjustedEpisode: number | null = null;
         const originalTitle = parsed.series_title; // Keep original for episode lookup
 
         // Check for manual series name override (rename command)
@@ -333,16 +336,41 @@ export async function getMpvData(): Promise<MpvData | null> {
         // The API will return null if the title is not found, so we don't need to filter by media_type
         if (seriesTitle && seriesTitle !== "N/A") {
             try {
-                // Try to get anime info
-                const animeInfo = await getAnimeInfo(seriesTitle, parsed.season);
-                if (animeInfo) {
+                // Try to get anime info with source provider for overflow resolution
+                const animeResult = await getAnimeInfoWithProvider(seriesTitle, parsed.season);
+                if (animeResult) {
+                    const animeInfo = animeResult.animeInfo;
+                    const sourceProvider = animeResult.sourceProvider;
                     coverImage = animeInfo.cover_url;
                     malId = animeInfo.mal_id || null;
                     totalEpisodes = animeInfo.total_episodes || null;
 
-                    // Choose title based on preferred language setting
+                    // Resolve overflow for split cour anime
+                    // When episode > total_episodes, find the correct cour
+                    let overflowResolved = false;
                     const titlePref = config.settings.preferredTitleLanguage;
-                    if (titlePref !== "none" || renameOverride) {
+                    if (parsed.episode && animeInfo.total_episodes && parsed.episode > animeInfo.total_episodes) {
+                        const overflowResult = await resolveOverflowEpisode(animeInfo, parsed.episode, parsed.season, sourceProvider);
+                        if (overflowResult) {
+                            overflowResolved = true;
+                            // Use the resolved cour's info for display and MAL sync
+                            malId = overflowResult.animeInfo.mal_id || null;
+                            totalEpisodes = overflowResult.animeInfo.total_episodes || null;
+                            adjustedEpisode = overflowResult.adjustedEpisode;
+                            // Update display info to show the correct cour
+                            coverImage = overflowResult.animeInfo.cover_url || coverImage;
+                            // Update series title to reflect the resolved cour
+                            if (titlePref === "english") {
+                                seriesTitle = overflowResult.animeInfo.title_english || overflowResult.animeInfo.title_romaji || seriesTitle;
+                            } else {
+                                seriesTitle = overflowResult.animeInfo.title_romaji || overflowResult.animeInfo.title_english || seriesTitle;
+                            }
+                        }
+                    }
+
+                    // Choose title based on preferred language setting
+                    // Skip if overflow resolution already set the title to the correct cour
+                    if (!overflowResolved && (titlePref !== "none" || renameOverride)) {
                         // When rename is active, always use API title (the whole point of rename
                         // is to correct the search, so the API result IS the desired title)
                         const englishTitle = animeInfo.title_english;
@@ -360,9 +388,10 @@ export async function getMpvData(): Promise<MpvData | null> {
                 }
 
                 // Get episode title if not in filename
-                // Use originalTitle to reuse the same cache key
+                // Use override name when available, otherwise original title
                 if (!episodeTitle && parsed.episode) {
-                    const epTitle = await getEpisodeTitle(originalTitle, parsed.season, parsed.episode);
+                    const episodeLookupTitle = renameOverride?.overrideName ?? originalTitle;
+                    const epTitle = await getEpisodeTitle(episodeLookupTitle, parsed.season, parsed.episode);
                     if (epTitle) {
                         episodeTitle = epTitle;
                     }
@@ -387,6 +416,7 @@ export async function getMpvData(): Promise<MpvData | null> {
             cover_image: coverImage,
             mal_id: malId,
             total_episodes: totalEpisodes,
+            adjusted_episode: adjustedEpisode,
         };
     } catch (e) {
         console.error("[MPV] Error getting data:", e);
@@ -403,12 +433,15 @@ export async function updateMpvTitle(data: MpvData): Promise<void> {
 
     let displayTitle = data.series_title;
 
-    if (data.season !== null && data.episode !== null) {
+    // Use adjusted episode for display when overflow is resolved
+    const displayEpisode = data.adjusted_episode ?? data.episode;
+
+    if (data.season !== null && displayEpisode !== null) {
         const s = String(data.season).padStart(2, "0");
-        const e = String(data.episode).padStart(2, "0");
+        const e = String(displayEpisode).padStart(2, "0");
         displayTitle += ` S${s}E${e}`;
-    } else if (data.episode !== null) {
-        displayTitle += ` E${String(data.episode).padStart(2, "0")}`;
+    } else if (displayEpisode !== null) {
+        displayTitle += ` E${String(displayEpisode).padStart(2, "0")}`;
     }
 
     if (data.episode_title) {

@@ -29,6 +29,23 @@ export interface EpisodeLookupContext {
     allowSeasonInference?: boolean;
 }
 
+export interface SequelInfo {
+    id: number;                    // Provider-specific ID
+    mal_id?: number;               // MAL ID (for sync)
+    title_romaji: string;
+    title_english: string | null;
+    total_episodes?: number;       // Episode count of the sequel
+    is_split_cour: boolean;        // true if "Part X"/"Cour X" (same logical season)
+}
+
+export interface OverflowResult {
+    animeInfo: AnimeInfo;         // The resolved anime (may be different from original)
+    adjustedEpisode: number;      // Episode number within the resolved anime
+    originalEpisode: number;      // Original episode number from filename
+    overflowDepth: number;        // How many sequel steps were traversed (0 = no overflow)
+    sourceProvider?: string;      // Name of the provider that returned the final sequel info
+}
+
 export interface AnimeProvider {
     readonly name: string;
 
@@ -56,6 +73,12 @@ export interface AnimeProvider {
      * Find the correct season through relations
      */
     findSeasonAnime(baseId: number, targetSeason: number): Promise<AnimeInfo | null>;
+
+    /**
+     * Get the next sequel in the franchise chain
+     * Returns null if no sequel exists or provider doesn't support sequel traversal
+     */
+    getSequelInfo(animeId: number): Promise<SequelInfo | null>;
 }
 
 interface ProviderErrorLogDetails {

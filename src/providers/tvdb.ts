@@ -7,7 +7,7 @@
 
 import axios from "axios";
 import { formatProviderErrorDetails, logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 import { config } from "../config";
 
 const TVDB_BASE = "https://api4.thetvdb.com/v4";
@@ -759,5 +759,10 @@ export class TvdbProvider implements AnimeProvider {
         // TVDB groups all seasons under one series, so we just return the base series
         // The season info is used when fetching episodes
         return this.getAnimeById(baseId);
+    }
+
+    async getSequelInfo(_animeId: number): Promise<SequelInfo | null> {
+        // TVDB groups all seasons under one series; sequel traversal is not applicable
+        return null;
     }
 }

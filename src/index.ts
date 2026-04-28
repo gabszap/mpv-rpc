@@ -89,17 +89,18 @@ async function update(): Promise<void> {
             }
 
             if (data.mal_id && data.episode) {
+                const syncEpisode = data.adjusted_episode ?? data.episode;
                 const syncStatus = await syncEpisodeDetailed(
                     data.mal_id,
-                    data.episode,
+                    syncEpisode,
                     data.percent_pos,
                     data.total_episodes ?? undefined
                 );
 
-                const syncKey = `${data.filename}:${data.mal_id}:${data.episode}`;
+                const syncKey = `${data.filename}:${data.mal_id}:${syncEpisode}`;
                 const progressLabel = data.total_episodes
-                    ? `${data.episode}/${data.total_episodes}`
-                    : `${data.episode}`;
+                    ? `${syncEpisode}/${data.total_episodes}`
+                    : `${syncEpisode}`;
 
                 if (syncStatus === "updated") {
                     if (lastMalSyncSuccessKey !== syncKey) {

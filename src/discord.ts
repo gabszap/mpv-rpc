@@ -95,12 +95,15 @@ export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}
     // Clean title (remove "- Season X" suffix)
     const cleanTitle = title.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
 
+    // Use adjusted episode for display when overflow is resolved
+    const displayEpisode = data.adjusted_episode ?? data.episode;
+
     // Create episode context for override resolution
     const episodeContext = createEpisodeContext(
         data.filename,
         data.series_title,
         data.season,
-        data.episode
+        displayEpisode
     );
 
     // Resolve episode title with potential manual override
@@ -110,8 +113,8 @@ export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}
     );
 
     let statusLog = `Watching "${cleanTitle}`;
-    if (data.season !== null && data.episode !== null) {
-        statusLog += ` S${String(data.season).padStart(2, "0")}E${String(data.episode).padStart(2, "0")}`;
+    if (data.season !== null && displayEpisode !== null) {
+        statusLog += ` S${String(data.season).padStart(2, "0")}E${String(displayEpisode).padStart(2, "0")}`;
     }
     if (episodeTitle) {
         statusLog += ` - ${episodeTitle}`;
@@ -203,12 +206,15 @@ export async function setActivity(data: MpvData): Promise<void> {
     // Clean title (remove "- Season X" suffix for activity name)
     const cleanTitle = fullTitle.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
 
+    // Use adjusted episode for display when overflow is resolved
+    const displayEpisode = data.adjusted_episode ?? data.episode;
+
     // Create episode context and resolve any manual override
     const episodeContext = createEpisodeContext(
         data.filename,
         data.series_title,
         data.season,
-        data.episode
+        displayEpisode
     );
     const { title: resolvedEpisodeTitle } = resolveDisplayTitle(
         data.episode_title || "",
@@ -221,15 +227,15 @@ export async function setActivity(data: MpvData): Promise<void> {
 
     // When showTitleAsPresence is active, avoid duplicating title (it's already in activity name)
     if (config.settings.showTitleAsPresence) {
-        if (data.season !== null && data.episode !== null) {
+        if (data.season !== null && displayEpisode !== null) {
             // SxEx format
-            details = resolvedEpisodeTitle || `Episode ${data.episode}`;
+            details = resolvedEpisodeTitle || `Episode ${displayEpisode}`;
             state = "on MPV";
-        } else if (data.episode !== null) {
+        } else if (displayEpisode !== null) {
             // Episode only (no season)
             details = resolvedEpisodeTitle
-                ? `Episode ${data.episode} - ${resolvedEpisodeTitle}`
-                : `Episode ${data.episode}`;
+                ? `Episode ${displayEpisode} - ${resolvedEpisodeTitle}`
+                : `Episode ${displayEpisode}`;
             state = "on MPV";
         } else if (resolvedEpisodeTitle) {
             details = resolvedEpisodeTitle;
@@ -238,15 +244,15 @@ export async function setActivity(data: MpvData): Promise<void> {
             details = "on MPV";
             state = "";
         }
-    } else if (data.season !== null && data.episode !== null) {
+    } else if (data.season !== null && displayEpisode !== null) {
         // Discord already shows badge with season/episode, so just show title
         state = resolvedEpisodeTitle || "";
-    } else if (data.episode !== null) {
+    } else if (displayEpisode !== null) {
         // Episode only (no season) - show episode info in state
         if (resolvedEpisodeTitle) {
-            state = `Episode ${data.episode} - ${resolvedEpisodeTitle}`;
+            state = `Episode ${displayEpisode} - ${resolvedEpisodeTitle}`;
         } else {
-            state = `Episode ${data.episode}`;
+            state = `Episode ${displayEpisode}`;
         }
     } else if (resolvedEpisodeTitle) {
         // Only have episode title (no episode number) - show title as state
@@ -262,8 +268,8 @@ export async function setActivity(data: MpvData): Promise<void> {
 
     // Format large image text for Season/Episode badge
     let largeText = "MPV Media Player";
-    if (config.settings.showCover && data.cover_image && data.season !== null && data.episode !== null) {
-        largeText = `Season ${data.season}, Episode ${data.episode}`;
+    if (config.settings.showCover && data.cover_image && data.season !== null && displayEpisode !== null) {
+        largeText = `Season ${data.season}, Episode ${displayEpisode}`;
     }
 
     // Calculate timestamps for progress bar

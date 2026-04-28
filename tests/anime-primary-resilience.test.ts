@@ -124,16 +124,16 @@ describe("Anime provider resilience", () => {
 
         expect(title).toBe("To You, in 2000 Years");
         expect(primaryJikanSearchAnimeMock).toHaveBeenCalledTimes(1);
-        expect(primaryJikanGetEpisodeTitleMock).toHaveBeenCalledWith(
-            202,
-            1,
-            1,
-            expect.objectContaining({
-                searchTitle: "Attack on Titan",
-                allowSeasonInference: true,
-            })
-        );
-        expect(fallbackKitsuSearchAnimeMock).toHaveBeenCalledTimes(2);
+        // When anime info is resolved by a fallback provider (Kitsu),
+        // the source provider is tried first for episode titles.
+        // Since Kitsu succeeds, the primary Jikan provider is NOT called
+        // for getEpisodeTitle — this avoids passing a Kitsu-namespaced ID
+        // to the wrong provider.
+        expect(primaryJikanGetEpisodeTitleMock).not.toHaveBeenCalled();
+        // Kitsu searchAnime is called once (during anime info resolution).
+        // It is NOT called again for episode title lookup because the source
+        // provider (Kitsu) already has the anime ID and calls getEpisodeTitle directly.
+        expect(fallbackKitsuSearchAnimeMock).toHaveBeenCalledTimes(1);
         expect(fallbackKitsuGetEpisodeTitleMock).toHaveBeenCalledWith(
             202,
             1,

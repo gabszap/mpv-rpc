@@ -5,7 +5,7 @@
 import axios from "axios";
 import { config } from "../config";
 import { formatProviderErrorDetails, logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 
 // Rate limiting
 let lastRequestTime = 0;
@@ -392,6 +392,31 @@ export class JikanProvider implements AnimeProvider {
             }
         }
         return null;
+    }
+
+    async getSequelInfo(animeId: number): Promise<SequelInfo | null> {
+        try {
+            const relations = await this.getRelations(animeId);
+            const sequel = this.findSequel(relations);
+            if (!sequel) return null;
+
+            const sequelAnime = await this.getAnimeById(sequel.mal_id);
+            if (!sequelAnime) return null;
+
+            const isSplitCour = isPartOfSameSeason(sequelAnime.title_romaji) ||
+                isPartOfSameSeason(sequelAnime.title_english || "");
+
+            return {
+                id: sequelAnime.id,
+                mal_id: sequelAnime.mal_id,
+                title_romaji: sequelAnime.title_romaji,
+                title_english: sequelAnime.title_english,
+                total_episodes: sequelAnime.total_episodes,
+                is_split_cour: isSplitCour,
+            };
+        } catch {
+            return null;
+        }
     }
 
     private mapSearchResult(anime: any): AnimeSearchResult {

@@ -6,7 +6,7 @@
 import axios from "axios";
 import { formatProviderErrorDetails, logApiCall } from "./types";
 import { config } from "../config";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 
 const ANILIST_API = "https://graphql.anilist.co";
 
@@ -308,6 +308,36 @@ export class AniListProvider implements AnimeProvider {
         }
 
         return this.getAnimeById(lastValidId);
+    }
+
+    async getSequelInfo(animeId: number): Promise<SequelInfo | null> {
+        try {
+            const response = await anilistRequest(GET_BY_ID_QUERY, { id: animeId }, "getSequelInfo");
+            const media = response?.data?.Media;
+            if (!media) return null;
+
+            const sequel = this.findSequel(media.relations?.edges || []);
+            if (!sequel) return null;
+
+            // Get full info for the sequel
+            const sequelResponse = await anilistRequest(GET_BY_ID_QUERY, { id: sequel.id }, "getSequelInfo");
+            const sequelMedia = sequelResponse?.data?.Media;
+            if (!sequelMedia) return null;
+
+            const isSplitCour = isPartOfSameSeason(sequelMedia.title.romaji) ||
+                isPartOfSameSeason(sequelMedia.title.english || "");
+
+            return {
+                id: sequelMedia.id,
+                mal_id: sequelMedia.idMal || undefined,
+                title_romaji: sequelMedia.title.romaji,
+                title_english: sequelMedia.title.english,
+                total_episodes: sequelMedia.episodes || undefined,
+                is_split_cour: isSplitCour,
+            };
+        } catch {
+            return null;
+        }
     }
 
     private findSequel(edges: any[]): { id: number; title: { romaji: string; english: string | null }; format: string } | null {

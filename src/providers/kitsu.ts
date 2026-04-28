@@ -5,7 +5,7 @@
 
 import axios from "axios";
 import { formatProviderErrorDetails, logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext } from "./types";
+import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 import { config } from "../config";
 
 // Extended AnimeInfo with type for internal use
@@ -312,6 +312,27 @@ export class KitsuProvider implements AnimeProvider {
             }
 
             return null;
+        } catch {
+            return null;
+        }
+    }
+
+    async getSequelInfo(animeId: number): Promise<SequelInfo | null> {
+        try {
+            const sequel = await this.getSequel(animeId);
+            if (!sequel) return null;
+
+            const isSplitCour = isPartOfSameSeason(sequel.title_romaji) ||
+                isPartOfSameSeason(sequel.title_english || "");
+
+            return {
+                id: sequel.id,
+                mal_id: sequel.mal_id,
+                title_romaji: sequel.title_romaji,
+                title_english: sequel.title_english,
+                total_episodes: sequel.total_episodes,
+                is_split_cour: isSplitCour,
+            };
         } catch {
             return null;
         }
