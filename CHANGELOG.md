@@ -2,6 +2,22 @@
 
 This file is managed by semantic-release.
 
+## [2.2.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.1.1...mpv-rpc-v2.2.0) (2026-04-28)
+
+### Features
+
+* **anime:** add sequel-aware episode overflow resolution ([c467753](https://github.com/gabszap/mpv-rpc/commit/c4677538157716f38f994c4d579b6922fb00af67))
+* **jikan:** use synonym titles as 2FA for season validation ([0d3330e](https://github.com/gabszap/mpv-rpc/commit/0d3330eca71edef39f6c98d07043b780eaedb0e7))
+
+### Bug Fixes
+
+* **anime:** search with season number before traversing sequel chain ([9c17ba8](https://github.com/gabszap/mpv-rpc/commit/9c17ba81b22e7c6bac319cefa25fe59674e1a42a))
+* **jikan:** remove part/cour patterns from season extraction ([adb17aa](https://github.com/gabszap/mpv-rpc/commit/adb17aa770c3a1f77b16154965672c2e2e6da4d9))
+* **kitsu:** map episodeCount to total_episodes for overflow support ([3f0c1aa](https://github.com/gabszap/mpv-rpc/commit/3f0c1aa0215e4aebb6213e2b560da9414cf0e88e))
+* **parser:** deduplicate torrent_name extraction log and improve cache key ([ebe969b](https://github.com/gabszap/mpv-rpc/commit/ebe969b2c8d00ca11177be7a5afba901f172ead3))
+* **parser:** extract torrent_name from URL query parameters ([cf0aef9](https://github.com/gabszap/mpv-rpc/commit/cf0aef9257e6fc739ce0c808d1af4ee94bef406a))
+* **release:** force LF line endings for changelogs via .gitattributes [skip ci] ([6b15fb1](https://github.com/gabszap/mpv-rpc/commit/6b15fb1d5b462df5de13a8a5b9f5dc7419296464))
+
 ## [2.1.1](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.1.0...mpv-rpc-v2.1.1) (2026-04-25)
 
 ### Bug Fixes
