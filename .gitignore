@@ -8,3 +8,4 @@ scripts/
 .ocx
 .anime_cache/
 bun.lock
+.stremio-mpv-config.json
