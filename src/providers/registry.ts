@@ -7,16 +7,16 @@ export interface FallbackStrategy {
 
 export const DEFAULT_STRATEGY: FallbackStrategy = {
     skipFields: [],
-    useFields: ['title'],
-    descriptionMaxLength: 0
+    useFields: ["title"],
+    descriptionMaxLength: 0,
 };
 
 const EDGE_CASE_PROVIDERS: Record<string, FallbackStrategy> = {
-    'brazucatorrents': {
-        skipFields: ['title', 'filename'],
-        useFields: ['description', 'file_path'],
-        descriptionMaxLength: 60
-    }
+    brazucatorrents: {
+        skipFields: ["title", "filename"],
+        useFields: ["description", "file_path"],
+        descriptionMaxLength: 60,
+    },
 };
 
 export function getFallbackStrategy(providerName: string): FallbackStrategy {

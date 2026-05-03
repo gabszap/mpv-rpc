@@ -2,14 +2,14 @@
  * Anime Metadata Module - Uses configured provider to fetch metadata
  */
 
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { config, type MetadataProvider } from "./config";
-import { JikanProvider } from "./providers/jikan";
 import { AniListProvider } from "./providers/anilist";
+import { JikanProvider } from "./providers/jikan";
 import { KitsuProvider } from "./providers/kitsu";
 import { TvdbProvider } from "./providers/tvdb";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, SequelInfo, OverflowResult } from "./providers/types";
+import type { AnimeInfo, AnimeProvider, AnimeSearchResult, OverflowResult, SequelInfo } from "./providers/types";
 
 // Re-export types for other modules
 export type { AnimeInfo, OverflowResult } from "./providers/types";
@@ -42,10 +42,7 @@ const provider = createProvider(config.metadataProvider);
 
 // Fallback providers for episode titles
 function createFallbackProviders(primaryProviderName: string): AnimeProvider[] {
-    const fallbackCandidates: AnimeProvider[] = [
-        new JikanProvider(),
-        new KitsuProvider(),
-    ];
+    const fallbackCandidates: AnimeProvider[] = [new JikanProvider(), new KitsuProvider()];
 
     if (config.tvdb.apiKey) {
         fallbackCandidates.push(new TvdbProvider());
@@ -85,8 +82,6 @@ const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const NEGATIVE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for not-found results
 const OVERFLOW_CACHE_TTL = 30 * 60 * 1000; // 30 minutes for overflow resolution
 
-
-
 function isCacheEntryValid(entry: CacheEntry, now = Date.now()): boolean {
     const ttl = entry.data === null ? NEGATIVE_CACHE_TTL : CACHE_TTL;
     return now - entry.timestamp < ttl;
@@ -122,7 +117,7 @@ function getProvidersInResolutionOrder(): AnimeProvider[] {
 async function resolveAnimeInfoWithProvider(
     currentProvider: AnimeProvider,
     title: string,
-    season: number | null
+    season: number | null,
 ): Promise<AnimeInfo | null> {
     // When season > 1, try searching with season included first
     // This handles cases where the sequel chain is broken or titles don't have explicit season numbers
@@ -228,7 +223,7 @@ function getCacheKey(title: string, season: number | null): string {
 export function buildFallbackSearchCandidates(
     animeTitle: string,
     season: number | null,
-    animeInfo: Pick<AnimeInfo, "title_romaji" | "title_english">
+    animeInfo: Pick<AnimeInfo, "title_romaji" | "title_english">,
 ): string[] {
     const parsedTitle = animeTitle.trim();
 
@@ -280,8 +275,8 @@ function getOverflowCacheKey(animeId: number, episode: number, providerName?: st
 export async function resolveOverflowEpisode(
     animeInfo: AnimeInfo,
     episode: number,
-    season: number | null,
-    sourceProviderName?: string
+    _season: number | null,
+    sourceProviderName?: string,
 ): Promise<OverflowResult | null> {
     // Can't determine overflow without episode count
     if (!animeInfo.total_episodes || animeInfo.total_episodes <= 0) {
@@ -307,7 +302,7 @@ export async function resolveOverflowEpisode(
     let depth = 0;
     // Seed with the provider that originally resolved the anime info
     let lastSequelProvider: AnimeProvider | null = sourceProviderName
-        ? getProvidersInResolutionOrder().find(p => p.name === sourceProviderName) || null
+        ? getProvidersInResolutionOrder().find((p) => p.name === sourceProviderName) || null
         : null;
 
     while (remainingEpisode > (currentAnime.total_episodes || 0) && depth < MAX_DEPTH) {
@@ -331,14 +326,16 @@ export async function resolveOverflowEpisode(
         if (lastSequelProvider) {
             sequelLookupProviders = [lastSequelProvider];
         } else if (sourceProviderName) {
-            const sourceProvider = getProvidersInResolutionOrder().find(p => p.name === sourceProviderName);
+            const sourceProvider = getProvidersInResolutionOrder().find((p) => p.name === sourceProviderName);
             if (sourceProvider) {
                 sequelLookupProviders = [sourceProvider];
                 lastSequelProvider = sourceProvider;
             } else {
                 // Source provider is known but unavailable — skip cross-provider ID lookup
                 if (config.debug) {
-                    console.log(`[Anime] Overflow resolution: source provider "${sourceProviderName}" is not available, skipping sequel lookup`);
+                    console.log(
+                        `[Anime] Overflow resolution: source provider "${sourceProviderName}" is not available, skipping sequel lookup`,
+                    );
                 }
                 break;
             }
@@ -355,33 +352,37 @@ export async function resolveOverflowEpisode(
                 }
             } catch {
                 if (config.debug) {
-                    console.log(`[Anime] Overflow resolution: ${currentProvider.name} failed to get sequel for ID ${currentAnime.id}`);
+                    console.log(
+                        `[Anime] Overflow resolution: ${currentProvider.name} failed to get sequel for ID ${currentAnime.id}`,
+                    );
                 }
             }
         }
 
         if (!sequelInfo) {
             if (config.debug) {
-                console.log(`[Anime] Overflow resolution: no sequel found for "${currentAnime.title_romaji}" (ID: ${currentAnime.id})`);
+                console.log(
+                    `[Anime] Overflow resolution: no sequel found for "${currentAnime.title_romaji}" (ID: ${currentAnime.id})`,
+                );
             }
             break;
         }
 
         // Subtract current anime's episodes from remaining count
-        remainingEpisode -= (currentAnime.total_episodes || 0);
+        remainingEpisode -= currentAnime.total_episodes || 0;
         depth++;
 
         if (config.debug) {
-            console.log(`[Anime] Overflow resolution: step ${depth}, "${sequelInfo.title_romaji}" (ID: ${sequelInfo.id}), remaining episode: ${remainingEpisode}, is_split_cour: ${sequelInfo.is_split_cour}`);
+            console.log(
+                `[Anime] Overflow resolution: step ${depth}, "${sequelInfo.title_romaji}" (ID: ${sequelInfo.id}), remaining episode: ${remainingEpisode}, is_split_cour: ${sequelInfo.is_split_cour}`,
+            );
         }
 
         // Get full AnimeInfo for the sequel
         // Only use the provider that owns the sequel ID for direct lookups.
         // Other providers would need a title-based search since IDs are provider-specific.
         let sequelAnime: AnimeInfo | null = null;
-        const sequelAnimeProviders = sequelProvider
-            ? [sequelProvider]
-            : getProvidersInResolutionOrder();
+        const sequelAnimeProviders = sequelProvider ? [sequelProvider] : getProvidersInResolutionOrder();
 
         for (const currentProvider of sequelAnimeProviders) {
             try {
@@ -408,7 +409,9 @@ export async function resolveOverflowEpisode(
 
         // If remaining episode fits within this sequel, we found the right cour
         if (currentAnime.total_episodes && remainingEpisode <= currentAnime.total_episodes) {
-            console.log(`[Anime] Overflow resolved: "${animeInfo.title_romaji}" EP ${episode} → "${currentAnime.title_romaji}" EP ${remainingEpisode} (depth: ${depth})`);
+            console.log(
+                `[Anime] Overflow resolved: "${animeInfo.title_romaji}" EP ${episode} → "${currentAnime.title_romaji}" EP ${remainingEpisode} (depth: ${depth})`,
+            );
             const result: OverflowResult = {
                 animeInfo: currentAnime,
                 adjustedEpisode: remainingEpisode,
@@ -423,7 +426,9 @@ export async function resolveOverflowEpisode(
         // If this sequel has no episode count, we can't continue resolving
         if (!currentAnime.total_episodes || currentAnime.total_episodes <= 0) {
             if (config.debug) {
-                console.log(`[Anime] Overflow resolution: sequel "${currentAnime.title_romaji}" has no episode count, stopping`);
+                console.log(
+                    `[Anime] Overflow resolution: sequel "${currentAnime.title_romaji}" has no episode count, stopping`,
+                );
             }
             break;
         }
@@ -433,7 +438,9 @@ export async function resolveOverflowEpisode(
     // Return the last known anime with the remaining episode count
     // This is better than returning null — at least we tried
     if (depth > 0 && remainingEpisode > 0) {
-        console.log(`[Anime] Overflow resolution: could not fully resolve "${animeInfo.title_romaji}" EP ${episode}, best guess: "${currentAnime.title_romaji}" EP ${remainingEpisode}`);
+        console.log(
+            `[Anime] Overflow resolution: could not fully resolve "${animeInfo.title_romaji}" EP ${episode}, best guess: "${currentAnime.title_romaji}" EP ${remainingEpisode}`,
+        );
         const result: OverflowResult = {
             animeInfo: currentAnime,
             adjustedEpisode: remainingEpisode,
@@ -456,10 +463,13 @@ export async function resolveOverflowEpisode(
  * eliminating the race condition that occurs when module-level mutable state
  * is overwritten by concurrent async calls.
  */
-export async function getAnimeInfoWithProvider(title: string, season: number | null = null): Promise<AnimeInfoResult | null> {
+export async function getAnimeInfoWithProvider(
+    title: string,
+    season: number | null = null,
+): Promise<AnimeInfoResult | null> {
     // Don't search for titles that are too short or just contain numbers
     // Minimum 2 words or 10 characters to avoid false matches like "strange" → "Orange"
-    const wordCount = title.split(/\s+/).filter(w => w.length > 0).length;
+    const wordCount = title.split(/\s+/).filter((w) => w.length > 0).length;
     const isValidLength = title.length >= 10 || wordCount >= 2;
     if (!isValidLength || /^[\d.\-_\s]+$/.test(title)) {
         return null;
@@ -544,7 +554,7 @@ export async function getAnimeInfo(title: string, season: number | null = null):
 export async function getEpisodeTitle(
     animeTitle: string,
     season: number | null,
-    episode: number
+    episode: number,
 ): Promise<string | null> {
     try {
         const animeResult = await getAnimeInfoWithProvider(animeTitle, season);
@@ -554,8 +564,8 @@ export async function getEpisodeTitle(
 
         const episodeLookupContext = {
             searchTitle: animeTitle,
-            canonicalTitles: [animeInfo.title_english, animeInfo.title_romaji].filter(
-                (value): value is string => Boolean(value)
+            canonicalTitles: [animeInfo.title_english, animeInfo.title_romaji].filter((value): value is string =>
+                Boolean(value),
             ),
             allowSeasonInference: season === null || season <= 1,
         };
@@ -570,7 +580,7 @@ export async function getEpisodeTitle(
         let title: string | null = null;
         let overflowResult: OverflowResult | null = null;
         const sourceProviderObj = sourceProvider
-            ? getProvidersInResolutionOrder().find(p => p.name === sourceProvider)
+            ? getProvidersInResolutionOrder().find((p) => p.name === sourceProvider)
             : null;
 
         // Only use the provider that owns the anime ID for direct lookups.
@@ -578,7 +588,7 @@ export async function getEpisodeTitle(
         // If the source provider is known but unavailable, skip the direct lookup entirely.
         let episodeProviders: AnimeProvider[];
         if (sourceProviderObj && sourceProviderObj.name !== provider.name) {
-            episodeProviders = [sourceProviderObj];  // Only try the source provider — it owns the ID
+            episodeProviders = [sourceProviderObj]; // Only try the source provider — it owns the ID
         } else if (sourceProvider && !sourceProviderObj) {
             // Source provider is known but unavailable — skip direct ID lookup
             episodeProviders = [];
@@ -592,7 +602,7 @@ export async function getEpisodeTitle(
                     animeInfo.id,
                     episode,
                     season ?? undefined,
-                    episodeLookupContext
+                    episodeLookupContext,
                 );
                 if (title) break;
             } catch {
@@ -610,7 +620,7 @@ export async function getEpisodeTitle(
                 // Other providers would need a title-based search first since IDs are provider-specific.
                 const resolved = overflowResult;
                 const overflowSourceProvider = resolved.sourceProvider
-                    ? getProvidersInResolutionOrder().find(p => p.name === resolved.sourceProvider)
+                    ? getProvidersInResolutionOrder().find((p) => p.name === resolved.sourceProvider)
                     : null;
 
                 const overflowProviders: AnimeProvider[] = overflowSourceProvider
@@ -626,18 +636,22 @@ export async function getEpisodeTitle(
                             overflowAnimeId,
                             overflowEpisode,
                             season ?? undefined,
-                            episodeLookupContext
+                            episodeLookupContext,
                         );
                         if (title) break;
                     } catch {
                         if (config.debug) {
-                            console.log(`[Anime] ${overflowProvider.name} failed while fetching overflow episode title`);
+                            console.log(
+                                `[Anime] ${overflowProvider.name} failed while fetching overflow episode title`,
+                            );
                         }
                     }
                 }
 
                 if (title) {
-                    console.log(`[Anime] Found episode title via overflow resolution: "${overflowResult.animeInfo.title_romaji}" EP ${overflowResult.adjustedEpisode}`);
+                    console.log(
+                        `[Anime] Found episode title via overflow resolution: "${overflowResult.animeInfo.title_romaji}" EP ${overflowResult.adjustedEpisode}`,
+                    );
                     episodeCache.set(episodeCacheKey, title);
                     return title;
                 }
@@ -653,7 +667,9 @@ export async function getEpisodeTitle(
         if (!title && fallbackProviders.length > 0) {
             if (sourceProvider && !sourceProviderObj) {
                 if (config.debug) {
-                    console.log(`[Anime] Skipping fallback episode title lookup — source provider "${sourceProvider}" is unavailable`);
+                    console.log(
+                        `[Anime] Skipping fallback episode title lookup — source provider "${sourceProvider}" is unavailable`,
+                    );
                 }
             } else {
                 console.log(`[Anime] ${provider.name} has no episode data, trying fallbacks...`);
@@ -668,11 +684,15 @@ export async function getEpisodeTitle(
                                 effectiveAnimeInfo.mal_id,
                                 effectiveEpisode,
                                 season ?? undefined,
-                                episodeLookupContext
+                                episodeLookupContext,
                             );
                         } else {
                             // Fallback: search by title if no MAL ID or not Jikan
-                            const searchCandidates = buildFallbackSearchCandidates(animeTitle, season, effectiveAnimeInfo);
+                            const searchCandidates = buildFallbackSearchCandidates(
+                                animeTitle,
+                                season,
+                                effectiveAnimeInfo,
+                            );
 
                             for (const candidate of searchCandidates) {
                                 if (config.debug) {
@@ -684,10 +704,15 @@ export async function getEpisodeTitle(
                                     continue;
                                 }
 
-                                title = await fallback.getEpisodeTitle(searchResult.id, effectiveEpisode, season ?? undefined, {
-                                    ...episodeLookupContext,
-                                    searchTitle: candidate,
-                                });
+                                title = await fallback.getEpisodeTitle(
+                                    searchResult.id,
+                                    effectiveEpisode,
+                                    season ?? undefined,
+                                    {
+                                        ...episodeLookupContext,
+                                        searchTitle: candidate,
+                                    },
+                                );
                                 if (title) {
                                     break;
                                 }

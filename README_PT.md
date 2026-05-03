@@ -412,7 +412,7 @@ O versionamento e as notas de release são gerados a partir de **Conventional Co
 
 ## Contribuindo
 
-Contribuições são bem-vindas. Sinta-se à vontade para abrir issues e pull requests.
+Contribuições são bem-vindas! Consulte o [Guia de Contribuição](CONTRIBUTING.md) para detalhes sobre nosso processo de desenvolvimento e como enviar pull requests.
 
 1. Faça um fork do projeto
 2. Crie sua branch de feature (`git checkout -b feature/RecursoIncrivel`)

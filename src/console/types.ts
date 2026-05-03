@@ -61,7 +61,7 @@ export function createEpisodeContext(
     filename: string,
     seriesName: string,
     season: number | null,
-    episode: number | null
+    episode: number | null,
 ): EpisodeContext | null {
     if (episode === null) {
         return null;
@@ -70,7 +70,7 @@ export function createEpisodeContext(
     // Create a unique ID from season/episode or filename
     let id: string;
     if (season !== null) {
-        id = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+        id = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
     } else {
         // Use filename + episode as fallback
         id = `${filename}:E${episode}`;
@@ -134,4 +134,3 @@ export function checkSeriesNameOverride(currentFilename: string): SeriesNameOver
     }
     return seriesNameOverride;
 }
-

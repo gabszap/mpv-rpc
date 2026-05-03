@@ -3,10 +3,10 @@
  * and triggers the Stremio bridge to fetch the next episodes.
  */
 
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { config } from "./config";
-import { MpvData } from "./mpv";
+import type { MpvData } from "./mpv";
 
 // Shared config file path (same as bridge uses)
 const CONFIG_PATH = path.resolve(__dirname, "..", ".stremio-mpv-config.json");
@@ -120,7 +120,7 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
     }
 
     const stremioMeta = sharedConfig.stremioMeta;
-    if (!stremioMeta || !stremioMeta.imdbId || !stremioMeta.name) {
+    if (!stremioMeta?.imdbId || !stremioMeta.name) {
         console.warn("[AutoFetch] No Stremio metadata in shared config. Skipping auto-fetch.");
         return;
     }
@@ -167,7 +167,7 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
             signal: AbortSignal.timeout(30000),
         });
 
-        const result = await res.json() as { success?: boolean; added?: number; error?: string };
+        const result = (await res.json()) as { success?: boolean; added?: number; error?: string };
         if (result.success) {
             console.log(`[AutoFetch] Added ${result.added} episode(s) to playlist.`);
             lastTriggerKey = triggerKey;

@@ -1628,7 +1628,7 @@
 
             for (const candidate of nameCandidates) {
                 if (!candidate || candidate.length < 2) continue;
-                if (invalidPatterns.some(p => p.test(candidate))) continue;
+                if (invalidPatterns.some((p) => p.test(candidate))) continue;
                 metadata.seriesName = candidate;
                 break;
             }

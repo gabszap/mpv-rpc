@@ -9,13 +9,13 @@
  */
 const GENERIC_TITLES: RegExp[] = [
     /^(video|episode|episodio|episódio|ep|capitulo|capítulo)$/i,
-    /^\d+$/,                        // Just a number like "0", "1", "25"
+    /^\d+$/, // Just a number like "0", "1", "25"
     /^untitled$/i,
     /^(unknown|desconhecido)$/i,
-    /^\s*$/,                        // Empty/whitespace only
+    /^\s*$/, // Empty/whitespace only
     /^(media|arquivo|file)$/i,
-    /^track\s*\d*$/i,               // "Track", "Track 1"
-    /^title\s*\d*$/i,               // "Title", "Title 1"
+    /^track\s*\d*$/i, // "Track", "Track 1"
+    /^title\s*\d*$/i, // "Title", "Title 1"
 ];
 
 /**
@@ -31,18 +31,18 @@ export interface ApiMetadata {
  * Context for fallback resolution
  */
 export interface FallbackContext {
-    filenameTitle: string | null;       // Title parsed from filename
-    apiMetadata: ApiMetadata;           // Metadata from API
-    rawFilename: string | null;         // Original filename (basename without extension)
+    filenameTitle: string | null; // Title parsed from filename
+    apiMetadata: ApiMetadata; // Metadata from API
+    rawFilename: string | null; // Original filename (basename without extension)
 }
 
 /**
  * Strategy for handling edge-case providers
  */
 export interface FallbackStrategy {
-    skipFields: string[];               // Fields to skip (always generic)
-    useFields: string[];                // Fields to prefer
-    descriptionMaxLength: number;       // Max length for description fallback
+    skipFields: string[]; // Fields to skip (always generic)
+    useFields: string[]; // Fields to prefer
+    descriptionMaxLength: number; // Max length for description fallback
 }
 
 /**
@@ -50,7 +50,7 @@ export interface FallbackStrategy {
  */
 const DEFAULT_STRATEGY: FallbackStrategy = {
     skipFields: [],
-    useFields: ['title', 'description'],
+    useFields: ["title", "description"],
     descriptionMaxLength: 50,
 };
 
@@ -58,14 +58,14 @@ const DEFAULT_STRATEGY: FallbackStrategy = {
  * Registry of known problematic providers with custom strategies
  */
 const EDGE_CASE_PROVIDERS: Record<string, FallbackStrategy> = {
-    'brazucatorrents': {
-        skipFields: ['title', 'filename'],
-        useFields: ['description', 'file_path'],
+    brazucatorrents: {
+        skipFields: ["title", "filename"],
+        useFields: ["description", "file_path"],
         descriptionMaxLength: 60,
     },
-    'brazuca': {
-        skipFields: ['title', 'filename'],
-        useFields: ['description', 'file_path'],
+    brazuca: {
+        skipFields: ["title", "filename"],
+        useFields: ["description", "file_path"],
         descriptionMaxLength: 60,
     },
 };
@@ -77,11 +77,11 @@ const EDGE_CASE_PROVIDERS: Record<string, FallbackStrategy> = {
  */
 export function isGenericTitle(title: string | null | undefined): boolean {
     if (!title) return true;
-    
+
     const trimmed = title.trim();
     if (trimmed.length === 0) return true;
-    
-    return GENERIC_TITLES.some(pattern => pattern.test(trimmed));
+
+    return GENERIC_TITLES.some((pattern) => pattern.test(trimmed));
 }
 
 /**
@@ -93,20 +93,20 @@ export function isGenericTitle(title: string | null | undefined): boolean {
 function extractFirstSentence(text: string, maxLength: number): string {
     // Split by sentence-ending punctuation
     const firstSentence = text.split(/[.!?]/)[0].trim();
-    
+
     if (firstSentence.length <= maxLength) {
         return firstSentence;
     }
-    
+
     // Find last word boundary before maxLength
     const truncated = firstSentence.substring(0, maxLength);
-    const lastSpace = truncated.lastIndexOf(' ');
-    
+    const lastSpace = truncated.lastIndexOf(" ");
+
     if (lastSpace > maxLength * 0.5) {
-        return truncated.substring(0, lastSpace) + '...';
+        return `${truncated.substring(0, lastSpace)}...`;
     }
-    
-    return truncated + '...';
+
+    return `${truncated}...`;
 }
 
 /**
@@ -116,74 +116,74 @@ function extractFirstSentence(text: string, maxLength: number): string {
  */
 export function getFallbackStrategy(providerName?: string): FallbackStrategy {
     if (!providerName) return DEFAULT_STRATEGY;
-    
-    const normalized = providerName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const normalized = providerName.toLowerCase().replace(/[^a-z0-9]/g, "");
     return EDGE_CASE_PROVIDERS[normalized] || DEFAULT_STRATEGY;
 }
 
 /**
  * Resolve episode title using fallback chain
- * 
+ *
  * Priority:
  * 1. Parsed filename title (if not generic)
  * 2. API response title field (if not generic)
  * 3. API response description/synopsis (truncated)
  * 4. Raw filename (basename without extension)
  * 5. "Unknown Episode"
- * 
+ *
  * @param context Fallback context with all available data
  * @param providerName Optional provider name for custom strategies
  * @returns Resolved title with source indicator
  */
 export function resolveTitleWithFallback(
     context: FallbackContext,
-    providerName?: string
+    providerName?: string,
 ): { title: string; source: string } {
     const strategy = getFallbackStrategy(providerName);
-    
+
     // Priority 1: Filename title (if not generic)
-    if (!strategy.skipFields.includes('filename') && 
-        context.filenameTitle && 
-        !isGenericTitle(context.filenameTitle)) {
-        return { title: context.filenameTitle, source: 'filename' };
+    if (!strategy.skipFields.includes("filename") && context.filenameTitle && !isGenericTitle(context.filenameTitle)) {
+        return { title: context.filenameTitle, source: "filename" };
     }
-    
+
     // Priority 2: API title (if not generic)
-    if (!strategy.skipFields.includes('title') && 
-        context.apiMetadata.title && 
-        !isGenericTitle(context.apiMetadata.title)) {
-        return { title: context.apiMetadata.title, source: 'api-title' };
+    if (
+        !strategy.skipFields.includes("title") &&
+        context.apiMetadata.title &&
+        !isGenericTitle(context.apiMetadata.title)
+    ) {
+        return { title: context.apiMetadata.title, source: "api-title" };
     }
-    
+
     // Priority 3: Description/synopsis fallback
     const description = context.apiMetadata.description || context.apiMetadata.synopsis;
     if (description && description.trim().length > 0) {
         const truncated = extractFirstSentence(description.trim(), strategy.descriptionMaxLength);
         if (truncated.length > 5 && !isGenericTitle(truncated)) {
-            return { title: truncated, source: 'api-description' };
+            return { title: truncated, source: "api-description" };
         }
     }
-    
+
     // Priority 4: Raw filename
     if (context.rawFilename && context.rawFilename.trim().length > 0) {
         const cleaned = context.rawFilename
-            .replace(/\.[^.]+$/, '')  // Remove extension if present
-            .replace(/[._-]+/g, ' ')  // Replace separators with spaces
+            .replace(/\.[^.]+$/, "") // Remove extension if present
+            .replace(/[._-]+/g, " ") // Replace separators with spaces
             .trim();
-        
+
         if (cleaned.length > 0 && !isGenericTitle(cleaned)) {
-            return { title: cleaned, source: 'raw-filename' };
+            return { title: cleaned, source: "raw-filename" };
         }
     }
-    
+
     // Priority 5: Ultimate fallback
-    return { title: 'Unknown Episode', source: 'fallback' };
+    return { title: "Unknown Episode", source: "fallback" };
 }
 
 /**
  * Resolve episode title with simplified interface
  * Returns just the title string for easy integration
- * 
+ *
  * @param filenameTitle Title from filename parsing
  * @param apiTitle Title from API response
  * @param apiDescription Description from API response (optional)
@@ -194,7 +194,7 @@ export function resolveEpisodeTitle(
     filenameTitle: string | null,
     apiTitle: string | null,
     apiDescription?: string | null,
-    rawFilename?: string | null
+    rawFilename?: string | null,
 ): string {
     const context: FallbackContext = {
         filenameTitle,
@@ -204,13 +204,13 @@ export function resolveEpisodeTitle(
         },
         rawFilename: rawFilename || null,
     };
-    
+
     const result = resolveTitleWithFallback(context);
-    
+
     // Log when fallback is used (for debugging)
-    if (result.source !== 'filename' && result.source !== 'api-title') {
+    if (result.source !== "filename" && result.source !== "api-title") {
         console.log(`[Fallback] Episode title resolved from ${result.source}: "${result.title}"`);
     }
-    
+
     return result.title;
 }

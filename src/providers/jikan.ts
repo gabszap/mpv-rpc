@@ -4,8 +4,8 @@
 
 import axios from "axios";
 import { config } from "../config";
+import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 import { formatProviderErrorDetails, logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 
 // Rate limiting
 let lastRequestTime = 0;
@@ -42,7 +42,7 @@ const circuitBreaker = {
     },
     getRemainingCooldown(): number {
         return Math.max(0, this.cooldown - (Date.now() - this.lastFailure));
-    }
+    },
 };
 
 /**
@@ -57,7 +57,7 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
     const now = Date.now();
     const elapsed = now - lastRequestTime;
     if (elapsed < config.jikan.minRequestInterval) {
-        await new Promise(resolve => setTimeout(resolve, config.jikan.minRequestInterval - elapsed));
+        await new Promise((resolve) => setTimeout(resolve, config.jikan.minRequestInterval - elapsed));
     }
     lastRequestTime = Date.now();
 
@@ -74,13 +74,13 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
             logApiCall("Jikan", endpoint, params, "429 RATE_LIMITED", "retrying in 1s");
             console.log("[Jikan] Rate limited, waiting 1s...");
             circuitBreaker.recordFailure();
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
             return jikanRequest(endpoint, params, retryCount);
         }
 
         if ((e.code === "ECONNABORTED" || e.code === "ETIMEDOUT") && retryCount < 3) {
             logApiCall("Jikan", endpoint, params, "TIMEOUT", `retrying... (attempt ${retryCount + 2}/4)`);
-            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))); // Exponential backoff
+            await new Promise((resolve) => setTimeout(resolve, 1000 * (retryCount + 1))); // Exponential backoff
             return jikanRequest(endpoint, params, retryCount + 1);
         }
 
@@ -94,10 +94,7 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
 }
 
 function extractSeasonNumber(title: string): number | null {
-    const patterns = [
-        /(?:season|s)\s*(\d+)/i,
-        /(\d+)(?:st|nd|rd|th)\s*season/i,
-    ];
+    const patterns = [/(?:season|s)\s*(\d+)/i, /(\d+)(?:st|nd|rd|th)\s*season/i];
     for (const pattern of patterns) {
         const match = title.match(pattern);
         if (match) return parseInt(match[1], 10);
@@ -107,7 +104,7 @@ function extractSeasonNumber(title: string): number | null {
 
 function isPartOfSameSeason(title: string): boolean {
     const partPatterns = [/\bpart\s*\d+/i, /\bcour\s*\d+/i];
-    return partPatterns.some(p => p.test(title));
+    return partPatterns.some((p) => p.test(title));
 }
 
 /**
@@ -119,10 +116,7 @@ function isPartOfSameSeason(title: string): boolean {
 function extractSeasonFromTitles(titles: any[]): number | null {
     if (!titles || !Array.isArray(titles)) return null;
 
-    const seasonPatterns = [
-        /(\d+)(?:st|nd|rd|th)\s*season/i,
-        /season\s*(\d+)/i,
-    ];
+    const seasonPatterns = [/(\d+)(?:st|nd|rd|th)\s*season/i, /season\s*(\d+)/i];
 
     for (const entry of titles) {
         const title = entry?.title || entry;
@@ -145,8 +139,8 @@ function extractSeasonFromTitles(titles: any[]): number | null {
 function normalizeForComparison(title: string): string {
     return title
         .toLowerCase()
-        .replace(/[\/\-_.:]+/g, " ")  // Replace special chars with space
-        .replace(/\s+/g, " ")          // Collapse multiple spaces
+        .replace(/[/\-_.:]+/g, " ") // Replace special chars with space
+        .replace(/\s+/g, " ") // Collapse multiple spaces
         .trim();
 }
 
@@ -172,11 +166,11 @@ function calculateTitleScore(query: string, animeTitle: string, englishTitle: st
     }
 
     // Contains all words from query (medium priority)
-    const queryWords = normalizedQuery.split(" ").filter(w => w.length > 1);
+    const queryWords = normalizedQuery.split(" ").filter((w) => w.length > 1);
     const titleWords = `${normalizedRomaji} ${normalizedEnglish}`;
-    const matchedWords = queryWords.filter(w => titleWords.includes(w));
+    const matchedWords = queryWords.filter((w) => titleWords.includes(w));
     if (matchedWords.length === queryWords.length) {
-        score += 300 + (matchedWords.length * 50);
+        score += 300 + matchedWords.length * 50;
     } else {
         // Partial word match
         score += matchedWords.length * 30;
@@ -256,7 +250,13 @@ export class JikanProvider implements AnimeProvider {
                     const synonymSeason = extractSeasonFromTitles(anime.titles || []);
                     if (synonymSeason === expectedSeason) {
                         score += 2000;
-                        logApiCall("Jikan", "/anime", { q: title }, "DETAIL", `Synonym match: "${anime.title}" has season ${synonymSeason} in titles`);
+                        logApiCall(
+                            "Jikan",
+                            "/anime",
+                            { q: title },
+                            "DETAIL",
+                            `Synonym match: "${anime.title}" has season ${synonymSeason} in titles`,
+                        );
                     }
                 }
 
@@ -275,7 +275,13 @@ export class JikanProvider implements AnimeProvider {
 
             const selected = scoredCandidates[0].anime;
             const selectedScore = scoredCandidates[0].score;
-            logApiCall("Jikan", "/anime", { q: title }, "DETAIL", `"${selected.title}" (MAL:${selected.mal_id}) [score:${selectedScore}]`);
+            logApiCall(
+                "Jikan",
+                "/anime",
+                { q: title },
+                "DETAIL",
+                `"${selected.title}" (MAL:${selected.mal_id}) [score:${selectedScore}]`,
+            );
             return this.mapSearchResult(selected);
         } catch (e) {
             console.error(`[Jikan] Search error: ${formatCompactJikanError(e)}`);
@@ -289,7 +295,13 @@ export class JikanProvider implements AnimeProvider {
             const anime = response.data;
             if (!anime) return null;
 
-            logApiCall("Jikan", `/anime/${id}`, {}, "DETAIL", `"${anime.title_english || anime.title}" (${anime.type})`);
+            logApiCall(
+                "Jikan",
+                `/anime/${id}`,
+                {},
+                "DETAIL",
+                `"${anime.title_english || anime.title}" (${anime.type})`,
+            );
 
             return {
                 id: anime.mal_id,
@@ -308,7 +320,7 @@ export class JikanProvider implements AnimeProvider {
         animeId: number,
         episode: number,
         _season?: number,
-        _context?: EpisodeLookupContext
+        _context?: EpisodeLookupContext,
     ): Promise<string | null> {
         try {
             const response = await jikanRequest(`/anime/${animeId}/episodes/${episode}`);
@@ -351,15 +363,15 @@ export class JikanProvider implements AnimeProvider {
             currentId = sequelAnime.id;
             lastValidId = currentId;
 
-            const seasonInTitle = extractSeasonNumber(sequelAnime.title_romaji) ||
-                extractSeasonNumber(sequelAnime.title_english || "");
+            const seasonInTitle =
+                extractSeasonNumber(sequelAnime.title_romaji) || extractSeasonNumber(sequelAnime.title_english || "");
             if (seasonInTitle === targetSeason) {
                 return sequelAnime;
             }
 
             // Check if this is a new season or just a "Part"
-            const isPart = isPartOfSameSeason(sequelAnime.title_romaji) ||
-                isPartOfSameSeason(sequelAnime.title_english || "");
+            const isPart =
+                isPartOfSameSeason(sequelAnime.title_romaji) || isPartOfSameSeason(sequelAnime.title_english || "");
             if (!isPart) {
                 currentSeason++;
             }
@@ -385,8 +397,8 @@ export class JikanProvider implements AnimeProvider {
                 if (tvEntry) return tvEntry;
 
                 // Fallback to any anime
-                const anyEntry = relation.entry?.find((e: any) =>
-                    e.type === "Movie" || e.type === "OVA" || e.type === "anime"
+                const anyEntry = relation.entry?.find(
+                    (e: any) => e.type === "Movie" || e.type === "OVA" || e.type === "anime",
                 );
                 if (anyEntry) return anyEntry;
             }
@@ -403,8 +415,8 @@ export class JikanProvider implements AnimeProvider {
             const sequelAnime = await this.getAnimeById(sequel.mal_id);
             if (!sequelAnime) return null;
 
-            const isSplitCour = isPartOfSameSeason(sequelAnime.title_romaji) ||
-                isPartOfSameSeason(sequelAnime.title_english || "");
+            const isSplitCour =
+                isPartOfSameSeason(sequelAnime.title_romaji) || isPartOfSameSeason(sequelAnime.title_english || "");
 
             return {
                 id: sequelAnime.id,

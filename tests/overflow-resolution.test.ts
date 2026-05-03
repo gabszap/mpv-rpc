@@ -1,6 +1,6 @@
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const primaryJikanGetSequelInfoMock = vi.fn();
@@ -170,10 +170,10 @@ describe("resolveOverflowEpisode", () => {
         const result = await resolveOverflowEpisode(animeInfo, 12, 2);
 
         expect(result).not.toBeNull();
-        expect(result!.animeInfo.id).toBe(2);
-        expect(result!.adjustedEpisode).toBe(1);
-        expect(result!.originalEpisode).toBe(12);
-        expect(result!.overflowDepth).toBe(1);
+        expect(result?.animeInfo.id).toBe(2);
+        expect(result?.adjustedEpisode).toBe(1);
+        expect(result?.originalEpisode).toBe(12);
+        expect(result?.overflowDepth).toBe(1);
     });
 
     it("resolves multi-cour overflow: EP 23 across 11+11 episode cours → third cour EP 1", async () => {
@@ -226,10 +226,10 @@ describe("resolveOverflowEpisode", () => {
         const result = await resolveOverflowEpisode(animeInfo, 23, 1);
 
         expect(result).not.toBeNull();
-        expect(result!.animeInfo.id).toBe(3);
-        expect(result!.adjustedEpisode).toBe(1);
-        expect(result!.originalEpisode).toBe(23);
-        expect(result!.overflowDepth).toBe(2);
+        expect(result?.animeInfo.id).toBe(3);
+        expect(result?.adjustedEpisode).toBe(1);
+        expect(result?.originalEpisode).toBe(23);
+        expect(result?.overflowDepth).toBe(2);
     });
 
     it("stops when cycle detected in sequel chain", async () => {
@@ -287,10 +287,10 @@ describe("resolveOverflowEpisode", () => {
         const result = await resolveOverflowEpisode(animeInfo, 35, 1);
 
         expect(result).not.toBeNull();
-        expect(result!.animeInfo.id).toBe(1);
-        expect(result!.adjustedEpisode).toBe(13);
-        expect(result!.originalEpisode).toBe(35);
-        expect(result!.overflowDepth).toBe(2);
+        expect(result?.animeInfo.id).toBe(1);
+        expect(result?.adjustedEpisode).toBe(13);
+        expect(result?.originalEpisode).toBe(35);
+        expect(result?.overflowDepth).toBe(2);
     });
 
     it("stops after max depth of 5", async () => {
@@ -331,12 +331,12 @@ describe("resolveOverflowEpisode", () => {
         const result = await resolveOverflowEpisode(animeInfo, 65, 1);
 
         expect(result).not.toBeNull();
-        expect(result!.animeInfo.id).toBe(6);
-        expect(result!.overflowDepth).toBe(5);
-        expect(result!.originalEpisode).toBe(65);
+        expect(result?.animeInfo.id).toBe(6);
+        expect(result?.overflowDepth).toBe(5);
+        expect(result?.originalEpisode).toBe(65);
         // remaining = 65 - (10 * 5) = 15, but anime 6 has 10 episodes
         // So it's a best guess: anime 6, EP 15
-        expect(result!.adjustedEpisode).toBe(15);
+        expect(result?.adjustedEpisode).toBe(15);
     });
 
     it("returns null when no sequel exists", async () => {
@@ -388,10 +388,10 @@ describe("resolveOverflowEpisode", () => {
         const result = await resolveOverflowEpisode(animeInfo, 12, 2);
 
         expect(result).not.toBeNull();
-        expect(result!.animeInfo.id).toBe(2);
-        expect(result!.adjustedEpisode).toBe(1);
-        expect(result!.originalEpisode).toBe(12);
-        expect(result!.overflowDepth).toBe(1);
+        expect(result?.animeInfo.id).toBe(2);
+        expect(result?.adjustedEpisode).toBe(1);
+        expect(result?.originalEpisode).toBe(12);
+        expect(result?.overflowDepth).toBe(1);
     });
 
     it("seeds sequel lookup with sourceProviderName, preferring that provider first", async () => {
@@ -427,8 +427,8 @@ describe("resolveOverflowEpisode", () => {
         const result = await resolveOverflowEpisode(animeInfo, 12, 2, "kitsu");
 
         expect(result).not.toBeNull();
-        expect(result!.animeInfo.id).toBe(2);
-        expect(result!.adjustedEpisode).toBe(1);
+        expect(result?.animeInfo.id).toBe(2);
+        expect(result?.adjustedEpisode).toBe(1);
         // The kitsu provider should have been called for getSequelInfo
         expect(kitsuGetSequelInfoMock).toHaveBeenCalledWith(1);
         // Jikan should NOT have been called for getSequelInfo since kitsu succeeded first
@@ -466,7 +466,7 @@ describe("resolveOverflowEpisode", () => {
 
         const resultJikan = await resolveOverflowEpisode(animeInfo, 12, 2, "jikan");
         expect(resultJikan).not.toBeNull();
-        expect(resultJikan!.sourceProvider).toBe("jikan");
+        expect(resultJikan?.sourceProvider).toBe("jikan");
 
         // Second call with sourceProviderName="kitsu" — should NOT return the
         // cached jikan result because the cache key includes the provider name.
@@ -492,7 +492,7 @@ describe("resolveOverflowEpisode", () => {
         expect(resultKitsu).not.toBeNull();
         // The kitsu result should have a different anime ID (3 vs 2)
         // proving the cache didn't return the jikan result
-        expect(resultKitsu!.animeInfo.id).toBe(3);
-        expect(resultKitsu!.sourceProvider).toBe("kitsu");
+        expect(resultKitsu?.animeInfo.id).toBe(3);
+        expect(resultKitsu?.sourceProvider).toBe("kitsu");
     });
 });

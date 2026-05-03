@@ -1,23 +1,23 @@
 /**
  * Console REPL - Interactive command interface for manual title override
- * 
+ *
  * Provides real-time manual title corrections that auto-expire when episode changes.
  */
 
-import * as readline from 'readline';
-import { EventEmitter } from 'events';
+import { EventEmitter } from "node:events";
+import * as readline from "node:readline";
+import { providerName } from "../anime";
 import {
-    EpisodeContext,
-    ManualOverride,
-    SeriesNameOverride,
-    getManualOverride,
-    setManualOverride,
     clearManualOverride,
-    setSeriesNameOverride,
-    getSeriesNameOverride,
     clearSeriesNameOverride,
-} from './types';
-import { providerName } from '../anime';
+    type EpisodeContext,
+    getManualOverride,
+    getSeriesNameOverride,
+    type ManualOverride,
+    type SeriesNameOverride,
+    setManualOverride,
+    setSeriesNameOverride,
+} from "./types";
 
 /**
  * Console REPL for manual title override commands
@@ -30,17 +30,17 @@ export class ConsoleRepl extends EventEmitter {
 
     constructor() {
         super();
-        
+
         this.rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout,
-            prompt: 'mpv-rpc> ',
+            prompt: "mpv-rpc> ",
         });
 
-        this.rl.on('line', this.handleCommand.bind(this));
-        this.rl.on('close', () => {
+        this.rl.on("line", this.handleCommand.bind(this));
+        this.rl.on("close", () => {
             // Handle Ctrl+C gracefully
-            this.emit('exit');
+            this.emit("exit");
         });
 
         // Don't show prompt immediately - wait for first update
@@ -61,9 +61,11 @@ export class ConsoleRepl extends EventEmitter {
         if (previousContext && context && previousContext.id !== context.id) {
             const override = getManualOverride();
             if (override) {
-                console.log(`\n[System] Episode changed (${previousContext.id} → ${context.id}). Override auto-cleared.`);
+                console.log(
+                    `\n[System] Episode changed (${previousContext.id} → ${context.id}). Override auto-cleared.`,
+                );
                 clearManualOverride();
-                this.emit('overrideCleared');
+                this.emit("overrideCleared");
             }
         }
 
@@ -80,7 +82,7 @@ export class ConsoleRepl extends EventEmitter {
      */
     private handleCommand(input: string): void {
         const trimmed = input.trim();
-        
+
         if (!trimmed) {
             this.rl.prompt();
             return;
@@ -98,18 +100,18 @@ export class ConsoleRepl extends EventEmitter {
             this.handleRename(renameMatch[1]);
         } else {
             switch (command) {
-                case 'clear':
+                case "clear":
                     this.handleClear();
                     break;
-                case 'status':
+                case "status":
                     this.handleStatus();
                     break;
-                case 'help':
-                case '?':
+                case "help":
+                case "?":
                     this.handleHelp();
                     break;
-                case 'exit':
-                case 'quit':
+                case "exit":
+                case "quit":
                     this.handleExit();
                     break;
                 default:
@@ -130,7 +132,7 @@ export class ConsoleRepl extends EventEmitter {
         }
 
         if (!this.currentContext) {
-            console.log('[Error] No episode currently playing');
+            console.log("[Error] No episode currently playing");
             return;
         }
 
@@ -143,7 +145,7 @@ export class ConsoleRepl extends EventEmitter {
         setManualOverride(override);
         console.log(`[Manual] Title set to: "${title}"`);
         console.log(`[Manual] Active for episode: ${this.currentContext.id}`);
-        this.emit('overrideSet', override);
+        this.emit("overrideSet", override);
     }
 
     /**
@@ -156,7 +158,7 @@ export class ConsoleRepl extends EventEmitter {
         }
 
         if (!this.currentContext) {
-            console.log('[Error] No episode currently playing');
+            console.log("[Error] No episode currently playing");
             return;
         }
 
@@ -169,7 +171,7 @@ export class ConsoleRepl extends EventEmitter {
         setSeriesNameOverride(override);
         console.log(`[Manual] Series name set to: "${name}"`);
         console.log(`[Manual] Will re-search metadata with this name`);
-        this.emit('renameSet', override);
+        this.emit("renameSet", override);
     }
 
     /**
@@ -178,19 +180,19 @@ export class ConsoleRepl extends EventEmitter {
     private handleClear(): void {
         const override = getManualOverride();
         const rename = getSeriesNameOverride();
-        
+
         if (override) {
             clearManualOverride();
-            console.log('[Manual] Episode title override cleared');
-            this.emit('overrideCleared');
+            console.log("[Manual] Episode title override cleared");
+            this.emit("overrideCleared");
         }
         if (rename) {
             clearSeriesNameOverride();
-            console.log('[Manual] Series name override cleared');
-            this.emit('renameCleared');
+            console.log("[Manual] Series name override cleared");
+            this.emit("renameCleared");
         }
         if (!override && !rename) {
-            console.log('[Manual] No active override to clear');
+            console.log("[Manual] No active override to clear");
         }
     }
 
@@ -198,8 +200,8 @@ export class ConsoleRepl extends EventEmitter {
      * Handle 'status' command - show current state
      */
     private handleStatus(): void {
-        console.log('\n--- Status ---');
-        
+        console.log("\n--- Status ---");
+
         // Current episode
         if (this.currentContext) {
             console.log(`Current Episode: ${this.currentContext.id}`);
@@ -209,7 +211,7 @@ export class ConsoleRepl extends EventEmitter {
             }
             console.log(`  Episode: ${this.currentContext.episodeNumber}`);
         } else {
-            console.log('Current Episode: None playing');
+            console.log("Current Episode: None playing");
         }
 
         // Override status
@@ -220,7 +222,7 @@ export class ConsoleRepl extends EventEmitter {
             console.log(`  For Episode: ${override.context.id}`);
             console.log(`  Set At: ${override.timestamp.toLocaleTimeString()}`);
         } else {
-            console.log('\nEpisode Title Override: None');
+            console.log("\nEpisode Title Override: None");
         }
 
         // Rename status
@@ -230,35 +232,35 @@ export class ConsoleRepl extends EventEmitter {
             console.log(`  Name: "${rename.overrideName}"`);
             console.log(`  Set At: ${rename.timestamp.toLocaleTimeString()}`);
         } else {
-            console.log('\nSeries Name Override: None');
+            console.log("\nSeries Name Override: None");
         }
 
         // Provider info
         console.log(`\nMetadata Provider: ${providerName}`);
-        console.log('--------------\n');
+        console.log("--------------\n");
     }
 
     /**
      * Handle 'help' command - show available commands
      */
     private handleHelp(): void {
-        console.log('\n--- Available Commands ---');
+        console.log("\n--- Available Commands ---");
         console.log('  set "<title>"     - Override the current episode title');
         console.log('  rename "<name>"   - Override the series name (for metadata search)');
-        console.log('  clear             - Remove all active overrides');
-        console.log('  status            - Display current state and override info');
-        console.log('  help              - Show this help message');
-        console.log('  exit              - Quit the application');
-        console.log('--------------------------\n');
+        console.log("  clear             - Remove all active overrides");
+        console.log("  status            - Display current state and override info");
+        console.log("  help              - Show this help message");
+        console.log("  exit              - Quit the application");
+        console.log("--------------------------\n");
     }
 
     /**
      * Handle 'exit' command - graceful shutdown
      */
     private handleExit(): void {
-        console.log('[System] Exiting...');
+        console.log("[System] Exiting...");
         this.rl.close();
-        this.emit('exit');
+        this.emit("exit");
     }
 
     /**
@@ -274,7 +276,7 @@ export class ConsoleRepl extends EventEmitter {
  */
 export function resolveDisplayTitle(
     autoTitle: string,
-    episodeContext: EpisodeContext | null
+    episodeContext: EpisodeContext | null,
 ): { title: string; isOverride: boolean } {
     const override = getManualOverride();
 
@@ -287,7 +289,9 @@ export function resolveDisplayTitle(
             };
         } else {
             // Episode changed - invalidate override
-            console.log(`[System] Episode changed (${override.context.id} → ${episodeContext.id}). Override auto-cleared.`);
+            console.log(
+                `[System] Episode changed (${override.context.id} → ${episodeContext.id}). Override auto-cleared.`,
+            );
             clearManualOverride();
         }
     }

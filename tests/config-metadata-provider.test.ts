@@ -35,8 +35,6 @@ describe("config metadata provider parsing", () => {
         const { config } = await import("../src/config");
 
         expect(config.metadataProvider).toBe("jikan");
-        expect(warnSpy).toHaveBeenCalledWith(
-            "[Config] Invalid METADATA_PROVIDER \"mal\". Falling back to \"jikan\"."
-        );
+        expect(warnSpy).toHaveBeenCalledWith('[Config] Invalid METADATA_PROVIDER "mal". Falling back to "jikan".');
     });
 });

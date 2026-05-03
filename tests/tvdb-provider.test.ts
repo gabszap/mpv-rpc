@@ -125,7 +125,12 @@ describe("TvdbProvider.getEpisodeTitle", () => {
         axiosGetMock.mockImplementation(async (url: string, options?: { params?: Record<string, unknown> }) => {
             const params = options?.params ?? {};
 
-            if (url.endsWith("/series/42/episodes/official") && params.page === 0 && params.season === 3 && params.episodeNumber === 2) {
+            if (
+                url.endsWith("/series/42/episodes/official") &&
+                params.page === 0 &&
+                params.season === 3 &&
+                params.episodeNumber === 2
+            ) {
                 return {
                     data: {
                         data: {
@@ -135,7 +140,12 @@ describe("TvdbProvider.getEpisodeTitle", () => {
                 };
             }
 
-            if (url.endsWith("/series/42/episodes/official") && params.page === 0 && params.season === 3 && !("episodeNumber" in params)) {
+            if (
+                url.endsWith("/series/42/episodes/official") &&
+                params.page === 0 &&
+                params.season === 3 &&
+                !("episodeNumber" in params)
+            ) {
                 return {
                     data: {
                         data: {
@@ -145,7 +155,12 @@ describe("TvdbProvider.getEpisodeTitle", () => {
                 };
             }
 
-            if (url.endsWith("/series/42/episodes/default") && params.page === 0 && params.season === 3 && params.episodeNumber === 2) {
+            if (
+                url.endsWith("/series/42/episodes/default") &&
+                params.page === 0 &&
+                params.season === 3 &&
+                params.episodeNumber === 2
+            ) {
                 return {
                     data: {
                         data: {
@@ -196,9 +211,7 @@ describe("TvdbProvider.getEpisodeTitle", () => {
                 return {
                     data: {
                         data: {
-                            episodes: [
-                                { id: "3002", seasonNumber: "3", number: "2", name: "Future Whereabouts" },
-                            ],
+                            episodes: [{ id: "3002", seasonNumber: "3", number: "2", name: "Future Whereabouts" }],
                         },
                     },
                 };
@@ -218,10 +231,11 @@ describe("TvdbProvider.getEpisodeTitle", () => {
 
         expect(title).toBe("Future Whereabouts");
         expect(
-            axiosGetMock.mock.calls.some(([url, options]) =>
-                String(url).includes("/series/42/episodes/official")
-                && (options?.params as Record<string, unknown> | undefined)?.season === 1
-            )
+            axiosGetMock.mock.calls.some(
+                ([url, options]) =>
+                    String(url).includes("/series/42/episodes/official") &&
+                    (options?.params as Record<string, unknown> | undefined)?.season === 1,
+            ),
         ).toBe(false);
     });
 
@@ -239,9 +253,7 @@ describe("TvdbProvider.getEpisodeTitle", () => {
                 return {
                     data: {
                         data: {
-                            episodes: [
-                                { id: "3002", seasonNumber: "3", number: "2", name: "Explicit Season Match" },
-                            ],
+                            episodes: [{ id: "3002", seasonNumber: "3", number: "2", name: "Explicit Season Match" }],
                         },
                     },
                 };

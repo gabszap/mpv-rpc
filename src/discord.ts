@@ -4,9 +4,9 @@
 
 import { Client } from "@xhayper/discord-rpc";
 import { config } from "./config";
-import type { MpvData } from "./mpv";
+import { createEpisodeContext, resolveDisplayTitle } from "./console";
 import { ActivityType, Assets } from "./functions/types";
-import { resolveDisplayTitle, createEpisodeContext } from "./console";
+import type { MpvData } from "./mpv";
 
 let client: Client | null = null;
 let isConnected = false;
@@ -36,7 +36,7 @@ export async function connect(): Promise<boolean> {
         await client.login();
 
         // Wait a bit for connection
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         return isConnected;
     } catch (e) {
@@ -53,7 +53,7 @@ export async function disconnect(): Promise<void> {
     if (client) {
         try {
             await client.destroy();
-        } catch (e) {
+        } catch (_e) {
             // Ignore errors on disconnect
         }
         client = null;
@@ -99,18 +99,10 @@ export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}
     const displayEpisode = data.adjusted_episode ?? data.episode;
 
     // Create episode context for override resolution
-    const episodeContext = createEpisodeContext(
-        data.filename,
-        data.series_title,
-        data.season,
-        displayEpisode
-    );
+    const episodeContext = createEpisodeContext(data.filename, data.series_title, data.season, displayEpisode);
 
     // Resolve episode title with potential manual override
-    const { title: episodeTitle, isOverride } = resolveDisplayTitle(
-        data.episode_title || "",
-        episodeContext
-    );
+    const { title: episodeTitle, isOverride } = resolveDisplayTitle(data.episode_title || "", episodeContext);
 
     let statusLog = `Watching "${cleanTitle}`;
     if (data.season !== null && displayEpisode !== null) {
@@ -144,7 +136,7 @@ export async function setActivity(data: MpvData): Promise<void> {
     // Privacy Mode
     if (config.settings.privacyMode) {
         try {
-            await client!.user?.setActivity({
+            await client?.user?.setActivity({
                 type: ActivityType.Playing,
                 details: "Watching something",
                 largeImageKey: config.mpvIcon,
@@ -165,7 +157,7 @@ export async function setActivity(data: MpvData): Promise<void> {
         }
 
         try {
-            await client!.user?.setActivity({
+            await client?.user?.setActivity({
                 type: ActivityType.Playing,
                 details: "Idling...",
                 state: "No media playing",
@@ -190,7 +182,7 @@ export async function setActivity(data: MpvData): Promise<void> {
             return;
         }
         try {
-            await client!.user?.setActivity({
+            await client?.user?.setActivity({
                 type: ActivityType.Playing,
                 details: "Watching something...",
                 state: "Unknown media",
@@ -210,16 +202,8 @@ export async function setActivity(data: MpvData): Promise<void> {
     const displayEpisode = data.adjusted_episode ?? data.episode;
 
     // Create episode context and resolve any manual override
-    const episodeContext = createEpisodeContext(
-        data.filename,
-        data.series_title,
-        data.season,
-        displayEpisode
-    );
-    const { title: resolvedEpisodeTitle } = resolveDisplayTitle(
-        data.episode_title || "",
-        episodeContext
-    );
+    const episodeContext = createEpisodeContext(data.filename, data.series_title, data.season, displayEpisode);
+    const { title: resolvedEpisodeTitle } = resolveDisplayTitle(data.episode_title || "", episodeContext);
 
     // Build state string
     let state = "";
@@ -281,7 +265,7 @@ export async function setActivity(data: MpvData): Promise<void> {
     const activityName = config.settings.showTitleAsPresence ? cleanTitle : undefined;
 
     try {
-        await client!.user?.setActivity({
+        await client?.user?.setActivity({
             type: ActivityType.Watching,
             name: activityName,
             details,

@@ -1,39 +1,38 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as sync from '../src/mal-sync/sync';
-import * as api from '../src/mal-sync/api';
-import * as auth from '../src/mal-sync/auth';
-import { config } from '../src/config';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as api from "../src/mal-sync/api";
+import * as auth from "../src/mal-sync/auth";
+import * as sync from "../src/mal-sync/sync";
 
 // Mock dependencies
-vi.mock('../src/mal-sync/api', () => ({
+vi.mock("../src/mal-sync/api", () => ({
     updateWatchedEpisodes: vi.fn(),
     getWatchStatus: vi.fn(),
 }));
 
-vi.mock('../src/mal-sync/auth', () => ({
+vi.mock("../src/mal-sync/auth", () => ({
     isAuthenticated: vi.fn(),
 }));
 
 // Mock config
-vi.mock('../src/config', () => ({
+vi.mock("../src/config", () => ({
     config: {
         mal: {
             enabled: true,
             syncThreshold: 90,
-        }
-    }
+        },
+    },
 }));
 
-describe('MAL Sync Logic', () => {
+describe("MAL Sync Logic", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        // Reset internal state of sync module if possible, 
+        // Reset internal state of sync module if possible,
         // since Map objects are module-level constants we might need to be careful
         // or just accept that tests might be slightly dependent if we don't reload.
         // For these tests, we can use different malIds to avoid conflict.
     });
 
-    it('should sync a new episode successfully', async () => {
+    it("should sync a new episode successfully", async () => {
         const malId = 123;
         const episode = 1;
 
@@ -47,7 +46,7 @@ describe('MAL Sync Logic', () => {
         expect(api.updateWatchedEpisodes).toHaveBeenCalledWith(malId, episode, undefined);
     });
 
-    it('should NOT sync again if episode hasn\'t changed (prevention of spam)', async () => {
+    it("should NOT sync again if episode hasn't changed (prevention of spam)", async () => {
         const malId = 456;
         const episode = 2;
 
@@ -66,7 +65,7 @@ describe('MAL Sync Logic', () => {
         expect(api.updateWatchedEpisodes).toHaveBeenCalledTimes(1); // Still 1
     });
 
-    it('should sync immediately if episode increases', async () => {
+    it("should sync immediately if episode increases", async () => {
         const malId = 789;
 
         vi.mocked(auth.isAuthenticated).mockReturnValue(true);
@@ -83,13 +82,13 @@ describe('MAL Sync Logic', () => {
         expect(api.updateWatchedEpisodes).toHaveBeenCalledTimes(2);
     });
 
-    it('should NOT sync if percentage is below threshold', async () => {
+    it("should NOT sync if percentage is below threshold", async () => {
         const result = await sync.syncEpisode(999, 1, 50);
         expect(result).toBe(false);
         expect(api.updateWatchedEpisodes).not.toHaveBeenCalled();
     });
 
-    it('should handle API errors gracefully without entering loops', async () => {
+    it("should handle API errors gracefully without entering loops", async () => {
         const malId = 111;
         const episode = 1;
 
@@ -109,7 +108,7 @@ describe('MAL Sync Logic', () => {
         expect(api.updateWatchedEpisodes).toHaveBeenCalledTimes(1);
     });
 
-    it('should avoid syncing if MAL already has the same or higher progress', async () => {
+    it("should avoid syncing if MAL already has the same or higher progress", async () => {
         const malId = 222;
         const episode = 5;
 
@@ -123,7 +122,7 @@ describe('MAL Sync Logic', () => {
         expect(api.updateWatchedEpisodes).not.toHaveBeenCalled();
     });
 
-    it('should return already_synced in detailed mode when MAL progress is up to date', async () => {
+    it("should return already_synced in detailed mode when MAL progress is up to date", async () => {
         const malId = 333;
         const episode = 2;
 
@@ -132,7 +131,7 @@ describe('MAL Sync Logic', () => {
 
         const result = await sync.syncEpisodeDetailed(malId, episode, 95);
 
-        expect(result).toBe('already_synced');
+        expect(result).toBe("already_synced");
         expect(api.updateWatchedEpisodes).not.toHaveBeenCalled();
     });
 });

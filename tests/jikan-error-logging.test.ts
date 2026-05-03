@@ -54,7 +54,7 @@ describe("JikanProvider error logging", () => {
         expect(result).toBeNull();
         expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
         expect(consoleErrorSpy).toHaveBeenCalledWith(
-            "[Jikan] Search error: status 503: Request failed with status code 503"
+            "[Jikan] Search error: status 503: Request failed with status code 503",
         );
         expect(consoleErrorSpy.mock.calls[0]).toHaveLength(1);
 
@@ -67,7 +67,7 @@ describe("JikanProvider error logging", () => {
                 sfw: true,
             },
             "ERROR",
-            "Request failed with status code 503"
+            "Request failed with status code 503",
         );
         expect(formatProviderErrorDetailsMock).toHaveBeenCalledWith("Jikan", "/anime", providerError);
         expect(logApiCallMock).toHaveBeenCalledWith(
@@ -79,7 +79,7 @@ describe("JikanProvider error logging", () => {
                 sfw: true,
             },
             "ERROR_DETAIL",
-            "formatted-detail"
+            "formatted-detail",
         );
     });
 });

@@ -417,7 +417,7 @@ Versioning and release notes are generated from **Conventional Commits**.
 
 ## Contributing
 
-Contributions are welcome. Feel free to open issues and pull requests.
+Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct, development process, and how to submit pull requests.
 
 1. Fork the project
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)

@@ -6,9 +6,9 @@
  */
 
 import axios from "axios";
-import { formatProviderErrorDetails, logApiCall } from "./types";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 import { config } from "../config";
+import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
+import { formatProviderErrorDetails, logApiCall } from "./types";
 
 const TVDB_BASE = "https://api4.thetvdb.com/v4";
 const MAX_SEASON_LOOKUP_PAGES = 3;
@@ -42,10 +42,13 @@ interface TvdbSeasonRecord {
     name?: string | null;
     number?: number | string;
     seasonNumber?: number | string;
-    type?: {
-        name?: string | null;
-        type?: string | null;
-    } | string | null;
+    type?:
+        | {
+              name?: string | null;
+              type?: string | null;
+          }
+        | string
+        | null;
 }
 
 interface SeasonInferenceResult {
@@ -103,12 +106,16 @@ async function authenticate(): Promise<string> {
     }
 
     try {
-        const response = await axios.post(`${TVDB_BASE}/login`, {
-            apikey: apiKey,
-        }, {
-            headers: { "Content-Type": "application/json" },
-            timeout: 10000,
-        });
+        const response = await axios.post(
+            `${TVDB_BASE}/login`,
+            {
+                apikey: apiKey,
+            },
+            {
+                headers: { "Content-Type": "application/json" },
+                timeout: 10000,
+            },
+        );
 
         bearerToken = response.data?.data?.token;
         if (!bearerToken) {
@@ -140,7 +147,7 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
     const now = Date.now();
     const elapsed = now - lastRequestTime;
     if (elapsed < MIN_REQUEST_INTERVAL) {
-        await new Promise(resolve => setTimeout(resolve, MIN_REQUEST_INTERVAL - elapsed));
+        await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL - elapsed));
     }
     lastRequestTime = Date.now();
 
@@ -150,7 +157,7 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
         const response = await axios.get(`${TVDB_BASE}${endpoint}`, {
             params,
             headers: {
-                "Authorization": `Bearer ${token}`,
+                Authorization: `Bearer ${token}`,
                 "Content-Type": "application/json",
             },
             timeout: 10000,
@@ -172,13 +179,19 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
             logApiCall("TVDB", operation, params || {}, "429 RATE_LIMITED", "retrying in 2s");
             console.log("[TVDB] Rate limited, waiting 2s...");
             circuitBreaker.recordFailure();
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 2000));
             return tvdbRequest(endpoint, params, operation);
         }
 
         logApiCall("TVDB", operation, params || {}, "ERROR", e.message || "unknown");
         if (config.debug) {
-            logApiCall("TVDB", operation, params || {}, "ERROR_DETAIL", formatProviderErrorDetails("TVDB", operation, e));
+            logApiCall(
+                "TVDB",
+                operation,
+                params || {},
+                "ERROR_DETAIL",
+                formatProviderErrorDetails("TVDB", operation, e),
+            );
         }
         circuitBreaker.recordFailure();
         throw e;
@@ -209,14 +222,10 @@ function normalizeEpisodeNumber(value: unknown): number | null {
 
 function extractEpisodeList(response: any): TvdbEpisodeRecord[] {
     const episodes = response?.data?.episodes;
-    return Array.isArray(episodes) ? episodes as TvdbEpisodeRecord[] : [];
+    return Array.isArray(episodes) ? (episodes as TvdbEpisodeRecord[]) : [];
 }
 
-function findExactEpisode(
-    episodes: TvdbEpisodeRecord[],
-    season: number,
-    episode: number
-): TvdbEpisodeRecord | null {
+function findExactEpisode(episodes: TvdbEpisodeRecord[], season: number, episode: number): TvdbEpisodeRecord | null {
     const seasonNum = normalizeEpisodeNumber(season);
     const episodeNum = normalizeEpisodeNumber(episode);
 
@@ -224,10 +233,13 @@ function findExactEpisode(
         return null;
     }
 
-    return episodes.find((candidate) =>
-        normalizeEpisodeNumber(candidate.seasonNumber) === seasonNum
-        && normalizeEpisodeNumber(candidate.number) === episodeNum
-    ) || null;
+    return (
+        episodes.find(
+            (candidate) =>
+                normalizeEpisodeNumber(candidate.seasonNumber) === seasonNum &&
+                normalizeEpisodeNumber(candidate.number) === episodeNum,
+        ) || null
+    );
 }
 
 function normalizeTitleForComparison(value: string): string {
@@ -295,10 +307,7 @@ function buildSeasonInferenceInputs(context?: EpisodeLookupContext): {
     normalizedHints: string[];
     hintTokens: Set<string>;
 } {
-    const rawHints: Array<string | undefined> = [
-        context?.searchTitle,
-        ...(context?.canonicalTitles || []),
-    ];
+    const rawHints: Array<string | undefined> = [context?.searchTitle, ...(context?.canonicalTitles || [])];
 
     const normalizedHints: string[] = [];
     const seenHints = new Set<string>();
@@ -327,11 +336,7 @@ function buildSeasonInferenceInputs(context?: EpisodeLookupContext): {
     return { normalizedHints, hintTokens };
 }
 
-function computeSeasonHintScore(
-    seasonName: string,
-    normalizedHints: string[],
-    hintTokens: Set<string>
-): number {
+function computeSeasonHintScore(seasonName: string, normalizedHints: string[], hintTokens: Set<string>): number {
     const normalizedSeasonName = normalizeTitleForComparison(seasonName);
     if (!normalizedSeasonName) {
         return 0;
@@ -378,7 +383,7 @@ function logSeasonInferenceDebug(seriesId: number, message: string): void {
 
 async function inferSeasonFromTitleHints(
     seriesId: number,
-    context?: EpisodeLookupContext
+    context?: EpisodeLookupContext,
 ): Promise<SeasonInferenceResult | null> {
     if (!context?.allowSeasonInference) {
         logSeasonInferenceDebug(seriesId, "skip: disabled");
@@ -392,11 +397,7 @@ async function inferSeasonFromTitleHints(
     }
 
     try {
-        const seasonsResponse = await tvdbRequest(
-            `/series/${seriesId}/extended`,
-            { meta: "episodes" },
-            "getSeasons"
-        );
+        const seasonsResponse = await tvdbRequest(`/series/${seriesId}/extended`, { meta: "episodes" }, "getSeasons");
         const allSeasonRecords = extractSeasonRecords(seasonsResponse);
 
         const candidateSeasons: TvdbSeasonRecord[] = [];
@@ -433,7 +434,7 @@ async function inferSeasonFromTitleHints(
             }
 
             const score = computeSeasonHintScore(seasonName, normalizedHints, hintTokens);
-            logSeasonInferenceDebug(seriesId, `candidate season=${seasonNum} name=\"${seasonName}\" score=${score}`);
+            logSeasonInferenceDebug(seriesId, `candidate season=${seasonNum} name="${seasonName}" score=${score}`);
 
             if (score < MIN_INFERENCE_SCORE) {
                 continue;
@@ -443,7 +444,7 @@ async function inferSeasonFromTitleHints(
                 best = {
                     season: seasonNum,
                     score,
-                    reason: `title-hint match \"${seasonName}\"`,
+                    reason: `title-hint match "${seasonName}"`,
                 };
             }
         }
@@ -464,7 +465,7 @@ async function inferSeasonFromTitleHints(
 async function lookupEpisodeForSeasonNumber(
     seriesId: number,
     seasonNum: number,
-    episode: number
+    episode: number,
 ): Promise<{ episode: TvdbEpisodeRecord; seasonType: TvdbSeasonType } | null> {
     for (const seasonType of ["official", "default"] as TvdbSeasonType[]) {
         try {
@@ -473,7 +474,7 @@ async function lookupEpisodeForSeasonNumber(
                 "getEpisode",
                 { id: seriesId, season: seasonNum, ep: episode },
                 "DETAIL",
-                `seasonType=${seasonType} exact`
+                `seasonType=${seasonType} exact`,
             );
 
             const exactResponse = await tvdbRequest(
@@ -483,7 +484,7 @@ async function lookupEpisodeForSeasonNumber(
                     season: seasonNum,
                     episodeNumber: episode,
                 },
-                "getEpisode"
+                "getEpisode",
             );
 
             const exactEpisodes = extractEpisodeList(exactResponse);
@@ -494,7 +495,7 @@ async function lookupEpisodeForSeasonNumber(
                     "getEpisode",
                     { id: seriesId, season: seasonNum, ep: episode },
                     "DETAIL",
-                    `seasonType=${seasonType} exact-match`
+                    `seasonType=${seasonType} exact-match`,
                 );
                 return {
                     episode: exactMatch,
@@ -507,7 +508,7 @@ async function lookupEpisodeForSeasonNumber(
                 "getEpisode",
                 { id: seriesId, season: seasonNum, ep: episode },
                 "DETAIL",
-                `seasonType=${seasonType} exact-miss -> paginated`
+                `seasonType=${seasonType} exact-miss -> paginated`,
             );
 
             for (let page = 0; page < MAX_SEASON_LOOKUP_PAGES; page++) {
@@ -517,7 +518,7 @@ async function lookupEpisodeForSeasonNumber(
                         page,
                         season: seasonNum,
                     },
-                    "getEpisode"
+                    "getEpisode",
                 );
 
                 const pageEpisodes = extractEpisodeList(pageResponse);
@@ -532,7 +533,7 @@ async function lookupEpisodeForSeasonNumber(
                         "getEpisode",
                         { id: seriesId, season: seasonNum, ep: episode },
                         "DETAIL",
-                        `seasonType=${seasonType} paginated-match page=${page}`
+                        `seasonType=${seasonType} paginated-match page=${page}`,
                     );
                     return {
                         episode: pageMatch,
@@ -547,7 +548,7 @@ async function lookupEpisodeForSeasonNumber(
                     "getEpisode",
                     { id: seriesId, season: seasonNum, ep: episode },
                     "DETAIL",
-                    "seasonType=official miss -> trying default"
+                    "seasonType=official miss -> trying default",
                 );
             }
         } catch {
@@ -556,7 +557,7 @@ async function lookupEpisodeForSeasonNumber(
                 "getEpisode",
                 { id: seriesId, season: seasonNum, ep: episode },
                 "DETAIL",
-                `seasonType=${seasonType} failed`
+                `seasonType=${seasonType} failed`,
             );
         }
     }
@@ -569,11 +570,15 @@ export class TvdbProvider implements AnimeProvider {
 
     async searchAnime(title: string, _expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
-            const response = await tvdbRequest("/search", {
-                query: title,
-                type: "series",
-                limit: 5,
-            }, "search");
+            const response = await tvdbRequest(
+                "/search",
+                {
+                    query: title,
+                    type: "series",
+                    limit: 5,
+                },
+                "search",
+            );
 
             const results = response?.data;
             if (!results || results.length === 0) {
@@ -585,8 +590,7 @@ export class TvdbProvider implements AnimeProvider {
             const result = results[0];
             const tvdbId = parseInt(result.tvdb_id || result.id, 10);
 
-            logApiCall("TVDB", "search", { query: title }, "DETAIL",
-                `"${result.name}" (ID:${tvdbId})`);
+            logApiCall("TVDB", "search", { query: title }, "DETAIL", `"${result.name}" (ID:${tvdbId})`);
 
             return {
                 id: tvdbId,
@@ -603,16 +607,20 @@ export class TvdbProvider implements AnimeProvider {
 
     async getAnimeById(id: number): Promise<AnimeInfo | null> {
         try {
-            const response = await tvdbRequest(`/series/${id}/extended`, {
-                seriesId: id,
-                short: true,
-            }, "getById");
+            const response = await tvdbRequest(
+                `/series/${id}/extended`,
+                {
+                    seriesId: id,
+                    short: true,
+                },
+                "getById",
+            );
 
             const series = response?.data;
             if (!series) return null;
 
             // series.name = original title (Japanese for anime)
-            let titleRomaji = series.name || "";
+            const titleRomaji = series.name || "";
             let titleEnglish: string | null = null;
 
             // Always try to get the English title
@@ -621,7 +629,7 @@ export class TvdbProvider implements AnimeProvider {
                     const engResponse = await tvdbRequest(
                         `/series/${id}/translations/eng`,
                         { seriesId: id, lang: "eng" },
-                        "getTranslation"
+                        "getTranslation",
                     );
                     if (engResponse?.data?.name) {
                         titleEnglish = engResponse.data.name;
@@ -638,7 +646,7 @@ export class TvdbProvider implements AnimeProvider {
                     const transResponse = await tvdbRequest(
                         `/series/${id}/translations/${lang}`,
                         { seriesId: id, lang },
-                        "getTranslation"
+                        "getTranslation",
                     );
                     const translation = transResponse?.data;
                     if (translation?.name) {
@@ -665,8 +673,13 @@ export class TvdbProvider implements AnimeProvider {
                 }
             }
 
-            logApiCall("TVDB", "getById", { id }, "DETAIL",
-                `"${titleEnglish || titleRomaji}" (${series.status?.name || "unknown"})`);
+            logApiCall(
+                "TVDB",
+                "getById",
+                { id },
+                "DETAIL",
+                `"${titleEnglish || titleRomaji}" (${series.status?.name || "unknown"})`,
+            );
 
             return {
                 id: id,
@@ -684,7 +697,7 @@ export class TvdbProvider implements AnimeProvider {
         seriesId: number,
         episode: number,
         season?: number,
-        context?: EpisodeLookupContext
+        context?: EpisodeLookupContext,
     ): Promise<string | null> {
         try {
             const requestedSeason = season ?? 1;
@@ -694,15 +707,9 @@ export class TvdbProvider implements AnimeProvider {
                 const inferredSeason = await inferSeasonFromTitleHints(seriesId, context);
                 if (inferredSeason) {
                     resolvedSeason = inferredSeason.season;
-                    logSeasonInferenceDebug(
-                        seriesId,
-                        `using inferred season=${resolvedSeason} for episode=${episode}`
-                    );
+                    logSeasonInferenceDebug(seriesId, `using inferred season=${resolvedSeason} for episode=${episode}`);
                 } else {
-                    logSeasonInferenceDebug(
-                        seriesId,
-                        `using default season=${resolvedSeason} for episode=${episode}`
-                    );
+                    logSeasonInferenceDebug(seriesId, `using default season=${resolvedSeason} for episode=${episode}`);
                 }
             }
 
@@ -714,7 +721,7 @@ export class TvdbProvider implements AnimeProvider {
                     "getEpisode",
                     { id: seriesId, season: resolvedSeason, ep: episode },
                     "DETAIL",
-                    "no exact season+episode match"
+                    "no exact season+episode match",
                 );
                 return null;
             }
@@ -732,7 +739,7 @@ export class TvdbProvider implements AnimeProvider {
                     const transResponse = await tvdbRequest(
                         `/episodes/${episodeId}/translations/${lang}`,
                         { episodeId, lang },
-                        "getEpisodeTranslation"
+                        "getEpisodeTranslation",
                     );
                     const translation = transResponse?.data;
                     if (translation?.name) {
@@ -744,9 +751,13 @@ export class TvdbProvider implements AnimeProvider {
             }
 
             if (epTitle) {
-                logApiCall("TVDB", "getEpisode",
+                logApiCall(
+                    "TVDB",
+                    "getEpisode",
                     { id: seriesId, season: resolvedSeason, ep: episode },
-                    "DETAIL", `seasonType=${selectedSeasonType || "unknown"} "${epTitle}"`);
+                    "DETAIL",
+                    `seasonType=${selectedSeasonType || "unknown"} "${epTitle}"`,
+                );
             }
 
             return epTitle;
@@ -755,7 +766,7 @@ export class TvdbProvider implements AnimeProvider {
         }
     }
 
-    async findSeasonAnime(baseId: number, targetSeason: number): Promise<AnimeInfo | null> {
+    async findSeasonAnime(baseId: number, _targetSeason: number): Promise<AnimeInfo | null> {
         // TVDB groups all seasons under one series, so we just return the base series
         // The season info is used when fetching episodes
         return this.getAnimeById(baseId);
