@@ -116,6 +116,9 @@ export const config = {
     clientId: getEnv("MAL_CLIENT_ID", ""),
     syncThreshold: parseInt(getEnv("MAL_SYNC_THRESHOLD", "90"), 10), // % watched to trigger sync
   },
+
+  // Auto-fetch settings (automatically fetch next episodes near playlist end)
+  autoFetchEnabled: getEnvBool("AUTO_FETCH_ENABLED", true),
 };
 
 export type Config = typeof config;
