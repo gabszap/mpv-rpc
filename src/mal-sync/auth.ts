@@ -13,7 +13,7 @@ import { config } from "../config";
 const MAL_AUTH_URL = "https://myanimelist.net/v1/oauth2/authorize";
 const MAL_TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";
 const CALLBACK_PORT = 8888;
-const TOKENS_FILE = ".mal_tokens.json";
+const TOKENS_FILE = ".config/.mal_tokens.json";
 
 interface MalTokens {
     access_token: string;

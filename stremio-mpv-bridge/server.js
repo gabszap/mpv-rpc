@@ -58,7 +58,7 @@ app.get("/health", (_req, res) => {
     res.json({ status: "ok", mpvPath: MPV_PATH });
 });
 
-const CONFIG_PATH = path.resolve(__dirname, "..", ".stremio-mpv-config.json");
+const CONFIG_PATH = path.resolve(__dirname, "..", ".config", ".stremio-mpv-config.json");
 
 function readConfig() {
     try {
