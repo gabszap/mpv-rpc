@@ -33,6 +33,7 @@ Discord Rich Presence para o MPV Media Player com suporte automático a metadado
 - [Configuração](#configuração)
 - [Configuração do MPV](#configuração-do-mpv)
 - [Sincronização MyAnimeList](#sincronização-myanimelist)
+- [Sincronização Trakt.tv](#sincronização-trakttv)
 - [Stremio MPV Bridge](#stremio-mpv-bridge)
 - [Capturas de Tela](#capturas-de-tela)
 - [Releases](#releases)
@@ -57,9 +58,10 @@ O **MPV Discord RPC** é uma ferramenta que integra o seu MPV Media Player ao Di
 
 **Recursos de Integração**
 - **Sincronização MyAnimeList:** Atualização automática do seu progresso
+- **Sincronização Trakt.tv:** Scrobble automático de progresso para o Trakt
 - **Stremio MPV Bridge:** Abra streams do Stremio Web diretamente no MPV
   - Suporte inteligente a playlists automáticas
-  - Compatibilidade de player para Anime (Kitsu)
+  - Compatibilidade de player para Anime
 
 > **Nota:** A exibição de capas funciona apenas para animes no momento. Configure isso no arquivo `.env`.
 
@@ -252,6 +254,12 @@ Os valores de ambiente são carregados automaticamente via `dotenv` a partir do 
 | `MAL_SYNC` | Ativar sincronização com MyAnimeList | `false` |
 | `MAL_CLIENT_ID` | MyAnimeList API Client ID | (vazio) |
 | `MAL_SYNC_THRESHOLD` | Porcentagem assistida para disparar sync (0-100) | `90` |
+| `TRAKT_SYNC` | Ativar scrobble do Trakt.tv | `false` |
+| `TRAKT_CLIENT_ID` | Trakt API Client ID | (vazio) |
+| `TRAKT_CLIENT_SECRET` | Trakt API Client Secret | (vazio) |
+| `TRAKT_SYNC_THRESHOLD` | Porcentagem assistida para disparar scrobble (0-100) | `80` |
+| `TRAKT_USE_TOR` | Roteiar requisições Trakt pelo proxy Tor | `false` |
+| `TRAKT_TOR_PROXY` | URL do proxy SOCKS5 do Tor | `socks5://127.0.0.1:9150` |
 | `DISCORD_RPC` | Ativar Discord Rich Presence | `true` |
 
 ---
@@ -305,6 +313,7 @@ npm run dev
 2. Monitorar instâncias do MPV (com reconexão automática)
 3. Atualizar seu status no Discord em tempo real
 4. Sincronizar progresso com o MyAnimeList (se ativado e autenticado)
+5. Fazer scrobble no Trakt.tv (se ativado e autenticado)
 
 ---
 
@@ -316,12 +325,20 @@ Para instruções detalhadas de configuração, consulte o [Guia de Configuraç�
 
 ---
 
+## Sincronização Trakt.tv
+
+Sincronize automaticamente seu progresso de visualização com o Trakt.tv. Requer autorização única por dispositivo.
+
+Para instruções detalhadas de configuração, consulte o [Guia de Configuração do Trakt](docs/trakt-sync-setup.md).
+
+---
+
 ## Stremio MPV Bridge
 
 Integre o Stremio Web com o MPV para abrir streams diretamente no player com suporte inteligente a playlists.
 
 **Recursos:**
-- Suporte completo de reprodução para conteúdo do Kitsu
+- Suporte completo de reprodução para conteúdo do Stremio
 - Identificação aprimorada de títulos de séries e episódios do Stremio
 
 Para instruções de configuração, consulte o [Guia do Stremio MPV Bridge](docs/stremio-mpv-bridge.md).
@@ -380,6 +397,14 @@ Melhore sua experiência com o MPV usando estes scripts úteis do [Eisa01/mpv-sc
 - [Jikan](https://jikan.moe/) - API não oficial do MyAnimeList
 - [AniList](https://anilist.co/) - API AniList
 - [Kitsu](https://kitsu.io/) - API Kitsu
+- [Trakt.tv](https://trakt.tv/) - API Trakt
+- [socks-proxy-agent](https://www.npmjs.com/package/socks-proxy-agent) - Suporte a proxy Tor
+
+---
+
+## Créditos
+
+- [iamkroot/trakt-scrobbler](https://github.com/iamkroot/trakt-scrobbler) — Implementação de referência para lógica de scrobble do Trakt.tv e padrões de OAuth device flow.
 - [PreMiD](https://premid.app/) - Referência de assets
 
 ---
@@ -403,9 +428,8 @@ O versionamento e as notas de release são gerados a partir de **Conventional Co
 - Não execute `npm version` manualmente para releases do projeto.
 - Para execuções locais do `semantic-release`, use **Node.js >= 20.8.1** (os workflows usam Node 22).
 - Atalhos locais de release (com dotenv):
-  - Raiz: `npm run release:dry:root`, `npm run release:root`
-  - Bridge: `npm run release:dry:bridge`, `npm run release:bridge`
-  - Aliases legados: `npm run release:dry` (dry-run da raiz), `npm run release:local` (release da raiz)
+  - Raiz: `npm run release:dry`, `npm run release`
+  - Bridge: `npm run release:bridge:dry`, `npm run release:bridge`
   - Para execuções locais, mantenha `GH_TOKEN` (ou `GITHUB_TOKEN`) no `.env`.
 
 ---
@@ -431,6 +455,7 @@ Contribuições são bem-vindas! Consulte o [Guia de Contribuição](CONTRIBUTIN
 - [x] Suporte a API Kitsu
 - [x] Sincronização com MAL (marcar como assistido)
 - [x] **API GuessIt em Nuvem** - Sem Python necessário!
+- [x] Integração com Trakt.tv (auto-scrobble)
 
 **Planejado:**
 - [ ] Metadados para filmes e séries de TV (TMDb/OMDb)
@@ -438,7 +463,6 @@ Contribuições são bem-vindas! Consulte o [Guia de Contribuição](CONTRIBUTIN
 - [ ] Interface gráfica (GUI) para configuração
 - [ ] Modo Mini (exibir apenas nome do arquivo sem busca de metadados)
 - [ ] Painel de estatísticas de uso
-- [ ] Integração com Trakt.tv (auto-scrobble)
 
 ---
 

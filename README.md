@@ -33,6 +33,7 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 - [Configuration](#configuration)
 - [MPV Setup](#mpv-setup)
 - [MyAnimeList Sync](#myanimelist-sync)
+- [Trakt.tv Sync](#trakttv-sync)
 - [Stremio MPV Bridge](#stremio-mpv-bridge)
 - [Screenshots](#screenshots)
 - [Releases](#releases)
@@ -57,9 +58,10 @@ Discord Rich Presence for MPV Media Player with automatic anime metadata support
 
 **Integration Features**
 - **MyAnimeList Sync:** Automatically update your watch progress
+- **Trakt.tv Sync:** Automatically scrobble watch progress to Trakt
 - **Stremio MPV Bridge:** Open Stremio Web streams directly in MPV
   - Smart auto-playlist support
-  - Player compatibility for Anime (Kitsu)
+  - Player compatibility for Anime
 
 > **Note:** Cover display currently works only for anime. Configure this in your `.env` file.
 
@@ -252,6 +254,12 @@ Environment values are loaded automatically via `dotenv` from `.env` at startup.
 | `MAL_SYNC` | Enable MyAnimeList synchronization | `false` |
 | `MAL_CLIENT_ID` | MyAnimeList API Client ID | (empty) |
 | `MAL_SYNC_THRESHOLD` | Percentage watched to trigger sync (0-100) | `90` |
+| `TRAKT_SYNC` | Enable Trakt.tv scrobbling | `false` |
+| `TRAKT_CLIENT_ID` | Trakt API Client ID | (empty) |
+| `TRAKT_CLIENT_SECRET` | Trakt API Client Secret | (empty) |
+| `TRAKT_SYNC_THRESHOLD` | Percentage watched to trigger scrobble (0-100) | `80` |
+| `TRAKT_USE_TOR` | Route Trakt requests through Tor proxy | `false` |
+| `TRAKT_TOR_PROXY` | Tor SOCKS5 proxy URL | `socks5://127.0.0.1:9150` |
 | `DISCORD_RPC` | Enable Discord Rich Presence | `true` |
 
 ---
@@ -305,6 +313,7 @@ npm run dev
 2. Monitor for MPV instances (with auto-reconnection)
 3. Update your Discord status in real-time
 4. Sync progress to MyAnimeList (if enabled and authenticated)
+5. Scrobble progress to Trakt.tv (if enabled and authenticated)
 
 ---
 
@@ -316,12 +325,20 @@ For detailed setup instructions, see the [MAL Sync Setup Guide](docs/mal-sync-se
 
 ---
 
+## Trakt.tv Sync
+
+Automatically scrobble your anime watch progress to Trakt.tv. Requires one-time device authorization.
+
+For detailed setup instructions, see the [Trakt Sync Setup Guide](docs/trakt-sync-setup.md).
+
+---
+
 ## Stremio MPV Bridge
 
 Integrate Stremio Web with MPV to open streams directly in the player with smart playlist support.
 
 **Features:**
-- Full playback support for Kitsu content
+- Full playback support for Stremio content
 - Enhanced series title and episode identification from Stremio
 
 For setup instructions, see the [Stremio MPV Bridge Guide](docs/stremio-mpv-bridge.md).
@@ -385,6 +402,14 @@ Enhance your MPV experience with these useful scripts from [Eisa01/mpv-scripts](
 - [Jikan](https://jikan.moe/) - Unofficial MyAnimeList API
 - [AniList](https://anilist.co/) - AniList API
 - [Kitsu](https://kitsu.io/) - Kitsu API
+- [Trakt.tv](https://trakt.tv/) - Trakt API
+- [socks-proxy-agent](https://www.npmjs.com/package/socks-proxy-agent) - Tor proxy support
+
+---
+
+## Credits
+
+- [iamkroot/trakt-scrobbler](https://github.com/iamkroot/trakt-scrobbler) — Reference implementation for Trakt.tv scrobbling logic and OAuth device flow patterns.
 - [PreMiD](https://premid.app/) - Assets reference
 
 ---
@@ -408,9 +433,8 @@ Versioning and release notes are generated from **Conventional Commits**.
 - Do not run `npm version` manually for project releases.
 - For local `semantic-release` runs, use **Node.js >= 20.8.1** (workflows use Node 22).
 - Local release helpers (dotenv-powered):
-  - Root: `npm run release:dry:root`, `npm run release:root`
-  - Bridge: `npm run release:dry:bridge`, `npm run release:bridge`
-  - Legacy aliases: `npm run release:dry` (root dry-run), `npm run release:local` (root release)
+  - Root: `npm run release:dry`, `npm run release`
+  - Bridge: `npm run release:bridge:dry`, `npm run release:bridge`
   - For local runs, keep `GH_TOKEN` (or `GITHUB_TOKEN`) in `.env`.
 
 ---
@@ -436,6 +460,7 @@ Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md)
 - [x] Kitsu API support
 - [x] MAL sync (mark as watched)
 - [x] Guessit Cloud API - No Python required!
+- [x] Trakt.tv integration (auto-scrobble)
 
 **Planned:**
 - [ ] Metadata for movies and TV series (TMDb/OMDb)
@@ -443,7 +468,6 @@ Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md)
 - [ ] Graphical interface (GUI) for configuration
 - [ ] Mini Mode (show only filename without metadata fetch)
 - [ ] Usage statistics dashboard
-- [ ] Trakt.tv integration (auto-scrobble)
 
 ---
 
