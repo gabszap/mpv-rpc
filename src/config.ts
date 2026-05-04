@@ -117,6 +117,16 @@ export const config = {
         syncThreshold: parseInt(getEnv("MAL_SYNC_THRESHOLD", "90"), 10), // % watched to trigger sync
     },
 
+    // Trakt.tv sync settings
+    trakt: {
+        enabled: getEnvBool("TRAKT_SYNC", false),
+        clientId: getEnv("TRAKT_CLIENT_ID", ""),
+        clientSecret: getEnv("TRAKT_CLIENT_SECRET", ""),
+        syncThreshold: parseInt(getEnv("TRAKT_SYNC_THRESHOLD", "80"), 10), // % watched to trigger scrobble
+        useTor: getEnvBool("TRAKT_USE_TOR", false),
+        torProxy: getEnv("TRAKT_TOR_PROXY", "socks5://127.0.0.1:9050"),
+    },
+
     // Auto-fetch settings (automatically fetch next episodes near playlist end)
     autoFetchEnabled: getEnvBool("AUTO_FETCH_ENABLED", true),
 };
