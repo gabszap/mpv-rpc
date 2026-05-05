@@ -354,7 +354,7 @@ export async function tryScrobble(data: MpvData): Promise<void> {
     // 5. Detect filename change → reset state machine
     if (data.filename !== currentFilename) {
         // If we were actively playing the previous file, scrobble stop with last known progress
-        if (currentState === "playing" && currentShow && currentEpisode) {
+        if (currentState === "playing" && currentShow && currentEpisode && lastKnownProgress >= 1) {
             const gate = getSyncGateDecision(currentShow.ids.trakt, currentEpisode.number, currentEpisode.season, true);
             if (gate === "allow") {
                 const success = await scrobbleStop(currentEpisode, currentShow, lastKnownProgress);
@@ -399,8 +399,11 @@ export async function tryScrobble(data: MpvData): Promise<void> {
     // 8. Process any queued backlog from previous failures
     await processBacklog();
 
-    // 9. State machine transitions
+    // 9. Trakt requires progress >= 1% for any scrobble action
     const progress = data.percent_pos;
+    if (progress < 1) return;
+
+    // 10. State machine transitions
     const isPaused = data.pause;
     const threshold = config.trakt.syncThreshold;
     const showId = currentShow.ids.trakt;
