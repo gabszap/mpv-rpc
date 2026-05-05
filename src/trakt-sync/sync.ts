@@ -414,6 +414,30 @@ export async function tryScrobble(data: MpvData): Promise<void> {
     switch (currentState) {
         case "idle": {
             if (!isPaused) {
+                // If already past threshold, skip start and go straight to stop
+                if (progress >= threshold) {
+                    const gate = getSyncGateDecision(showId, epNumber, epSeason, true);
+                    if (gate === "already_success") {
+                        currentState = "stopped";
+                        return;
+                    }
+
+                    syncInProgress.add(lockKey);
+                    try {
+                        recordSyncAttempt(showId, epNumber, epSeason);
+                        const success = await scrobbleStop(currentEpisode, currentShow, progress);
+                        if (success) {
+                            recordSyncSuccess(showId, epNumber, epSeason);
+                        } else {
+                            queueBacklog("stop", currentEpisode, currentShow, progress);
+                        }
+                    } finally {
+                        syncInProgress.delete(lockKey);
+                    }
+                    currentState = "stopped";
+                    return;
+                }
+
                 // idle → playing: scrobble start
                 const gate = getSyncGateDecision(showId, epNumber, epSeason, false);
                 if (gate !== "allow") return;
@@ -444,17 +468,13 @@ export async function tryScrobble(data: MpvData): Promise<void> {
         }
 
         case "playing": {
-            if (isPaused) {
-                // playing → paused: scrobble pause
-                const success = await scrobblePause(currentEpisode, currentShow, progress);
-                if (!success) {
-                    queueBacklog("pause", currentEpisode, currentShow, progress);
-                }
-                currentState = "paused";
-            } else if (progress >= threshold) {
-                // playing → stopped: threshold reached
+            // If already past threshold, mark as watched regardless of pause state
+            if (progress >= threshold) {
                 const gate = getSyncGateDecision(showId, epNumber, epSeason, true);
-                if (gate === "already_success") return;
+                if (gate === "already_success") {
+                    currentState = "stopped";
+                    return;
+                }
 
                 syncInProgress.add(lockKey);
                 try {
@@ -468,12 +488,39 @@ export async function tryScrobble(data: MpvData): Promise<void> {
                     syncInProgress.delete(lockKey);
                 }
                 currentState = "stopped";
+            } else if (isPaused) {
+                // playing → paused: scrobble pause
+                const success = await scrobblePause(currentEpisode, currentShow, progress);
+                if (!success) {
+                    queueBacklog("pause", currentEpisode, currentShow, progress);
+                }
+                currentState = "paused";
             }
             break;
         }
 
         case "paused": {
-            if (!isPaused) {
+            // If already past threshold, mark as watched instead of resuming
+            if (progress >= threshold) {
+                const gate = getSyncGateDecision(showId, epNumber, epSeason, true);
+                if (gate === "already_success") {
+                    currentState = "stopped";
+                    return;
+                }
+
+                syncInProgress.add(lockKey);
+                try {
+                    const success = await scrobbleStop(currentEpisode, currentShow, progress);
+                    if (success) {
+                        recordSyncSuccess(showId, epNumber, epSeason);
+                    } else {
+                        queueBacklog("stop", currentEpisode, currentShow, progress);
+                    }
+                } finally {
+                    syncInProgress.delete(lockKey);
+                }
+                currentState = "stopped";
+            } else if (!isPaused) {
                 // paused → playing: scrobble start (resume)
                 const success = await scrobbleStart(currentEpisode, currentShow, progress);
                 if (!success) {
