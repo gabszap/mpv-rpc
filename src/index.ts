@@ -14,7 +14,7 @@ import * as mpv from "./mpv";
 import { checkAvailability } from "./parser";
 import { getUser } from "./trakt-sync/api";
 import { authorize as traktAuthorize, isAuthenticated as traktIsAuthenticated } from "./trakt-sync/auth";
-import { tryScrobble } from "./trakt-sync/sync";
+import { stopCurrentScrobble, tryScrobble } from "./trakt-sync/sync";
 
 let consoleRepl: ConsoleRepl | null = null;
 
@@ -46,10 +46,19 @@ async function update(): Promise<void> {
         const data = await mpv.getMpvData();
 
         if (!data) {
-            // MPV not connected, clear Discord activity
+            // MPV not connected, clear Discord activity and stop Trakt scrobble
             await discord.clearActivity();
             lastMalDiagnosticKey = null;
             lastMalSyncSuccessKey = null;
+
+            // Stop Trakt scrobble if active
+            if (config.trakt.enabled && traktIsAuthenticated()) {
+                try {
+                    await stopCurrentScrobble();
+                } catch (e) {
+                    console.error("[Trakt] Error stopping scrobble on disconnect:", e);
+                }
+            }
             return;
         }
 
@@ -273,6 +282,15 @@ async function start(): Promise<void> {
 async function stop(): Promise<void> {
     console.log("\n[Main] Shutting down...");
     _isRunning = false;
+
+    // Stop Trakt scrobble on shutdown
+    if (config.trakt.enabled && traktIsAuthenticated()) {
+        try {
+            await stopCurrentScrobble();
+        } catch (e) {
+            console.error("[Trakt] Error stopping scrobble on shutdown:", e);
+        }
+    }
 
     if (updateInterval) {
         clearInterval(updateInterval);

@@ -224,12 +224,10 @@ export async function searchByTitle(query: string, type: string): Promise<TraktS
             }),
         );
 
-        logApiCall("GET", `${TRAKT_API}/search/${type}`, response.status, `query="${query}"`);
-
         const results = response.data;
         const normalizedQuery = normalizeTitle(query);
 
-        return results.sort((a, b) => {
+        const sorted = results.sort((a, b) => {
             // Primary: score descending
             if (b.score !== a.score) return b.score - a.score;
 
@@ -246,6 +244,16 @@ export async function searchByTitle(query: string, type: string): Promise<TraktS
             const bSimilarity = titleSimilarity(normalizedQuery, bTitle);
             return bSimilarity - aSimilarity;
         });
+
+        const bestTitle = sorted[0]?.show?.title ?? "N/A";
+        logApiCall(
+            "GET",
+            `${TRAKT_API}/search/${type}`,
+            response.status,
+            `query="${query}", ${results.length} results, best="${bestTitle}"`,
+        );
+
+        return sorted;
     } catch (e: unknown) {
         const status = axios.isAxiosError(e) ? (e.response?.status ?? "N/A") : "N/A";
         logApiCall("GET", `${TRAKT_API}/search/${type}`, status, `query="${query}", error`);
@@ -300,16 +308,19 @@ export async function lookupById(source: string, id: string): Promise<TraktSearc
 
     try {
         const response = await requestWithRetry(() =>
-            traktAxios.get<TraktSearchResult[]>(`${TRAKT_API}/search/id/${source}/${id}`, { headers }),
+            traktAxios.get<TraktSearchResult[]>(`${TRAKT_API}/search/${source}/${id}`, { headers }),
         );
 
-        logApiCall("GET", `${TRAKT_API}/search/id/${source}/${id}`, response.status);
-
         const results = response.data;
+        const first = results[0];
+        const showTitle = first?.show?.title ?? "N/A";
+        const showYear = first?.show?.year ?? "?";
+        logApiCall("GET", `${TRAKT_API}/search/${source}/${id}`, response.status, `→ ${showTitle} (${showYear})`);
+
         return results.length > 0 ? results[0] : null;
     } catch (e: unknown) {
         const status = axios.isAxiosError(e) ? (e.response?.status ?? "N/A") : "N/A";
-        logApiCall("GET", `${TRAKT_API}/search/id/${source}/${id}`, status, "error");
+        logApiCall("GET", `${TRAKT_API}/search/${source}/${id}`, status, "error");
         if (axios.isAxiosError(e)) {
             console.error("[Trakt] API Error (lookupById):", {
                 status: e.response?.status,
@@ -340,7 +351,14 @@ export async function getShowSeasons(showId: number): Promise<TraktSeasonEpisode
             }),
         );
 
-        logApiCall("GET", `${TRAKT_API}/shows/${showId}/seasons`, response.status);
+        const seasonCount = response.data.length;
+        const totalEps = response.data.reduce((sum, s) => sum + s.episodes.length, 0);
+        logApiCall(
+            "GET",
+            `${TRAKT_API}/shows/${showId}/seasons`,
+            response.status,
+            `${seasonCount} seasons, ${totalEps} episodes`,
+        );
         return response.data;
     } catch (e: unknown) {
         const status = axios.isAxiosError(e) ? (e.response?.status ?? "N/A") : "N/A";
@@ -390,7 +408,12 @@ async function scrobbleAction(
             }),
         );
 
-        logApiCall("POST", `${TRAKT_API}/scrobble/${action}`, response.status, `${progress.toFixed(0)}%`);
+        logApiCall(
+            "POST",
+            `${TRAKT_API}/scrobble/${action}`,
+            response.status,
+            `${show.title} S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} @ ${progress.toFixed(0)}%`,
+        );
 
         if (response.status === 200 || response.status === 201) {
             console.log(
@@ -451,7 +474,12 @@ export async function getHistory(showId: number, season: number, episode: number
             traktAxios.get<TraktHistoryItem[]>(`${TRAKT_API}/sync/history/shows/${showId}`, { headers }),
         );
 
-        logApiCall("GET", `${TRAKT_API}/sync/history/shows/${showId}`, response.status, `S${season}E${episode}`);
+        logApiCall(
+            "GET",
+            `${TRAKT_API}/sync/history/shows/${showId}`,
+            response.status,
+            `S${season}E${episode}, ${response.data.length} items`,
+        );
         return response.data.filter((item) => item.episode.season === season && item.episode.number === episode);
     } catch (e: unknown) {
         const status = axios.isAxiosError(e) ? (e.response?.status ?? "N/A") : "N/A";

@@ -181,6 +181,11 @@ let lastKnownProgress = 0;
  * Results are cached in-memory for the session.
  */
 export async function resolveTraktShow(data: MpvData): Promise<{ show: TraktShow; imdbId?: string } | null> {
+    // Extract expected title early for validation against ID lookups
+    // Treat "N/A" as empty so ID-based resolution isn't discarded
+    const title = data.series_title;
+    const expectedTitle = title && title !== "N/A" ? normalizeTitle(title) : "";
+
     // 1. Try imdb_id from MpvData or Stremio bridge config
     const imdbId = data.imdb_id || getStremioImdbId();
     if (imdbId) {
@@ -190,10 +195,23 @@ export async function resolveTraktShow(data: MpvData): Promise<{ show: TraktShow
 
         const result = await lookupById("imdb", imdbId);
         if (result?.show) {
-            const entry: { show: TraktShow; imdbId?: string } = { show: result.show, imdbId };
-            showCache.set(cacheKey, entry);
-            console.log(`[Trakt] Resolved show via imdb_id: ${result.show.title}`);
-            return entry;
+            const resolvedTitle = normalizeTitle(result.show.title);
+            const titlesMismatch =
+                resolvedTitle &&
+                expectedTitle &&
+                (resolvedTitle.length >= 4 && expectedTitle.length >= 4
+                    ? !resolvedTitle.includes(expectedTitle) && !expectedTitle.includes(resolvedTitle)
+                    : resolvedTitle !== expectedTitle);
+            if (titlesMismatch) {
+                console.log(
+                    `[Trakt] IMDB ID ${imdbId} resolved to "${result.show.title}" but expected "${title}" — falling back to title search`,
+                );
+            } else {
+                const entry: { show: TraktShow; imdbId?: string } = { show: result.show, imdbId };
+                showCache.set(cacheKey, entry);
+                console.log(`[Trakt] Resolved show via imdb_id: ${result.show.title}`);
+                return entry;
+            }
         }
     }
 
@@ -206,15 +224,27 @@ export async function resolveTraktShow(data: MpvData): Promise<{ show: TraktShow
 
         const result = await lookupById("tvdb", String(tvdbId));
         if (result?.show) {
-            const entry: { show: TraktShow; imdbId?: string } = { show: result.show };
-            showCache.set(cacheKey, entry);
-            console.log(`[Trakt] Resolved show via tvdb_id: ${result.show.title}`);
-            return entry;
+            const resolvedTitle = normalizeTitle(result.show.title);
+            const titlesMismatch =
+                resolvedTitle &&
+                expectedTitle &&
+                (resolvedTitle.length >= 4 && expectedTitle.length >= 4
+                    ? !resolvedTitle.includes(expectedTitle) && !expectedTitle.includes(resolvedTitle)
+                    : resolvedTitle !== expectedTitle);
+            if (titlesMismatch) {
+                console.log(
+                    `[Trakt] TVDB ID ${tvdbId} resolved to "${result.show.title}" but expected "${title}" — falling back to title search`,
+                );
+            } else {
+                const entry: { show: TraktShow; imdbId?: string } = { show: result.show };
+                showCache.set(cacheKey, entry);
+                console.log(`[Trakt] Resolved show via tvdb_id: ${result.show.title}`);
+                return entry;
+            }
         }
     }
 
     // 3. Fallback: search by title
-    const title = data.series_title;
     if (!title || title === "N/A") return null;
 
     const normalized = normalizeTitle(title);
@@ -454,9 +484,7 @@ export async function tryScrobble(data: MpvData): Promise<void> {
                 try {
                     recordSyncAttempt(showId, epNumber, epSeason);
                     const success = await scrobbleStart(currentEpisode, currentShow, progress);
-                    if (success) {
-                        recordSyncSuccess(showId, epNumber, epSeason);
-                    } else {
+                    if (!success) {
                         queueBacklog("start", currentEpisode, currentShow, progress);
                     }
                 } finally {
@@ -535,4 +563,54 @@ export async function tryScrobble(data: MpvData): Promise<void> {
             // Stay stopped until filename changes (handled above)
             break;
     }
+}
+
+/**
+ * Stop the current scrobble when MPV disconnects or the app shuts down.
+ */
+export async function stopCurrentScrobble(): Promise<void> {
+    if ((currentState !== "playing" && currentState !== "paused") || !currentShow || !currentEpisode) return;
+    if (lastKnownProgress < 1) return;
+
+    const gate = getSyncGateDecision(currentShow.ids.trakt, currentEpisode.number, currentEpisode.season, true);
+    if (gate === "already_success") {
+        // Already synced, just reset state
+        currentState = "idle";
+        currentShow = null;
+        currentEpisode = null;
+        currentFilename = null;
+        lastKnownProgress = 0;
+        return;
+    }
+    // Only block on "in_progress", allow through "cooldown" for disconnect/shutdown stops
+    if (gate === "in_progress") return;
+
+    syncInProgress.add(`${currentShow.ids.trakt}:${currentEpisode.season}:${currentEpisode.number}`);
+    try {
+        const success = await scrobbleStop(currentEpisode, currentShow, lastKnownProgress);
+        if (success) {
+            recordSyncSuccess(currentShow.ids.trakt, currentEpisode.number, currentEpisode.season);
+
+            // Warn user if progress is below threshold
+            const threshold = config.trakt.syncThreshold;
+            if (lastKnownProgress < threshold) {
+                console.log(
+                    `[Trakt] MPV closed at ${Math.round(lastKnownProgress)}% progress. ` +
+                        `Trakt only marks episodes as watched at >=${threshold}%. ` +
+                        `Progress saved (paused state).`,
+                );
+            }
+        } else {
+            // Queue failed stop for retry on next reconnect
+            queueBacklog("stop", currentEpisode, currentShow, lastKnownProgress);
+        }
+    } finally {
+        syncInProgress.delete(`${currentShow.ids.trakt}:${currentEpisode.season}:${currentEpisode.number}`);
+    }
+
+    currentState = "idle";
+    currentShow = null;
+    currentEpisode = null;
+    currentFilename = null;
+    lastKnownProgress = 0;
 }
