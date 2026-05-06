@@ -51,7 +51,7 @@ const showCache = new Map<string, { show: TraktShow; imdbId?: string }>();
 const seasonCache = new Map<number, TraktSeasonEpisode[]>();
 
 /** Cache for history checks, keyed by "showId:season:episode" */
-const historyCache = new Map<string, boolean>();
+const historyCache = new Map<string, boolean | null>();
 
 // ---------------------------------------------------------------------------
 // Cooldown / dedup state
@@ -112,12 +112,18 @@ interface BacklogEntry {
 }
 
 const backlog: BacklogEntry[] = [];
+let lastBacklogAttempt = 0;
+const BACKLOG_COOLDOWN_MS = 30 * 1000; // 30 seconds
 
 /**
  * Retry queued backlog entries. Stops at the first failure so we don't
- * hammer the API when it is down.
+ * hammer the API when it is down. Respects a 30-second cooldown between attempts.
  */
 async function processBacklog(): Promise<void> {
+    if (backlog.length === 0) return;
+    if (Date.now() - lastBacklogAttempt < BACKLOG_COOLDOWN_MS) return;
+    lastBacklogAttempt = Date.now();
+
     while (backlog.length > 0) {
         const entry = backlog[0];
         let success = false;
@@ -160,7 +166,7 @@ function queueBacklog(
 
 type ScrobbleState = "idle" | "playing" | "paused" | "stopped";
 
-let currentFilename: string | null = null;
+let currentMetadataKey: string | null = null;
 let currentState: ScrobbleState = "idle";
 let currentShow: TraktShow | null = null;
 let currentEpisode: TraktEpisode | null = null;
@@ -284,7 +290,7 @@ export async function resolveEpisode(
     season: number | null,
     episode: number,
 ): Promise<TraktEpisode | null> {
-    if (!episode) return null;
+    if (episode == null) return null;
 
     const showId = show.ids.trakt;
 
@@ -337,12 +343,15 @@ export async function resolveEpisode(
 /**
  * Check whether an episode is already in the user's Trakt history.
  * Results are cached for the session to avoid repeated API calls.
+ * Returns null when the history check fails (not cached).
  */
-async function isAlreadyInHistory(showId: number, season: number, episode: number): Promise<boolean> {
+async function isAlreadyInHistory(showId: number, season: number, episode: number): Promise<boolean | null> {
     const key = `${showId}:${season}:${episode}`;
-    if (historyCache.has(key)) return historyCache.get(key) ?? false;
+    if (historyCache.has(key)) return historyCache.get(key) ?? null;
 
     const history = await getHistory(showId, season, episode);
+    if (history === null) return null; // Don't cache errors
+
     const isInHistory = history.length > 0;
     historyCache.set(key, isInHistory);
     return isInHistory;
@@ -379,12 +388,18 @@ export async function tryScrobble(data: MpvData): Promise<void> {
 
     // 4. Must have an episode number
     const episodeNum = data.episode;
-    if (!episodeNum) return;
+    if (episodeNum == null) return;
 
-    // 5. Detect filename change → reset state machine
-    if (data.filename !== currentFilename) {
-        // If we were actively playing the previous file, scrobble stop with last known progress
-        if (currentState === "playing" && currentShow && currentEpisode && lastKnownProgress >= 1) {
+    // 5. Detect metadata change (filename, title, season, or episode) → reset state machine
+    const metadataKey = `${data.filename}:${data.series_title}:${data.season}:${data.episode}`;
+    if (metadataKey !== currentMetadataKey) {
+        // If we were actively playing, scrobble stop with last known progress
+        if (
+            (currentState === "playing" || currentState === "paused") &&
+            currentShow &&
+            currentEpisode &&
+            lastKnownProgress >= 1
+        ) {
             const gate = getSyncGateDecision(currentShow.ids.trakt, currentEpisode.number, currentEpisode.season, true);
             if (gate === "allow") {
                 const success = await scrobbleStop(currentEpisode, currentShow, lastKnownProgress);
@@ -396,7 +411,7 @@ export async function tryScrobble(data: MpvData): Promise<void> {
             }
         }
 
-        currentFilename = data.filename;
+        currentMetadataKey = metadataKey;
         currentState = "idle";
         currentShow = null;
         currentEpisode = null;
@@ -474,7 +489,7 @@ export async function tryScrobble(data: MpvData): Promise<void> {
 
                 // Check history to avoid re-scrobbling
                 const inHistory = await isAlreadyInHistory(showId, epSeason, epNumber);
-                if (inHistory) {
+                if (inHistory === true) {
                     recordSyncSuccess(showId, epNumber, epSeason);
                     currentState = "playing";
                     return;
@@ -578,7 +593,7 @@ export async function stopCurrentScrobble(): Promise<void> {
         currentState = "idle";
         currentShow = null;
         currentEpisode = null;
-        currentFilename = null;
+        currentMetadataKey = null;
         lastKnownProgress = 0;
         return;
     }
@@ -611,6 +626,6 @@ export async function stopCurrentScrobble(): Promise<void> {
     currentState = "idle";
     currentShow = null;
     currentEpisode = null;
-    currentFilename = null;
+    currentMetadataKey = null;
     lastKnownProgress = 0;
 }

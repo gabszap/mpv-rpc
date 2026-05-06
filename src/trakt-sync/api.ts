@@ -160,7 +160,8 @@ async function requestWithRetry<T>(fn: () => Promise<T>, maxRetries: number = MA
             }
 
             const retryAfter = e.response?.headers["retry-after"];
-            const delayMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 2 ** attempt * 1000;
+            const parsedDelay = retryAfter ? parseInt(retryAfter, 10) : NaN;
+            const delayMs = Number.isFinite(parsedDelay) ? parsedDelay * 1000 : 2 ** attempt * 1000;
 
             console.log(
                 `[Trakt] Rate limited (429). Retrying after ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`,
@@ -460,13 +461,14 @@ export async function scrobblePause(episode: TraktEpisode, show: TraktShow, prog
 }
 
 /**
- * Get watch history for a specific show, filtered by season and episode
+ * Get watch history for a specific show, filtered by season and episode.
+ * Returns null on error (transient failures should not poison the cache).
  */
-export async function getHistory(showId: number, season: number, episode: number): Promise<TraktHistoryItem[]> {
+export async function getHistory(showId: number, season: number, episode: number): Promise<TraktHistoryItem[] | null> {
     const headers = await buildAuthHeaders();
     if (!headers) {
         console.log("[Trakt] Not authenticated - cannot fetch history");
-        return [];
+        return null;
     }
 
     try {
@@ -492,6 +494,6 @@ export async function getHistory(showId: number, season: number, episode: number
         } else {
             console.error("[Trakt] API Error (getHistory):", e);
         }
-        return [];
+        return null;
     }
 }

@@ -122,7 +122,7 @@ export const config = {
         enabled: getEnvBool("TRAKT_SYNC", false),
         clientId: getEnv("TRAKT_CLIENT_ID", ""),
         clientSecret: getEnv("TRAKT_CLIENT_SECRET", ""),
-        syncThreshold: parseInt(getEnv("TRAKT_SYNC_THRESHOLD", "81"), 10), // % watched to trigger scrobble
+        syncThreshold: Math.max(1, Math.min(100, parseInt(getEnv("TRAKT_SYNC_THRESHOLD", "81"), 10) || 81)), // % watched to trigger scrobble
         useTor: getEnvBool("TRAKT_USE_TOR", false),
         torProxy: getEnv("TRAKT_TOR_PROXY", "socks5://127.0.0.1:9050"),
     },

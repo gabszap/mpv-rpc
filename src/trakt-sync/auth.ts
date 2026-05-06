@@ -178,6 +178,20 @@ async function refreshAccessToken(refreshToken: string): Promise<TraktTokens | n
                 error: e.response?.data?.error,
                 message: e.message,
             });
+
+            // Clear invalid tokens on auth failures (401 / invalid_grant)
+            if (e.response?.status === 401 || e.response?.data?.error === "invalid_grant") {
+                cachedTokens = null;
+                try {
+                    const tokenPath = getTokensPath();
+                    if (fs.existsSync(tokenPath)) {
+                        fs.unlinkSync(tokenPath);
+                    }
+                } catch {
+                    // Ignore cleanup errors
+                }
+                console.error("[Trakt] Token refresh failed - please re-authorize with 'trakt-auth'");
+            }
         } else {
             console.error("[Trakt] Error refreshing token:", e);
         }
@@ -255,10 +269,19 @@ async function pollForToken(deviceCode: string, intervalMs: number): Promise<Tra
                         console.error("[Trakt] Unexpected polling error:", error);
                         return null;
                 }
-            } else {
-                // Non-200, non-400 — unexpected
-                console.error("[Trakt] Unexpected polling response:", response.status, response.data);
+            } else if (
+                response.status === 404 ||
+                response.status === 409 ||
+                response.status === 410 ||
+                response.status === 418
+            ) {
+                // Terminal errors — abort
+                console.error("[Trakt] Polling aborted with terminal status:", response.status);
                 return null;
+            } else {
+                // Transient errors (5xx, 429, network) — retry with backoff
+                console.log(`[Trakt] Polling got ${response.status}, retrying...`);
+                await new Promise((resolve) => setTimeout(resolve, currentInterval));
             }
         } catch (e) {
             if (axios.isAxiosError(e)) {
