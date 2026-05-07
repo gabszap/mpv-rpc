@@ -134,7 +134,7 @@ async function buildAuthHeaders(): Promise<Record<string, string> | null> {
 export function normalizeTitle(title: string): string {
     return title
         .toLowerCase()
-        .replace(/[^\w\s]/g, "")
+        .replace(/[^\p{L}\p{N}\s]/gu, "")
         .replace(/\s+/g, " ")
         .trim();
 }

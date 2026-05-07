@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { config } from "./config";
 import type { MpvData } from "./mpv";
+import { normalizeTitle } from "./trakt-sync/api";
 
 // Shared config file path (same as bridge uses)
 const CONFIG_PATH = path.resolve(__dirname, "..", ".config", ".stremio-mpv-config.json");
@@ -32,6 +33,24 @@ interface SharedConfig {
     stremioMeta?: StremioMeta;
     extraEpisodes?: number;
     [key: string]: unknown;
+}
+
+/**
+ * Token-based title matching with minimum overlap threshold.
+ * Prevents substring false positives like "Naruto" matching "Boruto: Naruto Next Generations".
+ */
+function titlesMatch(configTitle: string, watchingTitle: string): boolean {
+    const configTokens = configTitle.split(/\s+/).filter((t) => t.length > 0);
+    const watchTokens = watchingTitle.split(/\s+/).filter((t) => t.length > 0);
+
+    if (configTokens.length === 0 || watchTokens.length === 0) return false;
+
+    // Check if at least 80% of the shorter title's tokens are in the longer title
+    const shorter = configTokens.length <= watchTokens.length ? configTokens : watchTokens;
+    const longer = configTokens.length <= watchTokens.length ? watchTokens : configTokens;
+
+    const matches = shorter.filter((t) => longer.includes(t)).length;
+    return matches / shorter.length >= 0.8;
 }
 
 /**
@@ -133,6 +152,39 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
     // Guard: couldn't determine episode number
     if (episode == null) {
         console.warn("[AutoFetch] Could not determine episode number from filename or config. Skipping.");
+        return;
+    }
+
+    // Validate that Stremio metadata matches what's being watched
+    const configName = stremioMeta.name;
+    const watchingTitle = data.series_title;
+
+    if (configName && watchingTitle && watchingTitle !== "N/A") {
+        const normalizedConfig = normalizeTitle(configName);
+        const normalizedWatching = normalizeTitle(watchingTitle);
+
+        // Guard: empty normalized strings (e.g. non-Latin titles that failed normalization)
+        if (!normalizedConfig || !normalizedWatching) {
+            console.log(
+                `[AutoFetch] Title normalization failed for "${configName}" or "${watchingTitle}". Skipping auto-fetch.`,
+            );
+            return;
+        }
+
+        // Token-based matching to prevent substring false positives
+        if (!titlesMatch(normalizedConfig, normalizedWatching)) {
+            console.log(
+                `[AutoFetch] Stremio config name "${configName}" doesn't match "${watchingTitle}". Skipping auto-fetch.`,
+            );
+            return;
+        }
+    }
+
+    // Validate IMDB ID if available from both sources
+    if (data.imdb_id && stremioMeta.imdbId && data.imdb_id !== stremioMeta.imdbId) {
+        console.log(
+            `[AutoFetch] Stremio config IMDB ID "${stremioMeta.imdbId}" doesn't match "${data.imdb_id}". Skipping auto-fetch.`,
+        );
         return;
     }
 
