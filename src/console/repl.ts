@@ -89,21 +89,31 @@ export class ConsoleRepl extends EventEmitter {
         }
 
         // Parse command and argument
-        // Handle: set "title", rename "title"
-        const setMatch = trimmed.match(/^set\s+["']?(.+?)["']?$/i);
-        const renameMatch = trimmed.match(/^rename\s+["']?(.+?)["']?$/i);
+        // Handle: episode-title "title", series-name "name" (and aliases et, sn)
+        const episodeTitleMatch = trimmed.match(/^(?:episode-title|et)(?:\s+["']?(.+?)["']?)?$/i);
+        const seriesNameMatch = trimmed.match(/^(?:series-name|sn)(?:\s+["']?(.+?)["']?)?$/i);
         const command = trimmed.split(/\s+/)[0].toLowerCase();
 
-        if (setMatch) {
-            this.handleSet(setMatch[1]);
-        } else if (renameMatch) {
-            this.handleRename(renameMatch[1]);
+        if (episodeTitleMatch) {
+            this.handleEpisodeTitle(episodeTitleMatch[1]);
+        } else if (seriesNameMatch) {
+            this.handleSeriesName(seriesNameMatch[1]);
         } else {
             switch (command) {
-                case "clear":
-                    this.handleClear();
+                case "clear-episode":
+                case "ce":
+                    this.handleClearEpisode();
+                    break;
+                case "clear-series":
+                case "cs":
+                    this.handleClearSeries();
+                    break;
+                case "clear-all":
+                case "ca":
+                    this.handleClearAll();
                     break;
                 case "status":
+                case "st":
                     this.handleStatus();
                     break;
                 case "help":
@@ -123,11 +133,11 @@ export class ConsoleRepl extends EventEmitter {
     }
 
     /**
-     * Handle 'set' command - set manual title override
+     * Handle 'episode-title' command - set manual episode title override
      */
-    private handleSet(title: string): void {
-        if (!title) {
-            console.log('[Error] Usage: set "<title>"');
+    private handleEpisodeTitle(title?: string): void {
+        if (!title?.trim()) {
+            console.log('[Error] Usage: episode-title "<title>"');
             return;
         }
 
@@ -143,17 +153,17 @@ export class ConsoleRepl extends EventEmitter {
         };
 
         setManualOverride(override);
-        console.log(`[Manual] Title set to: "${title}"`);
+        console.log(`[Manual] Episode title set to: "${title}"`);
         console.log(`[Manual] Active for episode: ${this.currentContext.id}`);
         this.emit("overrideSet", override);
     }
 
     /**
-     * Handle 'rename' command - override the series name for metadata searches
+     * Handle 'series-name' command - override the series name for metadata searches
      */
-    private handleRename(name: string): void {
-        if (!name) {
-            console.log('[Error] Usage: rename "<series name>"');
+    private handleSeriesName(name?: string): void {
+        if (!name?.trim()) {
+            console.log('[Error] Usage: series-name "<name>"');
             return;
         }
 
@@ -175,9 +185,39 @@ export class ConsoleRepl extends EventEmitter {
     }
 
     /**
-     * Handle 'clear' command - remove manual override and/or rename
+     * Handle 'clear-episode' command - remove episode title override only
      */
-    private handleClear(): void {
+    private handleClearEpisode(): void {
+        const override = getManualOverride();
+
+        if (override) {
+            clearManualOverride();
+            console.log("[Manual] Episode title override cleared");
+            this.emit("overrideCleared");
+        } else {
+            console.log("[Manual] No episode title override active");
+        }
+    }
+
+    /**
+     * Handle 'clear-series' command - remove series name override only
+     */
+    private handleClearSeries(): void {
+        const rename = getSeriesNameOverride();
+
+        if (rename) {
+            clearSeriesNameOverride();
+            console.log("[Manual] Series name override cleared");
+            this.emit("renameCleared");
+        } else {
+            console.log("[Manual] No series name override active");
+        }
+    }
+
+    /**
+     * Handle 'clear-all' command - remove all overrides
+     */
+    private handleClearAll(): void {
         const override = getManualOverride();
         const rename = getSeriesNameOverride();
 
@@ -192,7 +232,7 @@ export class ConsoleRepl extends EventEmitter {
             this.emit("renameCleared");
         }
         if (!override && !rename) {
-            console.log("[Manual] No active override to clear");
+            console.log("[Manual] No active overrides to clear");
         }
     }
 
@@ -244,14 +284,22 @@ export class ConsoleRepl extends EventEmitter {
      * Handle 'help' command - show available commands
      */
     private handleHelp(): void {
-        console.log("\n--- Available Commands ---");
-        console.log('  set "<title>"     - Override the current episode title');
-        console.log('  rename "<name>"   - Override the series name (for metadata search)');
-        console.log("  clear             - Remove all active overrides");
-        console.log("  status            - Display current state and override info");
-        console.log("  help              - Show this help message");
-        console.log("  exit              - Quit the application");
-        console.log("--------------------------\n");
+        console.log("\n--- Available Commands ---\n");
+        console.log('  episode-title "<title>"    Override the episode title shown in Discord');
+        console.log('                              Example: episode-title "The Battle Begins"');
+        console.log("                              Alias: et\n");
+        console.log('  series-name "<name>"       Override the series name for metadata search');
+        console.log("                              Useful when the parser got the anime name wrong");
+        console.log('                              Example: series-name "One Piece"');
+        console.log("                              Alias: sn\n");
+        console.log("  clear-episode (ce)         Remove the episode title override");
+        console.log("  clear-series (cs)          Remove the series name override");
+        console.log("  clear-all (ca)             Remove all overrides");
+        console.log("  status (st)                Show current state and active overrides");
+        console.log("  help (?)                   Show this message");
+        console.log("  exit (quit)                Quit the application\n");
+        console.log("  All commands accept single or double quotes for arguments.");
+        console.log("----------------------------\n");
     }
 
     /**
