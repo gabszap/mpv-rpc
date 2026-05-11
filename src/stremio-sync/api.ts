@@ -6,6 +6,13 @@ import { config } from "../config";
 const STREMIO_API_BASE_URL = "https://api.strem.io/api";
 const API_LOG_PATH = path.join(process.cwd(), ".anime_cache", "stremio_api_log.txt");
 
+export function nowTimestamp(): string {
+    const now = new Date();
+    const offset = -4 * 60 * 60 * 1000;
+    const local = new Date(now.getTime() + offset);
+    return local.toISOString().replace("Z", "-04:00");
+}
+
 function appendApiLog(entry: Record<string, unknown>): void {
     if (!config.debug) {
         return;
@@ -13,7 +20,7 @@ function appendApiLog(entry: Record<string, unknown>): void {
     try {
         const dir = path.dirname(API_LOG_PATH);
         fs.mkdirSync(dir, { recursive: true });
-        const timestamp = new Date().toISOString();
+        const timestamp = nowTimestamp();
         const block = `--- ${timestamp} ---\n${JSON.stringify({ ...entry, timestamp }, null, 2)}\n`;
         fs.appendFileSync(API_LOG_PATH, block, "utf-8");
     } catch {

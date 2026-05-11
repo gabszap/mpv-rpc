@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { config } from "../config";
 import type { MpvData } from "../mpv";
-import { getLibraryItem, type LibraryItem, type LibraryItemState, putLibraryItem } from "./api";
+import { getLibraryItem, type LibraryItem, type LibraryItemState, nowTimestamp, putLibraryItem } from "./api";
 import { getStremioAuthKey } from "./auth";
 import { isEpisodeWatched, markEpisodeWatched } from "./bitset";
 import { readStremioPlaybackContext, type StremioPlaybackContext } from "./context";
@@ -17,7 +17,7 @@ export function appendSyncLog(entry: Record<string, unknown>): void {
     try {
         const dir = path.dirname(SYNC_LOG_PATH);
         fs.mkdirSync(dir, { recursive: true });
-        const timestamp = new Date().toISOString();
+        const timestamp = nowTimestamp();
         const block = `--- ${timestamp} ---\n${JSON.stringify({ ...entry, timestamp }, null, 2)}\n`;
         fs.appendFileSync(SYNC_LOG_PATH, block, "utf-8");
     } catch {
@@ -258,13 +258,25 @@ function cloneLibraryItemWithProgress(
                     if (typeof existingState.times_watched === "number") {
                         nextState.times_watched = existingState.times_watched + 1;
                     }
+
+                    console.log(
+                        `[Stremio] Watched marked: ${context.name || context.libraryItemId} S${context.season}E${context.episode}`,
+                    );
+                    appendSyncLog({
+                        step: "watched-marked",
+                        libraryItemId: context.libraryItemId,
+                        season: context.season,
+                        episode: context.episode,
+                        videoId: nextState.video_id,
+                        timestamp: nowTimestamp(),
+                    });
                 }
             }
         } catch (error) {
             appendSyncLog({
                 step: "watched-error",
                 reason: error instanceof Error ? error.message : "unknown",
-                timestamp: new Date().toISOString(),
+                timestamp: nowTimestamp(),
             });
         }
     }

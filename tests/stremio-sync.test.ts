@@ -20,6 +20,7 @@ vi.mock("../src/config", () => ({
 vi.mock("../src/stremio-sync/api", () => ({
     getLibraryItem: vi.fn(),
     putLibraryItem: vi.fn(),
+    nowTimestamp: () => "2026-05-11T20:00:00.000-04:00",
 }));
 
 vi.mock("../src/stremio-sync/auth", () => ({

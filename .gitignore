@@ -7,4 +7,6 @@ guessit-api/.vercel
 scripts/
 .ocx
 .anime_cache/
+plans/
+dev/
 bun.lock
