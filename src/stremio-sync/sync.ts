@@ -4,11 +4,13 @@ import { config } from "../config";
 import type { MpvData } from "../mpv";
 import { getLibraryItem, type LibraryItem, type LibraryItemState, putLibraryItem } from "./api";
 import { getStremioAuthKey } from "./auth";
+import { isEpisodeWatched, markEpisodeWatched } from "./bitset";
 import { readStremioPlaybackContext, type StremioPlaybackContext } from "./context";
+import { fetchVideoIds } from "./meta";
 
 const SYNC_LOG_PATH = path.join(process.cwd(), ".anime_cache", "stremio_sync_log.txt");
 
-function appendSyncLog(entry: Record<string, unknown>): void {
+export function appendSyncLog(entry: Record<string, unknown>): void {
     if (!config.debug) {
         return;
     }
@@ -193,9 +195,11 @@ function isPlaybackContextMatchingData(context: StremioPlaybackContext, data: Mp
 function cloneLibraryItemWithProgress(
     item: LibraryItem,
     data: MpvData,
-    videoId: string,
-    now: Date,
     context: StremioPlaybackContext,
+    videoId: string,
+    videoIds: string[] | null,
+    now: Date,
+    syncThreshold: number,
 ): LibraryItem {
     const existingState =
         typeof item.state === "object" && item.state !== null && !Array.isArray(item.state) ? item.state : {};
@@ -211,6 +215,58 @@ function cloneLibraryItemWithProgress(
     if (context.type === "series" && context.season !== null && context.episode !== null) {
         nextState.season = context.season;
         nextState.episode = context.episode;
+    }
+
+    // Mark watched if conditions are met
+    const shouldMarkWatched =
+        context.type === "series" &&
+        context.season != null &&
+        context.episode != null &&
+        nextState.video_id &&
+        videoIds &&
+        videoIds.length > 0 &&
+        data.percent_pos >= syncThreshold;
+
+    if (shouldMarkWatched) {
+        try {
+            const existingWatched = existingState.watched;
+            const hasExistingWatched = typeof existingWatched === "string" && existingWatched.length > 0;
+            const confirmedVideoIds = videoIds as string[];
+            const confirmedVideoId = nextState.video_id as string;
+
+            // Only mark if not already watched
+            if (
+                !hasExistingWatched ||
+                !isEpisodeWatched(
+                    existingWatched as string,
+                    confirmedVideoIds.length,
+                    confirmedVideoId,
+                    confirmedVideoIds,
+                )
+            ) {
+                const result = markEpisodeWatched(
+                    hasExistingWatched ? (existingWatched as string) : null,
+                    confirmedVideoIds.length,
+                    confirmedVideoId,
+                    confirmedVideoIds,
+                );
+                if (result.changed) {
+                    nextState.watched = result.watched;
+                    if (typeof existingState.flagged_watched === "number") {
+                        nextState.flagged_watched = 1;
+                    }
+                    if (typeof existingState.times_watched === "number") {
+                        nextState.times_watched = existingState.times_watched + 1;
+                    }
+                }
+            }
+        } catch (error) {
+            appendSyncLog({
+                step: "watched-error",
+                reason: error instanceof Error ? error.message : "unknown",
+                timestamp: new Date().toISOString(),
+            });
+        }
     }
 
     return {
@@ -320,9 +376,23 @@ export async function trySyncStremio(data: MpvData): Promise<StremioSyncResult> 
             return { status: "skipped", reason: "library-item-not-found" };
         }
 
+        // Fetch video IDs for watched marking
+        let videoIds: string[] | null = null;
+        if (context.imdbId && context.type === "series") {
+            videoIds = await fetchVideoIds(context.imdbId);
+        }
+
         const originalMtime = libraryItem._mtime;
         const originalTimeOffset = (libraryItem.state as Record<string, unknown> | undefined)?.timeOffset;
-        const updatedItem = cloneLibraryItemWithProgress(libraryItem, data, videoId, now, context);
+        const updatedItem = cloneLibraryItemWithProgress(
+            libraryItem,
+            data,
+            context,
+            videoId,
+            videoIds,
+            now,
+            config.stremio.syncThreshold,
+        );
 
         appendSyncLog({
             step: "clone",

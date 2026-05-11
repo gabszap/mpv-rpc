@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MpvData } from "../src/mpv";
 import * as api from "../src/stremio-sync/api";
 import * as auth from "../src/stremio-sync/auth";
+import { encodeWatched } from "../src/stremio-sync/bitset";
 import * as context from "../src/stremio-sync/context";
+import * as meta from "../src/stremio-sync/meta";
 import { resetStremioSyncStateForTests, trySyncStremio } from "../src/stremio-sync/sync";
 
 vi.mock("../src/config", () => ({
@@ -26,6 +28,10 @@ vi.mock("../src/stremio-sync/auth", () => ({
 
 vi.mock("../src/stremio-sync/context", () => ({
     readStremioPlaybackContext: vi.fn(),
+}));
+
+vi.mock("../src/stremio-sync/meta", () => ({
+    fetchVideoIds: vi.fn(),
 }));
 
 function createMpvData(overrides: Partial<MpvData> = {}): MpvData {
@@ -66,6 +72,7 @@ describe("Stremio sync MVP", () => {
             episode: 2,
             episodesInSeason: 12,
         });
+        vi.mocked(meta.fetchVideoIds).mockResolvedValue(null);
         vi.mocked(api.getLibraryItem).mockResolvedValue({
             _id: "tt1234567",
             _mtime: "2026-03-15T10:00:00.000Z",
@@ -463,5 +470,87 @@ describe("Stremio sync MVP", () => {
         const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
         expect(updatedItem.state?.watched).toBe("existing-watched");
         expect(updatedItem.state?.timesWatched).toBe(3);
+    });
+
+    it("marks episode as watched when video IDs are available and episode not yet watched", async () => {
+        const videoIds = ["tt1234567:1:1", "tt1234567:1:2", "tt1234567:1:3"];
+        vi.mocked(meta.fetchVideoIds).mockResolvedValue(videoIds);
+        vi.mocked(api.getLibraryItem).mockResolvedValue({
+            _id: "tt1234567",
+            _mtime: "2026-03-15T10:00:00.000Z",
+            state: {
+                timeWatched: 111,
+                overallTimeWatched: 222,
+                times_watched: 3,
+                flagged_watched: 1,
+            },
+        });
+
+        await expect(trySyncStremio(createMpvData({ percent_pos: 90 }))).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(typeof updatedItem.state?.watched).toBe("string");
+        expect(updatedItem.state?.watched).toBeTruthy();
+        expect(updatedItem.state?.flagged_watched).toBe(1);
+        expect(updatedItem.state?.times_watched).toBe(4);
+    });
+
+    it("does not re-mark an already watched episode", async () => {
+        const videoIds = ["tt1234567:1:1", "tt1234567:1:2", "tt1234567:1:3"];
+        const existingWatched = encodeWatched({
+            anchorVideoId: "tt1234567:1:2",
+            anchorLength: 2,
+            watchedEpisodes: [false, true, false],
+        });
+        vi.mocked(meta.fetchVideoIds).mockResolvedValue(videoIds);
+        vi.mocked(api.getLibraryItem).mockResolvedValue({
+            _id: "tt1234567",
+            _mtime: "2026-03-15T10:00:00.000Z",
+            state: {
+                timeWatched: 111,
+                overallTimeWatched: 222,
+                timesWatched: 3,
+                flaggedWatched: 1,
+                watched: existingWatched,
+            },
+        });
+
+        await expect(trySyncStremio(createMpvData({ percent_pos: 90 }))).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state?.watched).toBe(existingWatched);
+        expect(updatedItem.state?.timesWatched).toBe(3);
+    });
+
+    it("does not update watched when video IDs are null", async () => {
+        vi.mocked(meta.fetchVideoIds).mockResolvedValue(null);
+
+        await expect(trySyncStremio(createMpvData({ percent_pos: 99 }))).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state?.watched).toBe("existing-watched");
+        expect(updatedItem.state?.timesWatched).toBe(3);
+    });
+
+    it("does not mark watched when below threshold even with video IDs", async () => {
+        const videoIds = ["tt1234567:1:1", "tt1234567:1:2", "tt1234567:1:3"];
+        vi.mocked(meta.fetchVideoIds).mockResolvedValue(videoIds);
+
+        await expect(trySyncStremio(createMpvData({ percent_pos: 70 }))).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state?.watched).toBe("existing-watched");
     });
 });
