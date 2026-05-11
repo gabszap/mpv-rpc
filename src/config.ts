@@ -127,6 +127,13 @@ export const config = {
         torProxy: getEnv("TRAKT_TOR_PROXY", "socks5://127.0.0.1:9050"),
     },
 
+    // Stremio sync settings
+    stremio: {
+        enabled: getEnvBool("STREMIO_SYNC", false),
+        syncThreshold: Math.max(1, Math.min(100, parseInt(getEnv("STREMIO_SYNC_THRESHOLD", "85"), 10) || 85)),
+        progressIntervalMs: Math.max(30000, parseInt(getEnv("STREMIO_PROGRESS_INTERVAL_MS", "90000"), 10) || 90000),
+    },
+
     // Auto-fetch settings (automatically fetch next episodes near playlist end)
     autoFetchEnabled: getEnvBool("AUTO_FETCH_ENABLED", true),
 };

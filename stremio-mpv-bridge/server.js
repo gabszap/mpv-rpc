@@ -58,7 +58,18 @@ app.get("/health", (_req, res) => {
     res.json({ status: "ok", mpvPath: MPV_PATH });
 });
 
-const CONFIG_PATH = path.resolve(__dirname, "..", ".config", ".stremio-mpv-config.json");
+const CONFIG_DIR = path.resolve(__dirname, "..", ".config");
+const CONFIG_PATH = path.join(CONFIG_DIR, ".stremio-mpv-config.json");
+const STREMIO_TOKEN_PATH = path.join(CONFIG_DIR, ".stremio_tokens.json");
+
+function ensureConfigDir() {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    try {
+        fs.chmodSync(CONFIG_DIR, 0o700);
+    } catch (_) {
+        // Best effort only; Windows may not support POSIX permissions.
+    }
+}
 
 function readConfig() {
     try {
@@ -70,9 +81,50 @@ function readConfig() {
 }
 
 function writeConfig(config) {
+    ensureConfigDir();
     const tmpPath = `${CONFIG_PATH}.tmp.${crypto.randomBytes(8).toString("hex")}`;
     fs.writeFileSync(tmpPath, JSON.stringify(config, null, 4), "utf-8");
     fs.renameSync(tmpPath, CONFIG_PATH);
+}
+
+function saveStremioAuth(authKey) {
+    if (typeof authKey !== "string" || authKey.trim().length === 0) {
+        return false;
+    }
+
+    ensureConfigDir();
+
+    const tokenPayload = {
+        authKey: authKey.trim(),
+        savedAt: new Date().toISOString(),
+    };
+    const tmpPath = `${STREMIO_TOKEN_PATH}.tmp.${crypto.randomBytes(8).toString("hex")}`;
+
+    fs.writeFileSync(tmpPath, JSON.stringify(tokenPayload, null, 4), { encoding: "utf-8", mode: 0o600 });
+    try {
+        fs.chmodSync(tmpPath, 0o600);
+    } catch (_) {
+        // Best effort only; Windows may not support POSIX permissions.
+    }
+
+    fs.renameSync(tmpPath, STREMIO_TOKEN_PATH);
+    try {
+        fs.chmodSync(STREMIO_TOKEN_PATH, 0o600);
+    } catch (_) {
+        // Best effort only; Windows may not support POSIX permissions.
+    }
+
+    return true;
+}
+
+function getExistingStremioAuth() {
+    try {
+        const raw = fs.readFileSync(STREMIO_TOKEN_PATH, "utf-8");
+        const parsed = JSON.parse(raw);
+        return typeof parsed.authKey === "string" ? parsed.authKey : null;
+    } catch (_) {
+        return null;
+    }
 }
 
 function validateProvider(p) {
@@ -93,18 +145,65 @@ function validateStremioMeta(meta) {
     const allowed = {
         seriesId: "string",
         imdbId: "string",
+        libraryItemId: "string",
+        videoId: "string",
         name: "string",
         episodeTitle: "string",
         season: "number",
         episode: "number",
+        episodesInSeason: "number",
         type: "string",
+        savedAt: "string",
     };
     for (const [key, expectedType] of Object.entries(allowed)) {
         if (key in meta && meta[key] !== null && meta[key] !== undefined && typeof meta[key] !== expectedType) {
             return `stremioMeta.${key} must be a ${expectedType}`;
         }
     }
+    if (typeof meta.imdbId === "string" && !/^tt\d+$/.test(meta.imdbId)) {
+        return "stremioMeta.imdbId must be a real IMDb id";
+    }
     return null;
+}
+
+function sanitizeStremioContext(context) {
+    const err = validateStremioMeta(context);
+    if (err) {
+        return { error: err, value: null };
+    }
+
+    const sanitized = {};
+    const stringFields = ["seriesId", "imdbId", "libraryItemId", "videoId", "name", "episodeTitle", "type"];
+    const numberFields = ["season", "episode", "episodesInSeason"];
+
+    for (const field of stringFields) {
+        if (typeof context[field] === "string") {
+            const trimmedValue = context[field].trim();
+            if (trimmedValue.length > 0) {
+                sanitized[field] = trimmedValue;
+            }
+        }
+    }
+
+    for (const field of numberFields) {
+        if (typeof context[field] === "number" && Number.isInteger(context[field]) && context[field] > 0) {
+            sanitized[field] = context[field];
+        }
+    }
+
+    if (context.imdbId === null) {
+        sanitized.imdbId = null;
+    }
+    if (context.videoId === null) {
+        sanitized.videoId = null;
+    }
+    if (context.episodesInSeason === null) {
+        sanitized.episodesInSeason = null;
+    }
+
+    sanitized.savedAt = new Date().toISOString();
+
+    return { error: null, value: sanitized };
 }
 
 app.post("/config", (req, res) => {
@@ -140,8 +239,56 @@ app.post("/config", (req, res) => {
     res.json({ success: true, message: "Config updated" });
 });
 
+app.post("/sync-config", (req, res) => {
+    const body = req.body;
+
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        return res.status(400).json({ error: "Request body must be a valid JSON object" });
+    }
+
+    // Validate stremioMeta if provided
+    if (body.stremioMeta !== undefined) {
+        const err = validateStremioMeta(body.stremioMeta);
+        if (err) {
+            return res.status(400).json({ error: err });
+        }
+    }
+
+    // Validate stremioAuth if provided
+    if (body.stremioAuth !== undefined) {
+        if (typeof body.stremioAuth !== "string" || body.stremioAuth.trim().length === 0) {
+            return res.status(400).json({ error: "stremioAuth must be a non-empty string" });
+        }
+    }
+
+    const existing = readConfig();
+
+    // Save auth if provided
+    if (body.stremioAuth && typeof body.stremioAuth === "string") {
+        const existingAuth = getExistingStremioAuth();
+        if (existingAuth !== body.stremioAuth.trim()) {
+            if (saveStremioAuth(body.stremioAuth)) {
+                console.log("[MPV Bridge] Synced Stremio auth token");
+            }
+        }
+    }
+
+    // Save context if provided
+    if (body.stremioMeta && typeof body.stremioMeta === "object") {
+        const sanitizedContext = sanitizeStremioContext(body.stremioMeta);
+        if (sanitizedContext.error) {
+            return res.status(400).json({ error: sanitizedContext.error });
+        }
+        existing.stremioMeta = sanitizedContext.value;
+        writeConfig(existing);
+        console.log("[MPV Bridge] Synced stremioMeta config");
+    }
+
+    res.json({ success: true, message: "Config synced" });
+});
+
 app.post("/play", (req, res) => {
-    const { playlist, urls, contentTitle, args, stremioContext } = req.body;
+    const { playlist, urls, contentTitle, args, stremioAuth, stremioContext } = req.body;
     const items = playlist || (urls ? urls.map((u) => ({ url: u, title: contentTitle })) : []);
 
     if (
@@ -224,12 +371,31 @@ app.post("/play", (req, res) => {
         console.log(`[MPV Bridge] MPV started with PID: ${mpvProcess.pid}`);
         console.log(`[MPV Bridge] Playlist: ${tmpPath}`);
 
-        // Merge stremioContext into shared config as stremioMeta
+        if (stremioAuth !== undefined && typeof stremioAuth === "string" && stremioAuth.trim().length > 0) {
+            try {
+                const existingAuth = getExistingStremioAuth();
+                if (existingAuth !== stremioAuth.trim()) {
+                    if (saveStremioAuth(stremioAuth)) {
+                        console.log("[MPV Bridge] Saved Stremio auth token to .config/.stremio_tokens.json");
+                    }
+                }
+                // If token is the same, don't log anything — it's already saved
+            } catch (tokenErr) {
+                console.error("[MPV Bridge] Failed to save Stremio auth token:", tokenErr.message);
+            }
+        }
+
+        // Replace stremioContext atomically so stale identity fields cannot survive between play requests.
         if (stremioContext && typeof stremioContext === "object" && !Array.isArray(stremioContext)) {
             try {
-                const existing = readConfig();
-                existing.stremioMeta = { ...existing.stremioMeta, ...stremioContext };
-                writeConfig(existing);
+                const sanitizedContext = sanitizeStremioContext(stremioContext);
+                if (sanitizedContext.error) {
+                    console.error("[MPV Bridge] Ignoring invalid stremioContext:", sanitizedContext.error);
+                } else {
+                    const existing = readConfig();
+                    existing.stremioMeta = sanitizedContext.value;
+                    writeConfig(existing);
+                }
             } catch (cfgErr) {
                 console.error("[MPV Bridge] Failed to merge stremioContext into config:", cfgErr.message);
             }
@@ -797,8 +963,17 @@ const server = app.listen(PORT, "127.0.0.1", () => {
 ║    POST /play        - Open URLs in MPV                   ║
 ║    POST /config      - Update bridge config               ║
 ║    POST /auto-fetch  - Auto-fetch next episodes           ║
+║    POST /sync-config - Sync config manually               ║
 ╚═══════════════════════════════════════════════════════════╝
 `);
+
+    // Check if config exists on startup
+    const startupConfig = readConfig();
+    if (startupConfig.stremioMeta) {
+        console.log("[MPV Bridge] Found existing stremioMeta in config — ready for sync.");
+    } else {
+        console.log("[MPV Bridge] No stremioMeta in config yet — will sync when you open content via the extension.");
+    }
 });
 
 function shutdown() {
