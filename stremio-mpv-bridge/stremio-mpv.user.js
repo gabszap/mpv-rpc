@@ -2420,12 +2420,33 @@
             return;
         }
 
-        // Phase 5B: icon visibility is now driven by the explicit `iconMode`
-        // config rather than implicit URL inspection. The mode is read from
-        // GM_getValue (with a safe default of "default") and resolved to a
-        // visibility state via `applyIconMode` (mirrors the TS helper).
-        const iconMode = GM_getValue("iconMode", "default");
-        const state = applyIconMode(iconMode);
+        const route = getRouteText();
+        const isDetail = route.includes("/detail/");
+        const isAddons = route.includes("/addons");
+
+        let state;
+        if (isDetail) {
+            const iconMode = GM_getValue("iconMode", "default");
+            state = applyIconMode(iconMode);
+        } else if (isAddons) {
+            state = {
+                containerVisible: true,
+                mpvButtonVisible: false,
+                configButtonVisible: true,
+                configButtonEnlarged: true,
+                configButtonSize: "large",
+                containerPosition: "bottom-right",
+            };
+        } else {
+            state = {
+                containerVisible: false,
+                mpvButtonVisible: false,
+                configButtonVisible: false,
+                configButtonEnlarged: false,
+                configButtonSize: "small",
+                containerPosition: "bottom-right",
+            };
+        }
 
         container.style.display = state.containerVisible ? "flex" : "none";
         positionFloatingContainer(container, state);
@@ -2469,7 +2490,6 @@
             }
 
             info.style.order = state.containerPosition === "top-right" ? "1" : "";
-            const isDetail = isDetailRoute();
             if (isDetail) {
                 const content = parseCurrentURL();
                 if (content?.episode) {
