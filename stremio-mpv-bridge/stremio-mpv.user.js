@@ -1042,6 +1042,19 @@
                             <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
                         </div>
 
+<<<<<<< HEAD
+=======
+                        <div class="mpv-form-group">
+                            <label class="mpv-label">Floating Icons</label>
+                            <select id="mpv-icon-mode" class="mpv-input" style="cursor: pointer;">
+                                <option value="default" ${GM_getValue("iconMode", "default") === "default" ? "selected" : ""}>Show MPV + Config icons</option>
+                                <option value="config-only" ${GM_getValue("iconMode", "default") === "config-only" ? "selected" : ""}>Config icon only</option>
+                                <option value="compact" ${GM_getValue("iconMode", "default") === "compact" ? "selected" : ""}>Compact (larger config icon)</option>
+                                <option value="disabled" ${GM_getValue("iconMode", "default") === "disabled" ? "selected" : ""}>Hide all icons</option>
+                            </select>
+                            <div class="mpv-help" style="margin-top: 4px;">Controls the floating MPV / config buttons in the bottom-right corner.</div>
+                        </div>
+>>>>>>> 008d88b (feat(core): Phase 5 - iconMode enum, Discord title filter, graceful disconnect)
                     </div>
 
                     <div class="mpv-tab-panel" data-tab-panel="advanced" role="tabpanel">
@@ -1953,6 +1966,10 @@
         // skips migration. The on-disk file is also marked when the bridge
         // accepts the /config POST and migrates it.
         GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+<<<<<<< HEAD
+=======
+        GM_setValue("autoFetchEnabled", true);
+>>>>>>> 008d88b (feat(core): Phase 5 - iconMode enum, Discord title filter, graceful disconnect)
 
         // Phase 5B: read the iconMode from the modal's <select> (default
         // "default" if absent) and persist it. Unknown values are coerced
@@ -1962,7 +1979,10 @@
         const selectedIconMode = iconModeSelect ? iconModeSelect.value : "default";
         const iconMode = validIconModes.includes(selectedIconMode) ? selectedIconMode : "default";
         GM_setValue("iconMode", iconMode);
+<<<<<<< HEAD
         updateButtonInfo();
+=======
+>>>>>>> 008d88b (feat(core): Phase 5 - iconMode enum, Discord title filter, graceful disconnect)
 
         showToast("Settings saved!", "success");
 
@@ -2481,6 +2501,7 @@
         const container = document.getElementById("stremio-mpv-floating");
         if (!container) return;
 
+<<<<<<< HEAD
         if (isPlayerRoute()) {
             container.style.display = "none";
             return;
@@ -2516,6 +2537,16 @@
 
         container.style.display = state.containerVisible ? "flex" : "none";
         positionFloatingContainer(container, state);
+=======
+        // Phase 5B: icon visibility is now driven by the explicit `iconMode`
+        // config rather than implicit URL inspection. The mode is read from
+        // GM_getValue (with a safe default of "default") and resolved to a
+        // visibility state via `applyIconMode` (mirrors the TS helper).
+        const iconMode = GM_getValue("iconMode", "default");
+        const state = applyIconMode(iconMode);
+
+        container.style.display = state.containerVisible ? "flex" : "none";
+>>>>>>> 008d88b (feat(core): Phase 5 - iconMode enum, Discord title filter, graceful disconnect)
 
         const playBtn = document.getElementById("stremio-mpv-btn");
         if (playBtn) playBtn.style.display = state.mpvButtonVisible ? "flex" : "none";
@@ -2524,8 +2555,13 @@
         if (configBtn) {
             const svg = configBtn.querySelector("svg");
             configBtn.style.display = state.configButtonVisible ? "flex" : "none";
+<<<<<<< HEAD
             configBtn.style.order = state.containerPosition === "top-right" ? "0" : "";
             if (state.configButtonSize === "large") {
+=======
+            if (state.configButtonEnlarged) {
+                // 48x48 with 24x24 SVG (compact mode)
+>>>>>>> 008d88b (feat(core): Phase 5 - iconMode enum, Discord title filter, graceful disconnect)
                 configBtn.style.width = "48px";
                 configBtn.style.height = "48px";
                 configBtn.style.opacity = "1";
@@ -2549,6 +2585,7 @@
         // it on when we have a parsed episode to show.
         const info = document.getElementById("stremio-mpv-info");
         if (info) {
+<<<<<<< HEAD
             if (state.containerPosition === "top-right") {
                 info.textContent = "";
                 info.style.display = "none";
@@ -2556,6 +2593,9 @@
             }
 
             info.style.order = state.containerPosition === "top-right" ? "1" : "";
+=======
+            const isDetail = window.location.hash.includes("/detail/");
+>>>>>>> 008d88b (feat(core): Phase 5 - iconMode enum, Discord title filter, graceful disconnect)
             if (isDetail) {
                 const content = parseCurrentURL();
                 if (content?.episode) {
