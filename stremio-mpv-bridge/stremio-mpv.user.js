@@ -35,9 +35,36 @@
         ],
         debrid: [
             { id: "torbox", name: "Torbox" },
+            { id: "stremthru-store", name: "StremThru Store" },
+            { id: "intell-debridsearch", name: "Intell Debrid Search" },
             { id: "real-debrid", name: "Real Debrid" },
         ],
     };
+
+    /**
+     * Get defaults (URL, placeholder, tooltip) for specific providers
+     */
+    function getProviderDefaults(id) {
+        if (id === "stremthru-store") {
+            return {
+                url: "",
+                tooltip: "Supported StremThru Store providers:\n- dev 'muniftanjim': https://stremthru.13377001.xyz/stremio/store/\n- elfhosted: https://stremthru.elfhosted.com/stremio/store/\n- midnight: https://stremthrufortheweebs.midnightignite.me/stremio/store/",
+                placeholder: "Paste StremThru Store manifest.json link here"
+            };
+        }
+        if (id === "intell-debridsearch") {
+            return {
+                url: "",
+                tooltip: "Intell Debrid Search (store-like addon):\nhttps://intell-debridsearch.nepiraw.com/",
+                placeholder: "Paste Intell Debrid Search manifest.json link here"
+            };
+        }
+        return {
+            url: "",
+            tooltip: "",
+            placeholder: "Paste manifest.json link here"
+        };
+    }
 
     // Cache for custom provider names (from manifest.json)
     const providerNameCache = new Map();
@@ -354,7 +381,10 @@
     let providers;
 
     if (storedProviders.length > 0) {
-        providers = [...storedProviders];
+        providers = storedProviders.filter((p) => p.id !== "torbox");
+        if (providers.length !== storedProviders.length) {
+            GM_setValue("providers", providers);
+        }
     } else {
         providers = [...DEFAULT_ACTIVE];
     }
@@ -592,6 +622,11 @@
                     isCustom && p.url
                         ? '<span class="mpv-loading-name" style="font-size: 10px; opacity: 0.6; margin-left: 4px;"></span>'
                         : "";
+                const defaults = getProviderDefaults(p.id);
+                const placeholder = defaults.placeholder;
+                const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, '&quot;')}"` : "";
+                const helpSpan = defaults.tooltip ? `<span class="mpv-tooltip-help" ${tooltipAttr}>?</span>` : "";
+
                 return `
             <div class="mpv-form-group mpv-provider-item ${p.enabled ? "" : "mpv-provider-disabled"}" data-id="${p.id}" data-url="${p.url || ""}" draggable="true" style="transition: transform 0.2s, opacity 0.2s;">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
@@ -600,14 +635,14 @@
                         <div class="mpv-toggle-track mpv-provider-toggle" data-id="${p.id}" data-enabled="${p.enabled ? "true" : "false"}" role="switch" aria-checked="${p.enabled ? "true" : "false"}" tabindex="0" title="${p.enabled ? "Enabled" : "Disabled"}">
                             <div class="mpv-toggle-thumb"></div>
                         </div>
-                        <label class="mpv-label mpv-provider-label" data-id="${p.id}" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}${loadingIndicator}</label>
+                        <label class="mpv-label mpv-provider-label" data-id="${p.id}" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}${helpSpan}${loadingIndicator}</label>
                     </div>
                     <div style="display: flex; gap: 4px; flex-shrink: 0;">
                         <button type="button" class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">🗑</button>
                     </div>
                 </div>
                 <input type="text" data-id="${p.id}" class="mpv-input mpv-provider-input"
-                       placeholder="Paste manifest.json link here" value="${p.url}"
+                       placeholder="${placeholder}" value="${p.url}"
                        style="${!p.enabled ? "opacity: 0.5; pointer-events: none;" : ""}">
             </div>
         `;
@@ -815,7 +850,8 @@
                     display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #eee;
                 }
                 .mpv-dropdown-item:hover { background: linear-gradient(90deg, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.05)); color: #fff; padding-left: 20px; }
-                .mpv-dropdown-item.disabled { opacity: 0.4; cursor: not-allowed; text-decoration: line-through; }
+                .mpv-dropdown-item.disabled { opacity: 0.4; cursor: not-allowed; }
+                .mpv-dropdown-item.disabled .mpv-dropdown-item-name { text-decoration: line-through; }
                 .mpv-radio {
                     appearance: none; -webkit-appearance: none;
                     width: 18px; height: 18px; border: 2px solid rgba(139, 92, 246, 0.4);
@@ -856,6 +892,27 @@
                 #mpv-release-groups-dropdown .mpv-group-option:hover {
                     background: rgba(139, 92, 246, 0.2) !important;
                 }
+                .mpv-tooltip-help {
+                    display: inline-block !important;
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.15);
+                    color: #ccc;
+                    font-size: 10px;
+                    font-weight: bold;
+                    cursor: help;
+                    margin-left: 6px;
+                    transition: all 0.2s ease;
+                    vertical-align: middle;
+                    line-height: 14px;
+                    text-align: center;
+                    text-decoration: none !important;
+                }
+                .mpv-tooltip-help:hover {
+                    background: rgba(139, 92, 246, 0.4);
+                    color: #fff;
+                }
             </style>
             <div class="mpv-modal-content">
                 <div class="mpv-modal-header">
@@ -882,9 +939,19 @@
                             <div class="mpv-dropdown-content" id="mpv-provider-dropdown">
                                 <div class="mpv-dropdown-title">Select Provider</div>
                                 <div class="mpv-dropdown-category">Providers</div>
-                                ${AVAILABLE_PROVIDERS.providers.map((p) => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}">${p.name}</div>`).join("")}
+                                ${AVAILABLE_PROVIDERS.providers.map((p) => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}"><span class="mpv-dropdown-item-name">${p.name}</span></div>`).join("")}
                                 <div class="mpv-dropdown-category">Debrid Services</div>
-                                ${AVAILABLE_PROVIDERS.debrid.map((p) => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}">${p.name}</div>`).join("")}
+                                ${AVAILABLE_PROVIDERS.debrid.map((p) => {
+                                    if (p.id === "torbox") {
+                                        return `<div class="mpv-dropdown-item disabled" data-id="${p.id}" data-name="${p.name}" style="opacity: 0.4; cursor: not-allowed;"><span class="mpv-dropdown-item-name">${p.name}</span> <span class="mpv-tooltip-help" title="Disabled in May 2026 by Torbox">?</span></div>`;
+                                    }
+                                    const defaults = getProviderDefaults(p.id);
+                                    let tooltipSpan = "";
+                                    if (defaults.tooltip) {
+                                        tooltipSpan = ` <span class="mpv-tooltip-help" title="${defaults.tooltip.replace(/"/g, '&quot;')}">?</span>`;
+                                    }
+                                    return `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}"><span class="mpv-dropdown-item-name">${p.name}</span>${tooltipSpan}</div>`;
+                                }).join("")}
                                 <div style="margin-top: 16px; padding: 12px 16px; font-size: 12px; color: #666; text-align: center; border-top: 1px solid rgba(255,255,255,0.08);">
                                     Missing your favorite service? <a href="https://github.com/gabszap/mpv-rpc/issues" target="_blank" style="color: #8b7bba; text-decoration: underline; font-size: 13px;">open an issue</a>
                                 </div>
@@ -1595,11 +1662,16 @@
 
         providerDropdown.addEventListener("click", (e) => {
             const item = e.target.closest(".mpv-dropdown-item");
-            if (!item || item.classList.contains("disabled")) return;
+            if (!item || item.classList.contains("disabled") || item.dataset.id === "torbox") return;
 
             const id = item.dataset.id;
             const name = item.dataset.name;
             const container = modal.querySelector("#mpv-providers-container");
+            const defaults = getProviderDefaults(id);
+            const initialUrl = defaults.url;
+            const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, '&quot;')}"` : "";
+            const helpSpan = defaults.tooltip ? `<span class="mpv-tooltip-help" ${tooltipAttr}>?</span>` : "";
+            const placeholder = defaults.placeholder;
 
             const newProviderHTML = `
                 <div class="mpv-form-group mpv-provider-item" data-id="${id}" draggable="true" style="transition: transform 0.2s, opacity 0.2s;">
@@ -1609,13 +1681,13 @@
                             <div class="mpv-toggle-track mpv-provider-toggle" data-id="${id}" data-enabled="true" role="switch" aria-checked="true" tabindex="0" title="Enabled">
                                 <div class="mpv-toggle-thumb"></div>
                             </div>
-                            <label class="mpv-label" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</label>
+                            <label class="mpv-label mpv-provider-label" data-id="${id}" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}${helpSpan}</label>
                         </div>
                         <div style="display: flex; gap: 4px; flex-shrink: 0;">
                             <button type="button" class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">🗑</button>
                         </div>
                     </div>
-                    <input type="text" data-id="${id}" class="mpv-input mpv-provider-input" placeholder="Paste manifest.json link here" value="">
+                    <input type="text" data-id="${id}" class="mpv-input mpv-provider-input" placeholder="${placeholder}" value="${initialUrl}">
                 </div>
             `;
 
@@ -1626,6 +1698,40 @@
             } else {
                 container.insertAdjacentHTML("beforeend", newProviderHTML);
             }
+
+            // Add toggle listener to newly added provider
+            const newToggle = container.querySelector(`[data-id="${id}"].mpv-provider-toggle`);
+            newToggle?.addEventListener("click", (ev) => {
+                const track = ev.currentTarget;
+                const isEnabled = track.dataset.enabled === "true";
+                const newEnabled = !isEnabled;
+                track.dataset.enabled = newEnabled ? "true" : "false";
+                track.setAttribute("aria-checked", newEnabled ? "true" : "false");
+                track.title = newEnabled ? "Enabled" : "Disabled";
+                const pItem = track.closest(".mpv-provider-item");
+                if (pItem) pItem.classList.toggle("mpv-provider-disabled", !newEnabled);
+                const input = container.querySelector(`.mpv-provider-input[data-id="${track.dataset.id}"]`);
+                if (input) {
+                    input.style.opacity = newEnabled ? "1" : "0.5";
+                    input.style.pointerEvents = newEnabled ? "auto" : "none";
+                }
+            });
+            newToggle?.addEventListener("keydown", (ev) => {
+                if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    newToggle.click();
+                }
+            });
+
+            // Update provider name when URL input changes (on blur)
+            const newInput = container.querySelector(`.mpv-provider-input[data-id="${id}"]`);
+            newInput?.addEventListener("blur", (ev) => {
+                const providerId = ev.target.dataset.id;
+                const url = ev.target.value.trim();
+                if (providerId.startsWith("custom") && url) {
+                    updateSingleProviderLabel(modal, providerId, url);
+                }
+            });
 
             providerDropdown.classList.remove("show");
             dropdownOverlay?.classList.remove("show");
