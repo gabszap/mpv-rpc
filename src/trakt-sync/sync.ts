@@ -492,6 +492,9 @@ export async function tryScrobble(data: MpvData): Promise<void> {
                     queueBacklog("stop", currentEpisode, currentShow, lastKnownProgress);
                 } else {
                     recordSyncSuccess(currentShow.ids.trakt, currentEpisode.number, currentEpisode.season);
+                    console.log(
+                        `[Trakt] Marked as watched: ${currentShow.title} S${String(currentEpisode.season).padStart(2, "0")}E${String(currentEpisode.number).padStart(2, "0")}`,
+                    );
                 }
             }
         }
@@ -558,6 +561,9 @@ export async function tryScrobble(data: MpvData): Promise<void> {
                         const success = await scrobbleStop(currentEpisode, currentShow, progress);
                         if (success) {
                             recordSyncSuccess(showId, epNumber, epSeason);
+                            console.log(
+                                `[Trakt] Marked as watched: ${currentShow.title} S${String(epSeason).padStart(2, "0")}E${String(epNumber).padStart(2, "0")}`,
+                            );
                         } else {
                             queueBacklog("stop", currentEpisode, currentShow, progress);
                         }
@@ -609,6 +615,9 @@ export async function tryScrobble(data: MpvData): Promise<void> {
                     const success = await scrobbleStop(currentEpisode, currentShow, progress);
                     if (success) {
                         recordSyncSuccess(showId, epNumber, epSeason);
+                        console.log(
+                            `[Trakt] Marked as watched: ${currentShow.title} S${String(epSeason).padStart(2, "0")}E${String(epNumber).padStart(2, "0")}`,
+                        );
                     } else {
                         queueBacklog("stop", currentEpisode, currentShow, progress);
                     }
@@ -641,6 +650,9 @@ export async function tryScrobble(data: MpvData): Promise<void> {
                     const success = await scrobbleStop(currentEpisode, currentShow, progress);
                     if (success) {
                         recordSyncSuccess(showId, epNumber, epSeason);
+                        console.log(
+                            `[Trakt] Marked as watched: ${currentShow.title} S${String(epSeason).padStart(2, "0")}E${String(epNumber).padStart(2, "0")}`,
+                        );
                     } else {
                         queueBacklog("stop", currentEpisode, currentShow, progress);
                     }

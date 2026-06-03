@@ -260,7 +260,7 @@ function cloneLibraryItemWithProgress(
                     }
 
                     console.log(
-                        `[Stremio] Watched marked: ${context.name || context.libraryItemId} S${context.season}E${context.episode}`,
+                        `[Stremio] Marked as watched: ${context.name || context.libraryItemId} S${context.season}E${context.episode}`,
                     );
                     appendSyncLog({
                         step: "watched-marked",

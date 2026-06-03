@@ -71,7 +71,7 @@ function formatStremioSkipReason(reason: string): string {
     }
 
     if (reason === "progress-interval") {
-        return `waiting for STREMIO_PROGRESS_INTERVAL_MS (${config.stremio.progressIntervalMs}ms); Continue Watching is not gated by the ${config.stremio.syncThreshold}% watched threshold.`;
+        return `waiting for progress interval (${config.stremio.progressIntervalMs}ms)`;
     }
 
     if (reason === "library-item-not-found") {
@@ -204,13 +204,14 @@ async function update(): Promise<void> {
                 } else if (result.status === "skipped") {
                     logStremioDiagnostic(
                         `${data.filename}:skip:${result.reason}`,
-                        `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${formatStremioSkipReason(result.reason)}`,
+                        `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${result.reason}`,
                     );
+                    console.debug?.(`[Stremio][debug] Skip detail: ${formatStremioSkipReason(result.reason)}`);
                 } else if (result.status === "synced") {
                     const syncKey = `${data.filename}:${result.libraryItemId}`;
                     if (lastStremioSyncSuccessKey !== syncKey) {
                         console.log(
-                            `[Stremio] Continue Watching synced: ${data.series_title} (${Math.round(data.percent_pos)}%, libraryItemId: ${result.libraryItemId}). Watched badges are not updated by the MVP.`,
+                            `[Stremio] Continue Watching synced: ${data.series_title} (${Math.round(data.percent_pos)}%)`,
                         );
                         lastStremioSyncSuccessKey = syncKey;
                     }
@@ -220,10 +221,7 @@ async function update(): Promise<void> {
                 console.error("[Stremio] Sync error:", e);
             }
         } else {
-            logStremioDiagnostic(
-                "disabled",
-                "[Stremio] Sync disabled. Set STREMIO_SYNC=true to enable Continue Watching progress sync.",
-            );
+            logStremioDiagnostic("disabled", "[Stremio] Sync disabled");
         }
 
         // Auto-fetch: check if we should fetch next episodes
@@ -315,7 +313,7 @@ async function start(): Promise<void> {
 
     console.log(
         config.stremio.enabled
-            ? `[Main] Stremio sync: enabled (Continue Watching MVP; writes every ${config.stremio.progressIntervalMs}ms, not gated by ${config.stremio.syncThreshold}% threshold)`
+            ? `[Main] Stremio sync: enabled (writes every ${config.stremio.progressIntervalMs}ms)`
             : "[Main] Stremio sync: disabled",
     );
 
