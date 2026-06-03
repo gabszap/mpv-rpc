@@ -543,6 +543,11 @@
 
         modal.innerHTML = `
             <style>
+                #stremio-mpv-modal,
+                #stremio-mpv-modal * {
+                    box-sizing: border-box;
+                }
+
                 #stremio-mpv-modal {
                     position: fixed; inset: 0; z-index: 100000;
                     background: rgba(0,0,0,0.25);
@@ -576,6 +581,7 @@
                 }
                 .mpv-tab-nav {
                     display: flex; gap: 8px;
+                    width: 100%;
                     margin: -6px 0 16px;
                     padding: 5px;
                     border-radius: 12px;
@@ -611,11 +617,13 @@
                 }
                 .mpv-modal-body {
                     flex: 1;
+                    width: 100%;
                     min-height: 0;
                     overflow-y: auto;
                     padding-right: 2px;
+                    scrollbar-gutter: stable;
                 }
-                .mpv-tab-panel { display: none; animation: tabFade 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+                .mpv-tab-panel { display: none; width: 100%; animation: tabFade 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
                 .mpv-tab-panel.active { display: block; }
                 @keyframes tabFade {
                     from { opacity: 0; transform: translateY(8px); }
@@ -629,6 +637,15 @@
                     color: white; font-size: 14px; transition: all 0.2s ease;
                 }
                 .mpv-input:focus { outline: none; border-color: #8b5cf6; background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2); }
+                #mpv-icon-mode {
+                    color-scheme: dark;
+                    background: #151515;
+                    color: #fff;
+                }
+                #mpv-icon-mode option {
+                    background: #151515;
+                    color: #f4f4f5;
+                }
                 .mpv-help { font-size: 12px; opacity: 0.5; margin-top: 6px; line-height: 1.4; }
                 .mpv-actions {
                     display: flex; justify-content: flex-end; gap: 12px; margin-top: 18px;
@@ -861,16 +878,6 @@
                             <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
                         </div>
 
-                        <div class="mpv-form-group">
-                            <label class="mpv-label">Floating Icons</label>
-                            <select id="mpv-icon-mode" class="mpv-input" style="cursor: pointer;">
-                                <option value="default" ${GM_getValue("iconMode", "default") === "default" ? "selected" : ""}>Show MPV + Config icons</option>
-                                <option value="config-only" ${GM_getValue("iconMode", "default") === "config-only" ? "selected" : ""}>Config icon only</option>
-                                <option value="compact" ${GM_getValue("iconMode", "default") === "compact" ? "selected" : ""}>Compact (larger config icon)</option>
-                                <option value="disabled" ${GM_getValue("iconMode", "default") === "disabled" ? "selected" : ""}>Hide all icons</option>
-                            </select>
-                            <div class="mpv-help" style="margin-top: 4px;">Controls the floating MPV / config buttons in the bottom-right corner.</div>
-                        </div>
                     </div>
 
                     <div class="mpv-tab-panel" data-tab-panel="advanced" role="tabpanel">
@@ -882,6 +889,17 @@
                                     <div class="mpv-toggle-thumb"></div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div class="mpv-form-group">
+                            <label class="mpv-label">Floating Icons</label>
+                            <select id="mpv-icon-mode" class="mpv-input" style="cursor: pointer;">
+                                <option value="default" ${GM_getValue("iconMode", "default") === "default" ? "selected" : ""}>Show MPV + Config icons</option>
+                                <option value="config-only" ${GM_getValue("iconMode", "default") === "config-only" ? "selected" : ""}>Config icon only</option>
+                                <option value="compact" ${GM_getValue("iconMode", "default") === "compact" ? "selected" : ""}>Compact (larger config icon)</option>
+                                <option value="disabled" ${GM_getValue("iconMode", "default") === "disabled" ? "selected" : ""}>Hide all icons</option>
+                            </select>
+                            <div class="mpv-help" style="margin-top: 4px;">Controls the floating MPV / config buttons in the bottom-right corner.</div>
                         </div>
 
                         <div class="mpv-form-group">
@@ -1215,6 +1233,7 @@
                     GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
                     GM_setValue("autoFetchEnabled", true);
                     GM_setValue("iconMode", "default");
+                    updateButtonInfo();
 
                     providers = [...DEFAULT_ACTIVE];
                     playlistMode = "batch";
@@ -1701,6 +1720,7 @@
         const selectedIconMode = iconModeSelect ? iconModeSelect.value : "default";
         const iconMode = validIconModes.includes(selectedIconMode) ? selectedIconMode : "default";
         GM_setValue("iconMode", iconMode);
+        updateButtonInfo();
 
         showToast("Settings saved!", "success");
 

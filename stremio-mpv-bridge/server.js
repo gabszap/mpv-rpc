@@ -104,6 +104,30 @@ function withoutSensitiveConfigFields(config) {
     return sanitized;
 }
 
+function normalizeBridgeConfig(config) {
+    const sourceConfig = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+    const sanitized = withoutSensitiveConfigFields(sourceConfig);
+    return {
+        configVersion: CURRENT_CONFIG_VERSION,
+        providers: Array.isArray(sanitized.providers) ? sanitized.providers : [],
+        autoFetch:
+            sanitized.autoFetch && typeof sanitized.autoFetch === "object"
+                ? { enabled: sanitized.autoFetch.enabled !== false }
+                : { enabled: true },
+        extraEpisodes: typeof sanitized.extraEpisodes === "number" ? sanitized.extraEpisodes : 2,
+        iconMode: typeof sanitized.iconMode === "string" ? sanitized.iconMode : "default",
+        playlistMode: typeof sanitized.playlistMode === "string" ? sanitized.playlistMode : "batch",
+        mpvShortcut: typeof sanitized.mpvShortcut === "string" ? sanitized.mpvShortcut : "v",
+        preferredGroup: typeof sanitized.preferredGroup === "string" ? sanitized.preferredGroup : "",
+        preferredQuality: typeof sanitized.preferredQuality === "string" ? sanitized.preferredQuality : "",
+        mpvArgsStr: typeof sanitized.mpvArgsStr === "string" ? sanitized.mpvArgsStr : "",
+        debug: typeof sanitized.debug === "boolean" ? sanitized.debug : false,
+        ...(sanitized.stremioMeta && typeof sanitized.stremioMeta === "object"
+            ? { stremioMeta: sanitized.stremioMeta }
+            : {}),
+    };
+}
+
 /**
  * Migrate a v1 (or unversioned) bridge config to the v2 shape.
  * Mirrors `migrateV1ToV2` in src/bridge-config-migration.ts.
@@ -163,7 +187,7 @@ function writeConfig(config) {
     // suffix to avoid collisions with concurrent writers.
     ensureConfigDir();
     const tmpPath = `${CONFIG_PATH}.tmp.${crypto.randomBytes(8).toString("hex")}`;
-    const configToWrite = withoutSensitiveConfigFields(config);
+    const configToWrite = normalizeBridgeConfig(config);
     fs.writeFileSync(tmpPath, JSON.stringify(configToWrite, null, 4), "utf-8");
     fs.renameSync(tmpPath, CONFIG_PATH);
 }
@@ -369,7 +393,7 @@ app.post("/config", (req, res) => {
 
     const existing = withoutSensitiveConfigFields(readConfig());
     const configBody = withoutSensitiveConfigFields(body);
-    const merged = { ...existing, ...configBody };
+    const merged = normalizeBridgeConfig({ ...existing, ...configBody });
 
     // writeConfig uses a tmp file + rename (atomic on the same filesystem).
     // If the rename fails (disk full, permission denied, etc.) the original
