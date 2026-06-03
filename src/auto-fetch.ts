@@ -250,6 +250,20 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
             extraEpisodes,
         };
 
+        if (config.syncDryRun) {
+            const targets: string[] = [];
+            const startEp = (episode ?? 0) + 1;
+            const safeSeason = season ?? 0;
+            for (let i = 0; i < extraEpisodes; i++) {
+                targets.push(`S${String(safeSeason).padStart(2, "0")}E${String(startEp + i).padStart(2, "0")}`);
+            }
+            const target = targets.join(", ");
+            console.log(`[AutoFetch][dry-run] Would POST /auto-fetch: ${extraEpisodes} episode(s) (${target})`);
+            // Still mark dedupe so we don't keep retrying
+            lastTriggerKey = triggerKey;
+            return;
+        }
+
         const res = await fetch("http://localhost:9632/auto-fetch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

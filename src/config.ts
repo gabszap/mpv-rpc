@@ -140,6 +140,10 @@ export const config = {
     autoFetch: {
         enabled: getEnvBool("AUTO_FETCH", true),
     },
+
+    // Sync dry-run (logs would-be Trakt scrobbles, Stremio writes, and
+    // Auto-Fetch POSTs without actually executing them).
+    syncDryRun: getEnvBool("SYNC_DRY_RUN", false),
 };
 
 export type Config = typeof config;

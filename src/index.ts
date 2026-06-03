@@ -11,7 +11,7 @@ import { ConsoleRepl, createEpisodeContext } from "./console";
 import * as discord from "./discord";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
 import * as mpv from "./mpv";
-import { checkAvailability } from "./parser";
+import { checkAvailability, parseFilename } from "./parser";
 import { trySyncStremio } from "./stremio-sync/sync";
 import { getUser } from "./trakt-sync/api";
 import { authorize as traktAuthorize, isAuthenticated as traktIsAuthenticated } from "./trakt-sync/auth";
@@ -430,6 +430,24 @@ if (args.includes("mal-auth")) {
         }
         process.exit(success ? 0 : 1);
     });
+} else if (args[0] === "parse") {
+    // Parser diagnostic mode: parse a filename and print the result as JSON.
+    // Useful for debugging parser fallbacks and verifying filename heuristics
+    // without opening MPV or connecting to Discord.
+    const filename = args[1];
+    if (!filename) {
+        console.error('Usage: npm start -- parse "<filename>"');
+        process.exit(1);
+    }
+    parseFilename(filename)
+        .then((result) => {
+            console.log(JSON.stringify(result, null, 2));
+            process.exit(0);
+        })
+        .catch((e) => {
+            console.error("[parse] error:", e);
+            process.exit(1);
+        });
 } else {
     start().catch((e) => {
         console.error("[Main] Fatal error:", e);

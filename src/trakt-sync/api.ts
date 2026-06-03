@@ -443,6 +443,12 @@ async function scrobbleAction(
  * Start scrobbling an episode
  */
 export async function scrobbleStart(episode: TraktEpisode, show: TraktShow, progress: number): Promise<boolean> {
+    if (config.syncDryRun) {
+        console.log(
+            `[Trakt][dry-run] Would start: ${show.title} S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} (${progress}%)`,
+        );
+        return true;
+    }
     return scrobbleAction("start", episode, show, progress);
 }
 
@@ -450,6 +456,12 @@ export async function scrobbleStart(episode: TraktEpisode, show: TraktShow, prog
  * Stop scrobbling an episode (mark as watched)
  */
 export async function scrobbleStop(episode: TraktEpisode, show: TraktShow, progress: number): Promise<boolean> {
+    if (config.syncDryRun) {
+        console.log(
+            `[Trakt][dry-run] Would stop: ${show.title} S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} (${progress}%)`,
+        );
+        return true;
+    }
     return scrobbleAction("stop", episode, show, progress);
 }
 
@@ -457,6 +469,12 @@ export async function scrobbleStop(episode: TraktEpisode, show: TraktShow, progr
  * Pause scrobbling an episode
  */
 export async function scrobblePause(episode: TraktEpisode, show: TraktShow, progress: number): Promise<boolean> {
+    if (config.syncDryRun) {
+        console.log(
+            `[Trakt][dry-run] Would pause: ${show.title} S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} (${progress}%)`,
+        );
+        return true;
+    }
     return scrobbleAction("pause", episode, show, progress);
 }
 

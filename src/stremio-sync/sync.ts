@@ -304,6 +304,15 @@ function hasUsefulContinueWatchingProgress(data: MpvData): boolean {
 }
 
 export async function trySyncStremio(data: MpvData): Promise<StremioSyncResult> {
+    if (config.syncDryRun) {
+        const season = data.season ?? 0;
+        const episode = data.episode ?? 0;
+        console.log(
+            `[Stremio][dry-run] Would write continue-watching: ${data.series_title} S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")} ${Math.round(data.percent_pos)}%`,
+        );
+        return { status: "skipped", reason: "dry-run" };
+    }
+
     const authKey = getStremioAuthKey();
     if (!authKey) {
         appendSyncLog({ step: "auth", result: "skipped", reason: "missing-auth" });
