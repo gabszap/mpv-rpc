@@ -276,12 +276,55 @@ export async function resolveTraktShow(data: MpvData): Promise<{ show: TraktShow
 // Episode ID resolution with season-null handling (4.4)
 // ---------------------------------------------------------------------------
 
+/** Pad a non-negative integer to two digits (used for SxxExx labels). */
+function pad2(n: number): string {
+    return String(n).padStart(2, "0");
+}
+
+/** A parsed season/episode target. */
+export type SeasonEpisode = { season: number; episode: number };
+
+/** Minimal season metadata required to compute absolute episode positions. */
+export type SeasonInfo = { season: number; episodeCount: number };
+
+/**
+ * Map a season/episode pair to its absolute episode position across a sequence
+ * of consecutive seasons.
+ *
+ * Returns `null` when the mapping is not safe — for example when one or more
+ * prior seasons are missing from the input. In that case the caller must skip
+ * the scrobble instead of guessing the absolute position.
+ *
+ * @param current The parsed season/episode target.
+ * @param seasons Season metadata in any order. Will be sorted by season ascending.
+ * @returns The absolute episode number plus an informational SxxExx label, or null.
+ */
+export function mapSeasonEpisodeToAbsolute(
+    current: SeasonEpisode,
+    seasons: SeasonInfo[],
+): { absoluteEpisode: number; seasonEpisode: string } | null {
+    const sorted = [...seasons].sort((a, b) => a.season - b.season);
+    const previousSeasons = sorted.filter((s) => s.season < current.season);
+    if (previousSeasons.length !== current.season - 1) return null;
+
+    const sum = previousSeasons.reduce((acc, s) => acc + s.episodeCount, 0);
+    return {
+        absoluteEpisode: sum + current.episode,
+        seasonEpisode: `S${pad2(current.season)}E${pad2(current.episode)}`,
+    };
+}
+
 /**
  * Resolve a season + episode pair to a Trakt episode object.
  *
- * When season is null (common for anime), defaults to season 1.
- * Falls back to absolute episode-number matching across all seasons
- * when the target season/episode is not found.
+ * When the exact season/episode match fails AND a season was provided,
+ * attempts a safe absolute mapping across consecutive seasons. If prior
+ * seasons are missing the mapping is refused (returns null) so the caller
+ * skips the scrobble rather than marking the wrong episode.
+ *
+ * When season is null (common for anime), falls back to absolute
+ * episode-number matching across all seasons — the position counter is
+ * the same loop, just seeded with the raw episode number.
  *
  * Season data is cached in-memory per session.
  */
@@ -317,15 +360,39 @@ export async function resolveEpisode(
         if (ep) return ep;
     }
 
-    // Fallback: absolute episode number across all seasons
+    // Determine the absolute position to look up. When a season was provided,
+    // use the safe consecutive-season mapping; when not, treat `episode` as
+    // the absolute position directly.
+    let targetPosition: number;
+    if (season != null) {
+        const seasonInfos: SeasonInfo[] = seasons.map((s) => ({
+            season: s.number,
+            episodeCount: s.episodes.length,
+        }));
+        const mapping = mapSeasonEpisodeToAbsolute({ season, episode }, seasonInfos);
+        if (!mapping) {
+            console.log(
+                `[Trakt] Skipped scrobble: could not safely map ${show.title} S${pad2(season)}E${pad2(episode)} to Trakt absolute episode.`,
+            );
+            return null;
+        }
+        console.log(
+            `[Trakt] Absolute mapping: ${show.title} ${mapping.seasonEpisode} → absolute ${mapping.absoluteEpisode}`,
+        );
+        targetPosition = mapping.absoluteEpisode;
+    } else {
+        targetPosition = episode;
+    }
+
+    // Fallback: locate the TraktEpisode at `targetPosition` across all seasons
     let absoluteCount = 0;
     const sortedSeasons = [...seasons].sort((a, b) => a.number - b.number);
     for (const seasonData of sortedSeasons) {
         for (const ep of seasonData.episodes) {
             absoluteCount++;
-            if (absoluteCount === episode) {
+            if (absoluteCount === targetPosition) {
                 console.log(
-                    `[Trakt] Absolute episode match: ep ${episode} → S${String(ep.season).padStart(2, "0")}E${String(ep.number).padStart(2, "0")}`,
+                    `[Trakt] Absolute episode match: ep ${targetPosition} → S${String(ep.season).padStart(2, "0")}E${String(ep.number).padStart(2, "0")}`,
                 );
                 return ep;
             }
