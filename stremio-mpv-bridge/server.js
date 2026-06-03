@@ -62,6 +62,54 @@ const CONFIG_DIR = path.resolve(__dirname, "..", ".config");
 const CONFIG_PATH = path.join(CONFIG_DIR, ".stremio-mpv-config.json");
 const STREMIO_TOKEN_PATH = path.join(CONFIG_DIR, ".stremio_tokens.json");
 
+// Bridge config schema version. Bumped whenever the on-disk shape changes.
+// Migration logic lives below in `migrateV1ToV2` (mirrored from
+// src/bridge-config-migration.ts to keep the bridge free of TypeScript at runtime).
+const CURRENT_CONFIG_VERSION = 2;
+
+/**
+ * Derive the v2 `iconMode` enum from the legacy v1 booleans.
+ * Mirrors `inferIconMode` in src/bridge-config-migration.ts.
+ */
+function inferIconMode(legacy) {
+    if (!legacy || typeof legacy !== "object") {
+        return "default";
+    }
+    const showMpvIcon = legacy.showMpvIcon;
+    const showConfigIcon = legacy.showConfigIcon;
+    const compactMode = legacy.compactMode;
+
+    if (showMpvIcon === false && showConfigIcon === true && compactMode === true) {
+        return "compact";
+    }
+    if (showMpvIcon === false && showConfigIcon === true) {
+        return "config-only";
+    }
+    if (compactMode === true) {
+        return "compact";
+    }
+    if (showMpvIcon === false && showConfigIcon === false) {
+        return "disabled";
+    }
+    return "default";
+}
+
+/**
+ * Migrate a v1 (or unversioned) bridge config to the v2 shape.
+ * Mirrors `migrateV1ToV2` in src/bridge-config-migration.ts.
+ * Any change here MUST also be applied to the TS source.
+ */
+function migrateV1ToV2(config) {
+    const source = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+    return {
+        ...source,
+        configVersion: CURRENT_CONFIG_VERSION,
+        autoFetch: { enabled: source.autoFetchEnabled !== false },
+        extraEpisodes: typeof source.extraEpisodes === "number" ? source.extraEpisodes : 2,
+        iconMode: inferIconMode(source),
+    };
+}
+
 function ensureConfigDir() {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
     try {
@@ -74,7 +122,21 @@ function ensureConfigDir() {
 function readConfig() {
     try {
         const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            return {};
+        }
+        if (parsed.configVersion !== CURRENT_CONFIG_VERSION) {
+            const migrated = migrateV1ToV2(parsed);
+            // Write back to disk so subsequent reads are fast.
+            try {
+                writeConfig(migrated);
+            } catch (_) {
+                // Best effort only — fall through and return the in-memory migration.
+            }
+            return migrated;
+        }
+        return parsed;
     } catch (_) {
         return {};
     }
@@ -213,10 +275,38 @@ app.post("/config", (req, res) => {
         return res.status(400).json({ error: "Request body must be a valid JSON object" });
     }
 
-    if (body.providers) {
-        if (!Array.isArray(body.providers)) {
-            return res.status(400).json({ error: "providers must be an array" });
+    // Strict top-level key + type allowlist. Any unknown key is rejected so
+    // the bridge never accepts arbitrary fields. `stremioMeta` may be null
+    // (means clear); it is validated by validateStremioMeta below.
+    const allowedTopLevel = {
+        providers: "array",
+        stremioMeta: "object",
+        extraEpisodes: "number",
+        autoFetch: "object",
+        iconMode: "string",
+        playlistMode: "string",
+        mpvShortcut: "string",
+        preferredGroup: "string",
+        preferredQuality: "string",
+        mpvArgsStr: "string",
+        debug: "boolean",
+        configVersion: "number",
+    };
+    for (const key of Object.keys(body)) {
+        const expectedType = allowedTopLevel[key];
+        if (expectedType === undefined) {
+            return res.status(400).json({ error: `Unknown config field: ${key}` });
         }
+        // stremioMeta allows `null` to mean "clear"; skip the type check for it
+        // and let validateStremioMeta reject anything that is neither null nor
+        // a plain object.
+        if (key === "stremioMeta") continue;
+        if (typeof body[key] !== expectedType) {
+            return res.status(400).json({ error: `${key} must be a ${expectedType}` });
+        }
+    }
+
+    if (body.providers) {
         for (let i = 0; i < body.providers.length; i++) {
             const err = validateProvider(body.providers[i]);
             if (err) {
@@ -225,7 +315,26 @@ app.post("/config", (req, res) => {
         }
     }
 
-    if (body.stremioMeta !== undefined) {
+    if (body.autoFetch !== undefined) {
+        if (typeof body.autoFetch.enabled !== "boolean") {
+            return res.status(400).json({ error: "autoFetch.enabled must be a boolean" });
+        }
+    }
+
+    if (body.iconMode !== undefined) {
+        const allowedIconModes = ["default", "config-only", "compact", "disabled"];
+        if (!allowedIconModes.includes(body.iconMode)) {
+            return res.status(400).json({ error: `iconMode must be one of: ${allowedIconModes.join(", ")}` });
+        }
+    }
+
+    if (body.extraEpisodes !== undefined) {
+        if (!Number.isInteger(body.extraEpisodes) || body.extraEpisodes < 1 || body.extraEpisodes > 25) {
+            return res.status(400).json({ error: "extraEpisodes must be a positive integer between 1 and 25" });
+        }
+    }
+
+    if (body.stremioMeta !== undefined && body.stremioMeta !== null) {
         const err = validateStremioMeta(body.stremioMeta);
         if (err) {
             return res.status(400).json({ error: err });
@@ -234,7 +343,21 @@ app.post("/config", (req, res) => {
 
     const existing = readConfig();
     const merged = { ...existing, ...body };
-    writeConfig(merged);
+
+    // writeConfig uses a tmp file + rename (atomic on the same filesystem).
+    // If the rename fails (disk full, permission denied, etc.) the original
+    // config file is untouched. We surface a sanitized 500 — no path or token
+    // detail in the response.
+    try {
+        writeConfig(merged);
+    } catch (writeErr) {
+        console.error("[MPV Bridge] Failed to write config:", writeErr.message);
+        return res.status(500).json({ error: "Failed to save config" });
+    }
+
+    if (process.env.DEBUG) {
+        console.log(`[MPV Bridge] /config updated (v${merged.configVersion ?? 1})`);
+    }
 
     res.json({ success: true, message: "Config updated" });
 });

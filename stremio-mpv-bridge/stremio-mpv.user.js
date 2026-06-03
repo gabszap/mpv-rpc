@@ -222,6 +222,76 @@
         { id: "custom", name: "Custom", url: "", enabled: true },
     ];
 
+    // Bridge config schema version. Mirrors CURRENT_CONFIG_VERSION in
+    // stremio-mpv-bridge/server.js and src/bridge-config-migration.ts.
+    // Bumped whenever the GM_setValue / disk shape changes.
+    const CURRENT_CONFIG_VERSION = 2;
+
+    /**
+     * Derive the v2 `iconMode` enum from legacy v1 booleans.
+     * Mirrors `inferIconMode` in src/bridge-config-migration.ts and
+     * server.js. Any change here MUST be applied to the other two.
+     */
+    function inferIconMode(legacy) {
+        if (!legacy || typeof legacy !== "object") {
+            return "default";
+        }
+        const showMpvIcon = legacy.showMpvIcon;
+        const showConfigIcon = legacy.showConfigIcon;
+        const compactMode = legacy.compactMode;
+
+        if (showMpvIcon === false && showConfigIcon === true && compactMode === true) {
+            return "compact";
+        }
+        if (showMpvIcon === false && showConfigIcon === true) {
+            return "config-only";
+        }
+        if (compactMode === true) {
+            return "compact";
+        }
+        if (showMpvIcon === false && showConfigIcon === false) {
+            return "disabled";
+        }
+        return "default";
+    }
+
+    /**
+     * Migrate the userscript-side GM_setValue mirror from v1 (or unversioned)
+     * to v2. Mirrors `migrateV1ToV2` in server.js and
+     * src/bridge-config-migration.ts. Persists the migrated values back to
+     * GM_setValue so subsequent reads are fast.
+     */
+    function migrateLocalConfigToV2() {
+        const storedVersion = GM_getValue("configVersion", null);
+        if (storedVersion === CURRENT_CONFIG_VERSION) {
+            return;
+        }
+
+        const legacy = {
+            autoFetchEnabled: GM_getValue("autoFetchEnabled", undefined),
+            extraEpisodes: GM_getValue("extraEpisodes", undefined),
+            showMpvIcon: GM_getValue("showMpvIcon", undefined),
+            showConfigIcon: GM_getValue("showConfigIcon", undefined),
+            compactMode: GM_getValue("compactMode", undefined),
+        };
+        const hasLegacyValue = Object.values(legacy).some((v) => v !== undefined);
+
+        if (hasLegacyValue) {
+            const autoFetchEnabled = legacy.autoFetchEnabled !== false;
+            const extraEpisodes = typeof legacy.extraEpisodes === "number" ? legacy.extraEpisodes : 2;
+            const iconMode = inferIconMode(legacy);
+            GM_setValue("autoFetchEnabled", autoFetchEnabled);
+            GM_setValue("extraEpisodes", extraEpisodes);
+            GM_setValue("iconMode", iconMode);
+        }
+
+        GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+    }
+
+    // Apply any pending migration before reading other values so the rest
+    // of the script sees a v2 mirror.
+    migrateLocalConfigToV2();
+
     // Default to 2 episodes (unified with bridge + RPC); user can override 1..25
     let extraEpisodes = GM_getValue("extraEpisodes", 2);
     let playlistMode = GM_getValue("playlistMode", "batch");
@@ -236,6 +306,43 @@
         providers = [...storedProviders];
     } else {
         providers = [...DEFAULT_ACTIVE];
+    }
+
+    // Mirrors src/userscript-config-sync.ts — keep in sync.
+    // The userscript is the source of truth for user-facing configuration.
+    // The bridge is treated as a synchronized runtime cache. `pendingBridgeConfig`
+    // holds the most recent config that has not yet been acknowledged by the bridge
+    // and is flushed (re-posted to /config) before any /play call.
+    let pendingBridgeConfig = null;
+
+    function postBridgeConfig(config) {
+        return new Promise((resolve, reject) => {
+            try {
+                GM_xmlhttpRequest({
+                    method: "POST",
+                    url: "http://localhost:9632/config",
+                    headers: { "Content-Type": "application/json" },
+                    data: JSON.stringify(config),
+                    onload: (r) => (r.status === 200 ? resolve() : reject(new Error("Config sync failed"))),
+                    onerror: () => reject(new Error("Connection failed")),
+                });
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    async function flushPendingBridgeConfig() {
+        if (!pendingBridgeConfig) {
+            return true;
+        }
+        try {
+            await postBridgeConfig(pendingBridgeConfig);
+        } catch (_) {
+            return false;
+        }
+        pendingBridgeConfig = null;
+        return true;
     }
 
     function log(...args) {
@@ -1052,6 +1159,9 @@
                     GM_setValue("mpvArgsStr", "");
 
                     GM_setValue("debug", false);
+                    GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+                    GM_setValue("autoFetchEnabled", true);
+                    GM_setValue("iconMode", "default");
 
                     providers = [...DEFAULT_ACTIVE];
                     playlistMode = "batch";
@@ -1524,13 +1634,22 @@
         const debugEnabled = debugToggle ? debugToggle.dataset.enabled === "true" : GM_getValue("debug", false);
         GM_setValue("debug", debugEnabled);
 
+        // Persist the v2 marker on the localStorage mirror so the next startup
+        // skips migration. The on-disk file is also marked when the bridge
+        // accepts the /config POST and migrates it.
+        GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+        GM_setValue("autoFetchEnabled", true);
+        GM_setValue("iconMode", GM_getValue("iconMode", "default"));
+
         showToast("Settings saved!", "success");
 
         // Sync config to bridge
         try {
             const bridgeConfig = {
-                providers: providers,
+                configVersion: CURRENT_CONFIG_VERSION,
+                autoFetch: { enabled: true },
                 extraEpisodes: extraEpisodes,
+                providers: providers,
                 playlistMode: playlistMode,
                 mpvShortcut: mpvShortcut,
                 preferredGroup: preferredGroup,
@@ -1542,12 +1661,18 @@
             if (stremioMeta && typeof stremioMeta === "object") {
                 bridgeConfig.stremioMeta = stremioMeta;
             }
+            // Mirrors src/userscript-config-sync.ts — keep in sync.
+            // Mark this config as pending so /play can flush it first.
+            pendingBridgeConfig = bridgeConfig;
             GM_xmlhttpRequest({
                 method: "POST",
                 url: "http://localhost:9632/config",
                 headers: { "Content-Type": "application/json" },
                 data: JSON.stringify(bridgeConfig),
-                onload: () => log("Config synced to bridge"),
+                onload: () => {
+                    pendingBridgeConfig = null;
+                    log("Config synced to bridge");
+                },
                 onerror: () => log("Failed to sync config to bridge"),
             });
         } catch (_) {}
@@ -2228,6 +2353,22 @@
     }
 
     function sendToMPV(playlist, title) {
+        // Mirrors src/userscript-config-sync.ts — keep in sync.
+        // Flush any pending config to the bridge before opening MPV
+        // so the bridge runtime cache is never stale relative to /play.
+        if (pendingBridgeConfig) {
+            return flushPendingBridgeConfig().then((flushed) => {
+                if (!flushed) {
+                    log("[Bridge] Pending config sync failed; aborting /play");
+                    return Promise.reject(new Error("Pending config sync failed"));
+                }
+                return sendToMPVInner(playlist, title);
+            });
+        }
+        return sendToMPVInner(playlist, title);
+    }
+
+    function sendToMPVInner(playlist, title) {
         return new Promise((resolve, reject) => {
             const profile = JSON.parse(localStorage.getItem("profile") || "{}");
             const authKey = profile.auth?.key;
