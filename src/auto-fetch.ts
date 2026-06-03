@@ -52,8 +52,13 @@ interface StremioMeta {
 
 interface SharedConfig {
     stremioMeta?: StremioMeta;
+    autoFetch?: { enabled?: boolean };
     extraEpisodes?: number;
     [key: string]: unknown;
+}
+
+function isAutoFetchEnabled(sharedConfig: SharedConfig): boolean {
+    return sharedConfig.autoFetch?.enabled !== false;
 }
 
 /**
@@ -174,6 +179,11 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
         const sharedConfig = readSharedConfig();
         if (!sharedConfig) {
             console.warn("[AutoFetch] Shared config file not found or invalid JSON. Skipping auto-fetch.");
+            return;
+        }
+
+        if (!isAutoFetchEnabled(sharedConfig)) {
+            console.log("[AutoFetch] Disabled by bridge config. Skipping auto-fetch.");
             return;
         }
 

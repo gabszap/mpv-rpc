@@ -243,6 +243,16 @@ function validateProvider(p) {
     return null;
 }
 
+function isConfigFieldType(value, expectedType) {
+    if (expectedType === "array") {
+        return Array.isArray(value);
+    }
+    if (expectedType === "object") {
+        return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+    return typeof value === expectedType;
+}
+
 function validateStremioMeta(meta) {
     if (typeof meta !== "object" || meta === null || Array.isArray(meta)) {
         return "stremioMeta must be an object";
@@ -318,6 +328,16 @@ app.post("/config", (req, res) => {
         return res.status(400).json({ error: "Request body must be a valid JSON object" });
     }
 
+    // DIAGNOSTIC: log received providers type and sample
+    if (body.providers !== undefined) {
+        console.log("[DIAG] providers type:", typeof body.providers);
+        console.log("[DIAG] Array.isArray(providers):", Array.isArray(body.providers));
+        console.log("[DIAG] providers sample:", JSON.stringify(body.providers).slice(0, 200));
+    } else {
+        console.log("[DIAG] providers is UNDEFINED in body");
+    }
+    console.log("[DIAG] body keys:", Object.keys(body));
+
     // Strict top-level key + type allowlist. Any unknown key is rejected so
     // the bridge never accepts arbitrary fields. `stremioMeta` may be null
     // (means clear); it is validated by validateStremioMeta below.
@@ -345,8 +365,9 @@ app.post("/config", (req, res) => {
         // and let validateStremioMeta reject anything that is neither null nor
         // a plain object.
         if (key === "stremioMeta") continue;
-        if (typeof body[key] !== expectedType) {
-            return res.status(400).json({ error: `${key} must be a ${expectedType}` });
+        if (!isConfigFieldType(body[key], expectedType)) {
+            const article = /^[aeiou]/i.test(expectedType) ? "an" : "a";
+            return res.status(400).json({ error: `${key} must be ${article} ${expectedType}` });
         }
     }
 
@@ -1070,6 +1091,11 @@ app.post("/auto-fetch", async (req, res) => {
     }
 
     const config = readConfig();
+    if (config.autoFetch?.enabled === false) {
+        console.log("[MPV Bridge] Auto-fetch disabled by config");
+        return res.json({ success: true, added: 0, message: "Auto-fetch disabled by config" });
+    }
+
     const { imdbId, name, season, episode } = body;
 
     console.log(`[MPV Bridge] Auto-fetch: ${name} S${season}E${episode} (+${extraEpisodes} episodes)`);

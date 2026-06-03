@@ -318,7 +318,7 @@
         }
 
         const legacy = {
-            autoFetchEnabled: GM_getValue("autoFetchEnabled", undefined),
+            autoFetch: GM_getValue("autoFetchEnabled", undefined),
             extraEpisodes: GM_getValue("extraEpisodes", undefined),
             showMpvIcon: GM_getValue("showMpvIcon", undefined),
             showConfigIcon: GM_getValue("showConfigIcon", undefined),
@@ -327,10 +327,10 @@
         const hasLegacyValue = Object.values(legacy).some((v) => v !== undefined);
 
         if (hasLegacyValue) {
-            const autoFetchEnabled = legacy.autoFetchEnabled !== false;
+            const autoFetch = legacy.autoFetch !== false;
             const extraEpisodes = typeof legacy.extraEpisodes === "number" ? legacy.extraEpisodes : 2;
             const iconMode = inferIconMode(legacy);
-            GM_setValue("autoFetchEnabled", autoFetchEnabled);
+            GM_setValue("autofetch", autoFetch);
             GM_setValue("extraEpisodes", extraEpisodes);
             GM_setValue("iconMode", iconMode);
         }
@@ -343,6 +343,7 @@
     migrateLocalConfigToV2();
 
     // Default to 2 episodes (unified with bridge + RPC); user can override 1..25
+    let autoFetch = GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true));
     let extraEpisodes = GM_getValue("extraEpisodes", 2);
     let playlistMode = GM_getValue("playlistMode", "batch");
     let mpvShortcut = GM_getValue("mpvShortcut", "v");
@@ -373,8 +374,18 @@
                     url: "http://localhost:9632/config",
                     headers: { "Content-Type": "application/json" },
                     data: JSON.stringify(config),
-                    onload: (r) => (r.status === 200 ? resolve() : reject(new Error("Config sync failed"))),
-                    onerror: () => reject(new Error("Connection failed")),
+                    onload: (r) => {
+                        if (r.status >= 200 && r.status < 300) {
+                            resolve();
+                            return;
+                        }
+
+                        const responseBody = (r.responseText || "").trim();
+                        const detail = responseBody ? `: ${responseBody}` : "";
+                        reject(new Error(`Config sync failed (HTTP ${r.status})${detail}`));
+                    },
+                    onerror: () => reject(new Error("Config sync failed: connection failed")),
+                    ontimeout: () => reject(new Error("Config sync failed: request timed out")),
                 });
             } catch (e) {
                 reject(e);
@@ -396,6 +407,53 @@
             pendingBridgeConfig = null;
         }
         return true;
+    }
+
+    function getNonEmptyString(value) {
+        if (typeof value !== "string") {
+            return null;
+        }
+
+        const trimmedValue = value.trim();
+        return trimmedValue.length > 0 ? trimmedValue : null;
+    }
+
+    function getPositiveInteger(value) {
+        return Number.isInteger(value) && value > 0 ? value : null;
+    }
+
+    function buildBridgeStremioMeta(content) {
+        if (!content || typeof content !== "object") {
+            return null;
+        }
+
+        const meta = {};
+        const stringFields = ["seriesId", "libraryItemId", "videoId", "name", "episodeTitle", "type"];
+        const numberFields = ["season", "episode", "episodesInSeason"];
+
+        for (const field of stringFields) {
+            const value = getNonEmptyString(content[field]);
+            if (value) {
+                meta[field] = value;
+            }
+        }
+
+        const imdbId = getNonEmptyString(content.imdbId);
+        if (imdbId && isRealImdbId(imdbId)) {
+            meta.imdbId = imdbId;
+        } else if (content.imdbId === null) {
+            meta.imdbId = null;
+        }
+
+        for (const field of numberFields) {
+            const value = getPositiveInteger(content[field]);
+            if (value) {
+                meta[field] = value;
+            }
+        }
+
+        const hasIdentity = Boolean(meta.seriesId || meta.libraryItemId || meta.videoId || meta.imdbId || meta.name);
+        return hasIdentity ? meta : null;
     }
 
     function log(...args) {
@@ -595,8 +653,9 @@
                     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
                 }
                 .mpv-tab-nav {
-                    display: flex; gap: 8px;
+                    display: flex;
                     width: 100%;
+                    gap: 8px;
                     margin: -6px 0 16px;
                     padding: 5px;
                     border-radius: 12px;
@@ -604,7 +663,11 @@
                     border: 1px solid rgba(255, 255, 255, 0.08);
                 }
                 .mpv-tab-btn {
-                    flex: 1;
+                    appearance: none;
+                    -webkit-appearance: none;
+                    flex: 1 1 0;
+                    width: 100%;
+                    min-width: 0;
                     border: 1px solid transparent;
                     border-radius: 8px;
                     background: transparent;
@@ -652,13 +715,17 @@
                     color: white; font-size: 14px; transition: all 0.2s ease;
                 }
                 .mpv-input:focus { outline: none; border-color: #8b5cf6; background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2); }
+                #mpv-icon-mode.mpv-input,
                 #mpv-icon-mode {
                     color-scheme: dark;
-                    background: rgba(255, 255, 255, 0.05);
-                    color: #fff;
+                    background: rgba(255, 255, 255, 0.04) !important;
+                    background-color: rgba(255, 255, 255, 0.04) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+                    color: #f4f4f5;
                 }
                 #mpv-icon-mode option {
-                    background: #1f1f23;
+                    background-color: #1f1f23;
                     color: #f4f4f5;
                 }
                 .mpv-help { font-size: 12px; opacity: 0.5; margin-top: 6px; line-height: 1.4; }
@@ -858,6 +925,17 @@
                                     <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Loads all remaining episodes (may take a while)</div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div class="mpv-form-group">
+                            <label class="mpv-label">Auto-Fetch Episodes</label>
+                            <div class="mpv-checkbox-group" style="justify-content: space-between;">
+                                <span style="font-size: 13px; color: #ccc;">Automatically request the next episodes near playlist end</span>
+                                <div class="mpv-toggle-track mpv-auto-fetch-toggle" data-enabled="${autoFetch ? "true" : "false"}" role="switch" aria-checked="${autoFetch ? "true" : "false"}" tabindex="0" title="${autoFetch ? "Enabled" : "Disabled"}">
+                                    <div class="mpv-toggle-thumb"></div>
+                                </div>
+                            </div>
+                            <div class="mpv-help" style="margin-top: 6px;">Bridge setting controls Stremio bridge auto-fetch requests; .env AUTO_FETCH=false still disables RPC-side triggering globally.</div>
                         </div>
 
                         <div class="mpv-form-group">
@@ -1246,11 +1324,12 @@
 
                     GM_setValue("debug", false);
                     GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
-                    GM_setValue("autoFetchEnabled", true);
+                    GM_setValue("autofetch", true);
                     GM_setValue("iconMode", "default");
                     updateButtonInfo();
 
                     providers = [...DEFAULT_ACTIVE];
+                    autoFetch = true;
                     playlistMode = "batch";
                     extraEpisodes = 2;
                     mpvShortcut = "v";
@@ -1430,6 +1509,23 @@
                 if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     debugToggle.click();
+                }
+            });
+        }
+
+        const autoFetchToggle = modal.querySelector(".mpv-auto-fetch-toggle");
+        if (autoFetchToggle) {
+            autoFetchToggle.addEventListener("click", () => {
+                const isEnabled = autoFetchToggle.dataset.enabled === "true";
+                const newEnabled = !isEnabled;
+                autoFetchToggle.dataset.enabled = newEnabled ? "true" : "false";
+                autoFetchToggle.setAttribute("aria-checked", newEnabled ? "true" : "false");
+                autoFetchToggle.title = newEnabled ? "Enabled" : "Disabled";
+            });
+            autoFetchToggle.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    autoFetchToggle.click();
                 }
             });
         }
@@ -1721,11 +1817,16 @@
         const debugEnabled = debugToggle ? debugToggle.dataset.enabled === "true" : GM_getValue("debug", false);
         GM_setValue("debug", debugEnabled);
 
+        const autoFetchToggle = modal.querySelector(".mpv-auto-fetch-toggle");
+        autoFetch = autoFetchToggle
+            ? autoFetchToggle.dataset.enabled === "true"
+            : GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true));
+        GM_setValue("autofetch", autoFetch);
+
         // Persist the v2 marker on the localStorage mirror so the next startup
         // skips migration. The on-disk file is also marked when the bridge
         // accepts the /config POST and migrates it.
         GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
-        GM_setValue("autoFetchEnabled", true);
 
         // Phase 5B: read the iconMode from the modal's <select> (default
         // "default" if absent) and persist it. Unknown values are coerced
@@ -1745,7 +1846,7 @@
         try {
             const bridgeConfig = {
                 configVersion: CURRENT_CONFIG_VERSION,
-                autoFetch: { enabled: true },
+                autoFetch: { enabled: autoFetch },
                 extraEpisodes: extraEpisodes,
                 providers: providers,
                 playlistMode: playlistMode,
@@ -1757,8 +1858,9 @@
                 iconMode: iconMode,
             };
             const stremioMeta = parseCurrentURL();
-            if (stremioMeta && typeof stremioMeta === "object") {
-                bridgeConfig.stremioMeta = stremioMeta;
+            const bridgeStremioMeta = buildBridgeStremioMeta(stremioMeta);
+            if (bridgeStremioMeta) {
+                bridgeConfig.stremioMeta = bridgeStremioMeta;
             }
             // Mirrors src/userscript-config-sync.ts — keep in sync.
             // Mark this config as pending so /play can flush it first.
@@ -1895,6 +1997,19 @@
         return typeof id === "string" && /^tt\d+$/.test(id);
     }
 
+    function getRouteText() {
+        return `${window.location.pathname || ""}${window.location.hash || ""}`.toLowerCase();
+    }
+
+    function isPlayerRoute() {
+        const route = getRouteText();
+        return /(?:^|[#/])player(?:$|[/?#])/.test(route);
+    }
+
+    function isDetailRoute() {
+        return getRouteText().includes("/detail/");
+    }
+
     function parseCurrentURL() {
         const hash = window.location.hash;
         log("Parsing URL:", `${hash.substring(0, 80)}...`);
@@ -2016,6 +2131,17 @@
             return scopedFullscreenButton;
         }
 
+        if (navButtonsContainer) {
+            const visibleButton = Array.from(navButtonsContainer.children)
+                .filter((element) => {
+                    const rect = element.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                })
+                .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
+
+            return visibleButton || navButtonsContainer;
+        }
+
         return (
             Array.from(document.querySelectorAll("[title]")).find((element) =>
                 element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
@@ -2093,6 +2219,7 @@
     }
 
     let updateButtonFrame = null;
+    let compactPositionFrame = null;
 
     function scheduleUpdateButtonInfo() {
         if (updateButtonFrame !== null) {
@@ -2102,6 +2229,26 @@
         updateButtonFrame = requestAnimationFrame(() => {
             updateButtonFrame = null;
             updateButtonInfo();
+        });
+    }
+
+    function positionCompactConfigButton() {
+        const container = document.getElementById("stremio-mpv-floating");
+        if (!container || isPlayerRoute() || GM_getValue("iconMode", "default") !== "compact") {
+            return;
+        }
+
+        positionFloatingContainer(container, applyIconMode("compact"));
+    }
+
+    function schedulePositionCompactConfigButton() {
+        if (compactPositionFrame !== null) {
+            return;
+        }
+
+        compactPositionFrame = requestAnimationFrame(() => {
+            compactPositionFrame = null;
+            positionCompactConfigButton();
         });
     }
 
@@ -2147,6 +2294,11 @@
         const container = document.getElementById("stremio-mpv-floating");
         if (!container) return;
 
+        if (isPlayerRoute()) {
+            container.style.display = "none";
+            return;
+        }
+
         // Phase 5B: icon visibility is now driven by the explicit `iconMode`
         // config rather than implicit URL inspection. The mode is read from
         // GM_getValue (with a safe default of "default") and resolved to a
@@ -2189,8 +2341,14 @@
         // it on when we have a parsed episode to show.
         const info = document.getElementById("stremio-mpv-info");
         if (info) {
+            if (state.containerPosition === "top-right") {
+                info.textContent = "";
+                info.style.display = "none";
+                return;
+            }
+
             info.style.order = state.containerPosition === "top-right" ? "1" : "";
-            const isDetail = window.location.hash.includes("/detail/");
+            const isDetail = isDetailRoute();
             if (isDetail) {
                 const content = parseCurrentURL();
                 if (content?.episode) {
@@ -2879,8 +3037,7 @@
         window.addEventListener("keydown", (e) => {
             if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
             if (e.key.toLowerCase() === mpvShortcut) {
-                const hash = window.location.hash;
-                if (hash.includes("/detail/")) {
+                if (isDetailRoute()) {
                     handleMPVClick(e);
                 }
             }
@@ -2895,16 +3052,25 @@
             }
         }, 500);
 
-        window.addEventListener("resize", scheduleUpdateButtonInfo);
+        const scheduleFloatingButtonLayout = () => {
+            if (GM_getValue("iconMode", "default") === "compact") {
+                schedulePositionCompactConfigButton();
+                return;
+            }
+
+            scheduleUpdateButtonInfo();
+        };
+
+        window.addEventListener("resize", scheduleFloatingButtonLayout);
 
         window.addEventListener("beforeunload", () => {
             clearInterval(hashCheckInterval);
-            window.removeEventListener("resize", scheduleUpdateButtonInfo);
+            window.removeEventListener("resize", scheduleFloatingButtonLayout);
         });
         new MutationObserver(() => {
             if (!document.getElementById("stremio-mpv-floating")) createFloatingButton();
             if (GM_getValue("iconMode", "default") === "compact") {
-                scheduleUpdateButtonInfo();
+                schedulePositionCompactConfigButton();
             }
         }).observe(document.body, { childList: true, subtree: true });
     }
