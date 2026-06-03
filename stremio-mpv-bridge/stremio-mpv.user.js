@@ -645,53 +645,67 @@
                 #stremio-mpv-modal.active .mpv-modal-content { transform: scale(1); }
 
                 .mpv-modal-header {
-                    font-size: 22px; font-weight: bold; margin-bottom: 24px;
+                    font-size: 22px; font-weight: bold; margin-bottom: 24px !important;
                     display: flex; align-items: center;
+                    flex-shrink: 0 !important;
+                    line-height: 1.2 !important;
                 }
                 .mpv-modal-title {
                     background: linear-gradient(45deg, #a78bfa, #8b5cf6);
                     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
                 }
-                .mpv-tab-nav {
-                    display: flex;
-                    width: 100%;
-                    gap: 8px;
-                    margin: -6px 0 16px;
-                    padding: 5px;
-                    border-radius: 12px;
-                    background: rgba(255, 255, 255, 0.03);
-                    border: 1px solid rgba(255, 255, 255, 0.08);
+                #stremio-mpv-modal .mpv-tab-nav {
+                    display: flex !important;
+                    align-items: center !important;
+                    width: 100% !important;
+                    height: 50px !important;
+                    max-height: 50px !important;
+                    flex-shrink: 0 !important;
+                    box-sizing: border-box !important;
+                    gap: 8px !important;
+                    margin: -6px 0 16px !important;
+                    padding: 5px !important;
+                    border-radius: 12px !important;
+                    background: rgba(255, 255, 255, 0.03) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.08) !important;
                 }
-                .mpv-tab-btn {
-                    appearance: none;
-                    -webkit-appearance: none;
-                    flex: 1 1 0;
-                    width: 100%;
-                    min-width: 0;
-                    border: 1px solid transparent;
-                    border-radius: 8px;
-                    background: transparent;
-                    color: #b8b8c2;
-                    font-size: 13px;
-                    font-weight: 600;
-                    padding: 10px 8px;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    line-height: 1;
-                    margin: 0;
+                #stremio-mpv-modal .mpv-tab-btn {
+                    appearance: none !important;
+                    -webkit-appearance: none !important;
+                    box-sizing: border-box !important;
+                    flex: 1 1 0% !important;
+                    width: 100% !important;
+                    min-width: 0 !important;
+                    height: 38px !important;
+                    max-height: 38px !important;
+                    border: 1px solid transparent !important;
+                    border-radius: 8px !important;
+                    background: transparent !important;
+                    color: #b8b8c2 !important;
+                    font-size: 14px !important;
+                    font-weight: 600 !important;
+                    padding: 0 8px !important;
+                    cursor: pointer !important;
+                    transition: all 0.2s ease !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    line-height: 1 !important;
+                    margin: 0 !important;
                 }
-                .mpv-tab-btn:hover {
-                    color: #fff;
-                    background: rgba(139, 92, 246, 0.15);
+                #stremio-mpv-modal .mpv-tab-btn:first-child,
+                #stremio-mpv-modal .mpv-tab-btn:first-of-type {
+                    margin-left: 0 !important;
                 }
-                .mpv-tab-btn.active {
-                    color: #fff;
-                    background: linear-gradient(135deg, rgba(139, 92, 246, 0.35), rgba(124, 58, 237, 0.2));
-                    border-color: rgba(139, 92, 246, 0.45);
-                    box-shadow: 0 6px 16px rgba(139, 92, 246, 0.25);
+                #stremio-mpv-modal .mpv-tab-btn:hover {
+                    color: #fff !important;
+                    background: rgba(139, 92, 246, 0.15) !important;
+                }
+                #stremio-mpv-modal .mpv-tab-btn.mpv-active {
+                    color: #fff !important;
+                    background: linear-gradient(135deg, rgba(139, 92, 246, 0.35), rgba(124, 58, 237, 0.2)) !important;
+                    border-color: rgba(139, 92, 246, 0.45) !important;
+                    box-shadow: 0 6px 16px rgba(139, 92, 246, 0.25) !important;
                 }
                 .mpv-modal-body {
                     flex: 1;
@@ -702,7 +716,7 @@
                     scrollbar-gutter: stable;
                 }
                 .mpv-tab-panel { display: none; width: 100%; animation: tabFade 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
-                .mpv-tab-panel.active { display: block; }
+                .mpv-tab-panel.mpv-active { display: block !important; }
                 @keyframes tabFade {
                     from { opacity: 0; transform: translateY(8px); }
                     to { opacity: 1; transform: translateY(0); }
@@ -715,19 +729,6 @@
                     color: white; font-size: 14px; transition: all 0.2s ease;
                 }
                 .mpv-input:focus { outline: none; border-color: #8b5cf6; background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2); }
-                #mpv-icon-mode.mpv-input,
-                #mpv-icon-mode {
-                    color-scheme: dark;
-                    background: rgba(255, 255, 255, 0.04) !important;
-                    background-color: rgba(255, 255, 255, 0.04) !important;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-                    color: #f4f4f5;
-                }
-                #mpv-icon-mode option {
-                    background-color: #1f1f23;
-                    color: #f4f4f5;
-                }
                 .mpv-help { font-size: 12px; opacity: 0.5; margin-top: 6px; line-height: 1.4; }
                 .mpv-actions {
                     display: flex; justify-content: flex-end; gap: 12px; margin-top: 18px;
@@ -864,13 +865,13 @@
                 </div>
 
                 <div class="mpv-tab-nav" role="tablist" aria-label="Settings Tabs">
-                    <button type="button" class="mpv-tab-btn active" data-tab="providers" role="tab" aria-selected="true">Providers</button>
+                    <button type="button" class="mpv-tab-btn mpv-active" data-tab="providers" role="tab" aria-selected="true">Providers</button>
                     <button type="button" class="mpv-tab-btn" data-tab="playback" role="tab" aria-selected="false">Playback</button>
                     <button type="button" class="mpv-tab-btn" data-tab="advanced" role="tab" aria-selected="false">Advanced</button>
                 </div>
 
                 <div class="mpv-modal-body">
-                    <div class="mpv-tab-panel active" data-tab-panel="providers" role="tabpanel">
+                    <div class="mpv-tab-panel mpv-active" data-tab-panel="providers" role="tabpanel">
                         <div id="mpv-providers-container">
                             ${providersHTML}
                         </div>
@@ -986,13 +987,14 @@
 
                         <div class="mpv-form-group">
                             <label class="mpv-label">Floating Icons</label>
-                            <select id="mpv-icon-mode" class="mpv-input" style="cursor: pointer;">
-                                <option value="default" ${selectedIconMode === "default" ? "selected" : ""}>Show MPV + Config icons</option>
-                                <option value="config-only" ${selectedIconMode === "config-only" ? "selected" : ""}>Large Config icon only</option>
-                                <option value="compact" ${selectedIconMode === "compact" ? "selected" : ""}>Compact Config icon near fullscreen</option>
-                                <option value="disabled" ${selectedIconMode === "disabled" ? "selected" : ""}>Hide all icons</option>
-                            </select>
-                            <div class="mpv-help" style="margin-top: 4px;">Controls the floating MPV / config buttons. Hide all icons can be reverted from the Violentmonkey/Tampermonkey menu: Open MPV Bridge Settings.</div>
+                            <div class="mpv-icon-mode-pills" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "default" ? "active" : ""}" data-mode="default" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Show Both Icons</button>
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "config-only" ? "active" : ""}" data-mode="config-only" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Config Icon Only</button>
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "compact" ? "active" : ""}" data-mode="compact" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Compact Mode</button>
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "disabled" ? "active" : ""}" data-mode="disabled" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Hide All Icons</button>
+                            </div>
+                            <input type="hidden" id="mpv-icon-mode" value="${selectedIconMode}">
+                            <div class="mpv-help" style="margin-top: 6px;">Controls the floating MPV / config buttons. Hide all icons can be reverted from the Violentmonkey/Tampermonkey menu: Open MPV Bridge Settings.</div>
                         </div>
 
                         <div class="mpv-form-group">
@@ -1175,12 +1177,12 @@
         const switchTab = (tabName) => {
             tabButtons.forEach((button) => {
                 const isActive = button.dataset.tab === tabName;
-                button.classList.toggle("active", isActive);
+                button.classList.toggle("mpv-active", isActive);
                 button.setAttribute("aria-selected", isActive ? "true" : "false");
             });
 
             tabPanels.forEach((panel) => {
-                panel.classList.toggle("active", panel.dataset.tabPanel === tabName);
+                panel.classList.toggle("mpv-active", panel.dataset.tabPanel === tabName);
             });
 
             providerDropdown?.classList.remove("show");
@@ -1209,6 +1211,19 @@
                 }
             });
         });
+
+        // Icon Mode Pills logic
+        const iconModePills = modal.querySelectorAll(".mpv-icon-mode-pills .mpv-pill-btn");
+        const iconModeInput = modal.querySelector("#mpv-icon-mode");
+        if (iconModePills && iconModeInput) {
+            iconModePills.forEach((pill) => {
+                pill.addEventListener("click", () => {
+                    iconModePills.forEach((p) => p.classList.remove("active"));
+                    pill.classList.add("active");
+                    iconModeInput.value = pill.dataset.mode;
+                });
+            });
+        }
 
         const countGroup = modal.querySelector("#mpv-group-count");
         const radioButtons = modal.querySelectorAll('input[name="mpv-stream-mode"]');
@@ -1243,12 +1258,12 @@
         });
 
         // Quality Pill Buttons
-        const pillBtns = modal.querySelectorAll(".mpv-pill-btn");
+        const pillBtns = modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn");
         const qualityInput = modal.querySelector("#mpv-preferred-quality");
         pillBtns.forEach((btn) => {
             btn.addEventListener("click", () => {
                 btn.classList.toggle("active");
-                const activeQualities = Array.from(modal.querySelectorAll(".mpv-pill-btn.active")).map(
+                const activeQualities = Array.from(modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn.active")).map(
                     (b) => b.dataset.quality,
                 );
                 qualityInput.value = activeQualities.join(",");
