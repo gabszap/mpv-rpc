@@ -222,6 +222,7 @@
         { id: "custom", name: "Custom", url: "", enabled: true },
     ];
 
+    // Default to 2 episodes (unified with bridge + RPC); user can override 1..25
     let extraEpisodes = GM_getValue("extraEpisodes", 2);
     let playlistMode = GM_getValue("playlistMode", "batch");
     let mpvShortcut = GM_getValue("mpvShortcut", "v");

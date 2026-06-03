@@ -236,9 +236,11 @@ export function isSafeForSync(identity: PlaybackEpisodeIdentity): boolean {
     if (!title || title === "N/A") {
         return false;
     }
-    // Require at least two word characters so single-letter titles can't slip through.
-    const wordChars = title.match(/\w/g);
-    if (!wordChars || wordChars.length < 2) {
+    // Require at least two Unicode letter characters so single-letter titles
+    // (or punctuation-only noise) can't slip through. `\w` is ASCII-only and
+    // would reject valid non-Latin titles like "進撃の巨人" or "Один Кусок".
+    const letterChars = title.match(/\p{L}/gu);
+    if (!letterChars || letterChars.length < 2) {
         return false;
     }
 

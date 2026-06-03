@@ -101,6 +101,49 @@ describe("mapSeasonEpisodeToAbsolute", () => {
         ]);
         expect(result?.absoluteEpisode).toBe(52);
     });
+
+    it("ignores season 0 (specials) when mapping a regular season", () => {
+        // Season 0 has 5 specials but does not shift the cumulative count.
+        // Season 2 Episode 1 should land at absolute 13 (12 from S1 + 1).
+        const result = mapSeasonEpisodeToAbsolute({ season: 2, episode: 1 }, [
+            { season: 0, episodeCount: 5 },
+            { season: 1, episodeCount: 12 },
+        ]);
+        expect(result).toEqual({
+            absoluteEpisode: 13,
+            seasonEpisode: "S02E01",
+        });
+    });
+
+    it("returns null when a regular season between 1 and current is missing, even with season 0 present", () => {
+        // Seasons 0, 1, 3 are present — season 2 is missing, so season 3
+        // cannot be safely mapped even though specials are accounted for.
+        const result = mapSeasonEpisodeToAbsolute({ season: 3, episode: 1 }, [
+            { season: 0, episodeCount: 5 },
+            { season: 1, episodeCount: 12 },
+            { season: 3, episodeCount: 24 },
+        ]);
+        expect(result).toBeNull();
+    });
+
+    it("returns the current episode when only season 0 is present alongside no prior regular seasons", () => {
+        // Season 0 doesn't count, so the first episode of season 1 is
+        // absolute episode 1.
+        const result = mapSeasonEpisodeToAbsolute({ season: 1, episode: 1 }, [{ season: 0, episodeCount: 5 }]);
+        expect(result).toEqual({
+            absoluteEpisode: 1,
+            seasonEpisode: "S01E01",
+        });
+    });
+
+    it("returns null when the target itself is in season 0", () => {
+        // Specials are outside the main series; this helper isn't useful for them.
+        const result = mapSeasonEpisodeToAbsolute({ season: 0, episode: 1 }, [
+            { season: 0, episodeCount: 5 },
+            { season: 1, episodeCount: 12 },
+        ]);
+        expect(result).toBeNull();
+    });
 });
 
 // ---------------------------------------------------------------------------

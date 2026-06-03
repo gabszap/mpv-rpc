@@ -16,6 +16,15 @@ export interface ParsedFilename {
     media_type: "anime" | "series" | "unknown";
 }
 
+/**
+ * Result of `parseAnimeReleaseFallback` — a partial parse of an anime release
+ * filename shaped like "[Group] Title - Episode [Tags]".
+ *
+ * Fields mirror the structural data the existing parse flow needs to build a
+ * `ParsedFilename` without re-running the more expensive GuessIt pipeline.
+ * Optional fields stay `undefined` when the corresponding tag is absent
+ * from the release's tags block; the caller decides what to do with them.
+ */
 export type AnimeReleaseParseResult = {
     title: string;
     episode?: number;

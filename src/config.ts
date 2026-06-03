@@ -134,8 +134,12 @@ export const config = {
         progressIntervalMs: Math.max(30000, parseInt(getEnv("STREMIO_PROGRESS_INTERVAL_MS", "90000"), 10) || 90000),
     },
 
-    // Auto-fetch settings (automatically fetch next episodes near playlist end)
-    autoFetchEnabled: getEnvBool("AUTO_FETCH_ENABLED", true),
+    // Auto-fetch settings (automatically fetch next episodes near playlist end).
+    // This is the fallback default consulted only when the bridge config is missing
+    // `autoFetch.enabled`. Runtime state is owned by the bridge config + extraEpisodes.
+    autoFetch: {
+        enabled: getEnvBool("AUTO_FETCH", true),
+    },
 };
 
 export type Config = typeof config;

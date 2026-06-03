@@ -107,6 +107,18 @@ describe("normalizeTitle", () => {
         expect(normalizeTitle("Açaí")).toBe("acai");
         expect(normalizeTitle("Mañana")).toBe("manana");
     });
+
+    it("preserves non-Latin letters (Japanese, Cyrillic) without folding to empty", () => {
+        // Non-ASCII letters must survive the trim + lowercase + strip pass so
+        // downstream code (search, comparison) has something to work with.
+        const japanese = normalizeTitle("進撃の巨人");
+        expect(japanese).not.toBe("");
+        expect(japanese.length).toBeGreaterThan(0);
+
+        const cyrillic = normalizeTitle("Один Кусок");
+        expect(cyrillic).not.toBe("");
+        expect(cyrillic.length).toBeGreaterThan(0);
+    });
 });
 
 describe("isSafeForSync", () => {
@@ -172,5 +184,27 @@ describe("isSafeForSync", () => {
         });
 
         expect(isSafeForSync(identity)).toBe(false);
+    });
+
+    it("returns true for a non-ASCII-only title when episode and id are present", () => {
+        // Regression: the previous ASCII-only `\w` regex treated titles like
+        // "進撃の巨人" as having zero word characters and rejected them.
+        const identity = createPlaybackIdentity({
+            title: "進撃の巨人",
+            episode: 1,
+            imdbId: "tt0000001",
+        });
+
+        expect(isSafeForSync(identity)).toBe(true);
+    });
+
+    it("returns true for a Cyrillic-only title when episode and id are present", () => {
+        const identity = createPlaybackIdentity({
+            title: "Один Кусок",
+            episode: 1,
+            imdbId: "tt0000001",
+        });
+
+        expect(isSafeForSync(identity)).toBe(true);
     });
 });

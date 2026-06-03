@@ -292,8 +292,13 @@ export type SeasonInfo = { season: number; episodeCount: number };
  * of consecutive seasons.
  *
  * Returns `null` when the mapping is not safe — for example when one or more
- * prior seasons are missing from the input. In that case the caller must skip
- * the scrobble instead of guessing the absolute position.
+ * prior regular seasons are missing from the input. In that case the caller
+ * must skip the scrobble instead of guessing the absolute position.
+ *
+ * Season 0 (specials/OVAs) is treated as "outside the main series": it does
+ * not count toward the consecutiveness check and is excluded from the
+ * cumulative episode count. Mapping a target that lives in season 0 itself
+ * returns `null` — this helper is only meaningful for regular seasons.
  *
  * @param current The parsed season/episode target.
  * @param seasons Season metadata in any order. Will be sorted by season ascending.
@@ -303,11 +308,24 @@ export function mapSeasonEpisodeToAbsolute(
     current: SeasonEpisode,
     seasons: SeasonInfo[],
 ): { absoluteEpisode: number; seasonEpisode: string } | null {
-    const sorted = [...seasons].sort((a, b) => a.season - b.season);
-    const previousSeasons = sorted.filter((s) => s.season < current.season);
-    if (previousSeasons.length !== current.season - 1) return null;
+    // Specials (season 0) live outside the main series; the helper is
+    // not useful for them.
+    if (current.season <= 0) return null;
 
-    const sum = previousSeasons.reduce((acc, s) => acc + s.episodeCount, 0);
+    const sorted = [...seasons].sort((a, b) => a.season - b.season);
+    const priorRegularSeasons = sorted.filter((s) => s.season > 0 && s.season < current.season);
+
+    // Consecutiveness check: the regular seasons before `current.season` must
+    // be exactly 1, 2, …, current.season-1. A missing prior season makes the
+    // absolute position ambiguous, so refuse the mapping.
+    const expected = new Set<number>();
+    for (let n = 1; n < current.season; n++) expected.add(n);
+    const present = new Set(priorRegularSeasons.map((s) => s.season));
+    if (present.size !== expected.size || ![...expected].every((n) => present.has(n))) {
+        return null;
+    }
+
+    const sum = priorRegularSeasons.reduce((acc, s) => acc + s.episodeCount, 0);
     return {
         absoluteEpisode: sum + current.episode,
         seasonEpisode: `S${pad2(current.season)}E${pad2(current.episode)}`,

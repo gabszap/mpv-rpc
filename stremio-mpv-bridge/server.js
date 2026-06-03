@@ -831,34 +831,48 @@ async function collectNextEpisodes(config, imdbId, season, episode, extraEpisode
 
     // Fetch streams for each next episode
     const items = [];
+    // Target dedupe: track SxxExx keys we've already added in THIS request so
+    // that two concurrent auto-fetch calls (or a single call whose response
+    // includes the same target twice) cannot both append the same episode.
+    // This complements `existingTitles` which only dedupes by URL against
+    // the MPV playlist already on disk.
+    const seenEpisodeKeys = new Set();
     for (const ep of nextEpisodes) {
+        const epKey = `S${String(ep.season).padStart(2, "0")}E${String(ep.episode).padStart(2, "0")}`;
+        // Skip targets we've already handled in this run.
+        if (seenEpisodeKeys.has(epKey)) {
+            console.log(`[MPV Bridge] Auto-fetch: Skipped duplicate target: ${epKey}`);
+            continue;
+        }
         let found = false;
         for (const p of enabledProviders) {
-            console.log(`[MPV Bridge] Auto-fetch: Trying ${p.name || p.id} for S${ep.season}E${ep.episode}...`);
+            console.log(`[MPV Bridge] Auto-fetch: Trying ${p.name || p.id} for ${epKey}...`);
             const streams = await fetchStreams(p.url, imdbId, ep.season, ep.episode);
             const streamItem = findBestStream(streams, config);
             if (streamItem) {
                 // Check if already in MPV playlist
                 if (existingTitles.has(streamItem.url)) {
-                    console.log(`[MPV Bridge] Auto-fetch: S${ep.season}E${ep.episode} already in playlist, skipping`);
+                    console.log(`[MPV Bridge] Auto-fetch: ${epKey} already in playlist, skipping`);
                     found = true; // Mark as handled so we don't try other providers
+                    seenEpisodeKeys.add(epKey);
                     break;
                 }
 
-                console.log(`[MPV Bridge] Auto-fetch: Found S${ep.season}E${ep.episode} on ${p.name || p.id}`);
+                console.log(`[MPV Bridge] Auto-fetch: Found ${epKey} on ${p.name || p.id}`);
                 items.push({
                     url: streamItem.url,
-                    title: streamItem.title || `S${ep.season}E${ep.episode}`,
+                    title: streamItem.title || epKey,
                     season: ep.season,
                     episode: ep.episode,
                 });
+                seenEpisodeKeys.add(epKey);
                 found = true;
                 break;
             }
         }
 
         if (!found) {
-            console.log(`[MPV Bridge] Auto-fetch: S${ep.season}E${ep.episode} not found on any provider`);
+            console.log(`[MPV Bridge] Auto-fetch: ${epKey} not found on any provider`);
         }
     }
 
@@ -901,8 +915,8 @@ app.post("/auto-fetch", async (req, res) => {
         return res.status(400).json({ error: "type must be a string" });
     }
 
-    // Validate optional extraEpisodes
-    let extraEpisodes = 3;
+    // Validate optional extraEpisodes (default 2 — unified with userscript + RPC)
+    let extraEpisodes = 2;
     if (body.extraEpisodes !== undefined) {
         if (typeof body.extraEpisodes !== "number" || !Number.isInteger(body.extraEpisodes)) {
             return res.status(400).json({ error: "extraEpisodes must be an integer" });
