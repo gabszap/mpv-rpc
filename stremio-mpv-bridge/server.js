@@ -94,13 +94,24 @@ function inferIconMode(legacy) {
     return "default";
 }
 
+function withoutSensitiveConfigFields(config) {
+    if (!config || typeof config !== "object") {
+        return config;
+    }
+
+    const sanitized = { ...config };
+    delete sanitized.stremioAuth;
+    return sanitized;
+}
+
 /**
  * Migrate a v1 (or unversioned) bridge config to the v2 shape.
  * Mirrors `migrateV1ToV2` in src/bridge-config-migration.ts.
  * Any change here MUST also be applied to the TS source.
  */
 function migrateV1ToV2(config) {
-    const source = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+    const sourceConfig = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+    const source = withoutSensitiveConfigFields(sourceConfig);
     return {
         ...source,
         configVersion: CURRENT_CONFIG_VERSION,
@@ -143,9 +154,17 @@ function readConfig() {
 }
 
 function writeConfig(config) {
+    // CRITICAL: writeConfig must remain atomic (tmp + rename) to preserve
+    // the existing config on failure. A non-atomic write could corrupt
+    // .stremio-mpv-config.json on power loss, crash, or disk full, leaving
+    // the bridge without a valid config and breaking all subsequent /play,
+    // /auto-fetch, and /config requests. If you need to modify the write
+    // path, preserve the tmp-file + renameSync pattern and the random hex
+    // suffix to avoid collisions with concurrent writers.
     ensureConfigDir();
     const tmpPath = `${CONFIG_PATH}.tmp.${crypto.randomBytes(8).toString("hex")}`;
-    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 4), "utf-8");
+    const configToWrite = withoutSensitiveConfigFields(config);
+    fs.writeFileSync(tmpPath, JSON.stringify(configToWrite, null, 4), "utf-8");
     fs.renameSync(tmpPath, CONFIG_PATH);
 }
 
@@ -281,6 +300,7 @@ app.post("/config", (req, res) => {
     const allowedTopLevel = {
         providers: "array",
         stremioMeta: "object",
+        stremioAuth: "string",
         extraEpisodes: "number",
         autoFetch: "object",
         iconMode: "string",
@@ -341,8 +361,15 @@ app.post("/config", (req, res) => {
         }
     }
 
-    const existing = readConfig();
-    const merged = { ...existing, ...body };
+    if (body.stremioAuth !== undefined) {
+        if (typeof body.stremioAuth !== "string" || body.stremioAuth.trim().length === 0) {
+            return res.status(400).json({ error: "stremioAuth must be a non-empty string" });
+        }
+    }
+
+    const existing = withoutSensitiveConfigFields(readConfig());
+    const configBody = withoutSensitiveConfigFields(body);
+    const merged = { ...existing, ...configBody };
 
     // writeConfig uses a tmp file + rename (atomic on the same filesystem).
     // If the rename fails (disk full, permission denied, etc.) the original
@@ -355,59 +382,23 @@ app.post("/config", (req, res) => {
         return res.status(500).json({ error: "Failed to save config" });
     }
 
+    // Persist Stremio auth token if provided (consolidates /play auth handling).
+    // The /play handler also persists it, so calling saveStremioAuth here is idempotent.
+    if (typeof body.stremioAuth === "string" && body.stremioAuth.trim().length > 0) {
+        const trimmedAuth = body.stremioAuth.trim();
+        const existingAuth = getExistingStremioAuth();
+        if (existingAuth !== trimmedAuth) {
+            if (saveStremioAuth(trimmedAuth)) {
+                console.log("[MPV Bridge] Synced Stremio auth token from /config");
+            }
+        }
+    }
+
     if (process.env.DEBUG) {
         console.log(`[MPV Bridge] /config updated (v${merged.configVersion ?? 1})`);
     }
 
     res.json({ success: true, message: "Config updated" });
-});
-
-app.post("/sync-config", (req, res) => {
-    const body = req.body;
-
-    if (typeof body !== "object" || body === null || Array.isArray(body)) {
-        return res.status(400).json({ error: "Request body must be a valid JSON object" });
-    }
-
-    // Validate stremioMeta if provided
-    if (body.stremioMeta !== undefined) {
-        const err = validateStremioMeta(body.stremioMeta);
-        if (err) {
-            return res.status(400).json({ error: err });
-        }
-    }
-
-    // Validate stremioAuth if provided
-    if (body.stremioAuth !== undefined) {
-        if (typeof body.stremioAuth !== "string" || body.stremioAuth.trim().length === 0) {
-            return res.status(400).json({ error: "stremioAuth must be a non-empty string" });
-        }
-    }
-
-    const existing = readConfig();
-
-    // Save auth if provided
-    if (body.stremioAuth && typeof body.stremioAuth === "string") {
-        const existingAuth = getExistingStremioAuth();
-        if (existingAuth !== body.stremioAuth.trim()) {
-            if (saveStremioAuth(body.stremioAuth)) {
-                console.log("[MPV Bridge] Synced Stremio auth token");
-            }
-        }
-    }
-
-    // Save context if provided
-    if (body.stremioMeta && typeof body.stremioMeta === "object") {
-        const sanitizedContext = sanitizeStremioContext(body.stremioMeta);
-        if (sanitizedContext.error) {
-            return res.status(400).json({ error: sanitizedContext.error });
-        }
-        existing.stremioMeta = sanitizedContext.value;
-        writeConfig(existing);
-        console.log("[MPV Bridge] Synced stremioMeta config");
-    }
-
-    res.json({ success: true, message: "Config synced" });
 });
 
 app.post("/play", (req, res) => {
@@ -1100,7 +1091,6 @@ const server = app.listen(PORT, "127.0.0.1", () => {
 ║    POST /play        - Open URLs in MPV                   ║
 ║    POST /config      - Update bridge config               ║
 ║    POST /auto-fetch  - Auto-fetch next episodes           ║
-║    POST /sync-config - Sync config manually               ║
 ╚═══════════════════════════════════════════════════════════╝
 `);
 

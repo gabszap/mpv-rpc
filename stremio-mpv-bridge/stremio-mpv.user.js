@@ -1717,6 +1717,7 @@
                 preferredQuality: preferredQuality,
                 mpvArgsStr: mpvArgsStr,
                 debug: debugEnabled,
+                iconMode: iconMode,
             };
             const stremioMeta = parseCurrentURL();
             if (stremioMeta && typeof stremioMeta === "object") {
