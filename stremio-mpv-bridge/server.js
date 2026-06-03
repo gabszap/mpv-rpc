@@ -328,15 +328,7 @@ app.post("/config", (req, res) => {
         return res.status(400).json({ error: "Request body must be a valid JSON object" });
     }
 
-    // DIAGNOSTIC: log received providers type and sample
-    if (body.providers !== undefined) {
-        console.log("[DIAG] providers type:", typeof body.providers);
-        console.log("[DIAG] Array.isArray(providers):", Array.isArray(body.providers));
-        console.log("[DIAG] providers sample:", JSON.stringify(body.providers).slice(0, 200));
-    } else {
-        console.log("[DIAG] providers is UNDEFINED in body");
-    }
-    console.log("[DIAG] body keys:", Object.keys(body));
+
 
     // Strict top-level key + type allowlist. Any unknown key is rejected so
     // the bridge never accepts arbitrary fields. `stremioMeta` may be null
