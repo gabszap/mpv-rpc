@@ -40,6 +40,33 @@ describe("userscript-config-sync", () => {
         expect(getPendingBridgeConfig()).toBeNull();
     });
 
+    it("flushPendingBridgeConfigImpl does not clear newer pending config when an older flush resolves", async () => {
+        const configA = { x: "A" };
+        const configB = { x: "B" };
+        let resolvePost: (() => void) | undefined;
+        const post = vi.fn(
+            () =>
+                new Promise<void>((resolve) => {
+                    resolvePost = resolve;
+                }),
+        );
+
+        setPendingBridgeConfig(configA);
+        const flushPromise = flushPendingBridgeConfigImpl(post);
+
+        expect(post).toHaveBeenCalledTimes(1);
+        expect(post).toHaveBeenCalledWith(configA);
+
+        setPendingBridgeConfig(configB);
+        if (!resolvePost) {
+            throw new Error("Deferred config POST was not started");
+        }
+        resolvePost();
+
+        await expect(flushPromise).resolves.toBe(true);
+        expect(getPendingBridgeConfig()).toBe(configB);
+    });
+
     it("flushPendingBridgeConfigImpl returns false and keeps pending when postBridgeConfig rejects", async () => {
         setPendingBridgeConfig({ x: 1 });
         const post = vi.fn().mockRejectedValue(new Error("bridge down"));

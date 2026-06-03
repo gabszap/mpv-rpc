@@ -360,6 +360,9 @@ app.post("/config", (req, res) => {
     }
 
     if (body.autoFetch !== undefined) {
+        if (body.autoFetch === null) {
+            return res.status(400).json({ error: "autoFetch must be an object" });
+        }
         if (typeof body.autoFetch.enabled !== "boolean") {
             return res.status(400).json({ error: "autoFetch.enabled must be a boolean" });
         }
@@ -378,10 +381,11 @@ app.post("/config", (req, res) => {
         }
     }
 
+    let sanitizedStremioMeta;
     if (body.stremioMeta !== undefined && body.stremioMeta !== null) {
-        const err = validateStremioMeta(body.stremioMeta);
-        if (err) {
-            return res.status(400).json({ error: err });
+        sanitizedStremioMeta = sanitizeStremioContext(body.stremioMeta);
+        if (sanitizedStremioMeta.error) {
+            return res.status(400).json({ error: sanitizedStremioMeta.error });
         }
     }
 
@@ -393,6 +397,9 @@ app.post("/config", (req, res) => {
 
     const existing = withoutSensitiveConfigFields(readConfig());
     const configBody = withoutSensitiveConfigFields(body);
+    if (sanitizedStremioMeta) {
+        configBody.stremioMeta = sanitizedStremioMeta.value;
+    }
     const merged = normalizeBridgeConfig({ ...existing, ...configBody });
 
     // writeConfig uses a tmp file + rename (atomic on the same filesystem).

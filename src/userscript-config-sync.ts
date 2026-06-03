@@ -66,18 +66,20 @@ export type PostBridgeConfig = (config: BridgeConfig) => Promise<void>;
  * Returns `false` if posting failed; the config remains pending for a later retry.
  */
 export async function flushPendingBridgeConfigImpl(postBridgeConfig: PostBridgeConfig): Promise<boolean> {
-    const pending = pendingBridgeConfigHolder.value;
-    if (!pending) {
+    const configToFlush = pendingBridgeConfigHolder.value;
+    if (!configToFlush) {
         return true;
     }
 
     try {
-        await postBridgeConfig(pending);
+        await postBridgeConfig(configToFlush);
     } catch {
         return false;
     }
 
-    pendingBridgeConfigHolder.value = null;
+    if (pendingBridgeConfigHolder.value === configToFlush) {
+        pendingBridgeConfigHolder.value = null;
+    }
     return true;
 }
 

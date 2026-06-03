@@ -13,6 +13,7 @@
 // @grant        GM_notification
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_registerMenuCommand
 // @connect      localhost
 // @connect      *
 // @run-at       document-idle
@@ -270,14 +271,18 @@
                     containerVisible: true,
                     mpvButtonVisible: false,
                     configButtonVisible: true,
-                    configButtonEnlarged: false,
+                    configButtonEnlarged: true,
+                    configButtonSize: "large",
+                    containerPosition: "bottom-right",
                 };
             case "compact":
                 return {
                     containerVisible: true,
                     mpvButtonVisible: false,
                     configButtonVisible: true,
-                    configButtonEnlarged: true,
+                    configButtonEnlarged: false,
+                    configButtonSize: "small",
+                    containerPosition: "top-right",
                 };
             case "disabled":
                 return {
@@ -285,14 +290,17 @@
                     mpvButtonVisible: false,
                     configButtonVisible: false,
                     configButtonEnlarged: false,
+                    configButtonSize: "small",
+                    containerPosition: "bottom-right",
                 };
-            case "default":
             default:
                 return {
                     containerVisible: true,
                     mpvButtonVisible: true,
                     configButtonVisible: true,
                     configButtonEnlarged: false,
+                    configButtonSize: "small",
+                    containerPosition: "bottom-right",
                 };
         }
     }
@@ -375,15 +383,18 @@
     }
 
     async function flushPendingBridgeConfig() {
-        if (!pendingBridgeConfig) {
+        const configToFlush = pendingBridgeConfig;
+        if (!configToFlush) {
             return true;
         }
         try {
-            await postBridgeConfig(pendingBridgeConfig);
+            await postBridgeConfig(configToFlush);
         } catch (_) {
             return false;
         }
-        pendingBridgeConfig = null;
+        if (pendingBridgeConfig === configToFlush) {
+            pendingBridgeConfig = null;
+        }
         return true;
     }
 
@@ -511,6 +522,10 @@
 
         const modal = document.createElement("div");
         modal.id = "stremio-mpv-modal";
+        const storedIconMode = GM_getValue("iconMode", "default");
+        const selectedIconMode = ["default", "config-only", "compact", "disabled"].includes(storedIconMode)
+            ? storedIconMode
+            : "default";
 
         const providersHTML = providers
             .map((p, _index) => {
@@ -639,11 +654,11 @@
                 .mpv-input:focus { outline: none; border-color: #8b5cf6; background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2); }
                 #mpv-icon-mode {
                     color-scheme: dark;
-                    background: #151515;
+                    background: rgba(255, 255, 255, 0.05);
                     color: #fff;
                 }
                 #mpv-icon-mode option {
-                    background: #151515;
+                    background: #1f1f23;
                     color: #f4f4f5;
                 }
                 .mpv-help { font-size: 12px; opacity: 0.5; margin-top: 6px; line-height: 1.4; }
@@ -894,12 +909,12 @@
                         <div class="mpv-form-group">
                             <label class="mpv-label">Floating Icons</label>
                             <select id="mpv-icon-mode" class="mpv-input" style="cursor: pointer;">
-                                <option value="default" ${GM_getValue("iconMode", "default") === "default" ? "selected" : ""}>Show MPV + Config icons</option>
-                                <option value="config-only" ${GM_getValue("iconMode", "default") === "config-only" ? "selected" : ""}>Config icon only</option>
-                                <option value="compact" ${GM_getValue("iconMode", "default") === "compact" ? "selected" : ""}>Compact (larger config icon)</option>
-                                <option value="disabled" ${GM_getValue("iconMode", "default") === "disabled" ? "selected" : ""}>Hide all icons</option>
+                                <option value="default" ${selectedIconMode === "default" ? "selected" : ""}>Show MPV + Config icons</option>
+                                <option value="config-only" ${selectedIconMode === "config-only" ? "selected" : ""}>Large Config icon only</option>
+                                <option value="compact" ${selectedIconMode === "compact" ? "selected" : ""}>Compact Config icon near fullscreen</option>
+                                <option value="disabled" ${selectedIconMode === "disabled" ? "selected" : ""}>Hide all icons</option>
                             </select>
-                            <div class="mpv-help" style="margin-top: 4px;">Controls the floating MPV / config buttons in the bottom-right corner.</div>
+                            <div class="mpv-help" style="margin-top: 4px;">Controls the floating MPV / config buttons. Hide all icons can be reverted from the Violentmonkey/Tampermonkey menu: Open MPV Bridge Settings.</div>
                         </div>
 
                         <div class="mpv-form-group">
@@ -1724,7 +1739,9 @@
 
         showToast("Settings saved!", "success");
 
-        // Sync config to bridge
+        // Sync the complete bridge config immediately on Save. Keep the same
+        // object pending until the bridge acknowledges it so /play can retry
+        // if the Save-time POST fails or the bridge is offline.
         try {
             const bridgeConfig = {
                 configVersion: CURRENT_CONFIG_VERSION,
@@ -1746,18 +1763,19 @@
             // Mirrors src/userscript-config-sync.ts — keep in sync.
             // Mark this config as pending so /play can flush it first.
             pendingBridgeConfig = bridgeConfig;
-            GM_xmlhttpRequest({
-                method: "POST",
-                url: "http://localhost:9632/config",
-                headers: { "Content-Type": "application/json" },
-                data: JSON.stringify(bridgeConfig),
-                onload: () => {
-                    pendingBridgeConfig = null;
+            postBridgeConfig(bridgeConfig)
+                .then(() => {
+                    if (pendingBridgeConfig === bridgeConfig) {
+                        pendingBridgeConfig = null;
+                    }
                     log("Config synced to bridge");
-                },
-                onerror: () => log("Failed to sync config to bridge"),
-            });
-        } catch (_) {}
+                })
+                .catch((error) => {
+                    log("Failed to sync config to bridge:", error.message);
+                });
+        } catch (error) {
+            log("Failed to build bridge config:", error.message);
+        }
     }
 
     // ==================== UI SCRAPER ====================
@@ -1981,6 +1999,112 @@
     const MPV_ICON = `<svg viewBox="0 0 64 64" width="48" height="48" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="o" x1="13" y1="0" x2="53" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f9f9f9"/><stop offset="1" stop-color="#b9b9b9"/></linearGradient><linearGradient id="m" x1="44" y1="43" x2="18" y2="-2" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#451b4c"/><stop offset="1" stop-color="#6c3c76"/></linearGradient><linearGradient id="i" x1="25" y1="5" x2="49" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2f0e35"/><stop offset="1" stop-color="#732e7d"/></linearGradient><linearGradient id="c" x1="24" y1="12" x2="42" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f1f0f1"/><stop offset="1" stop-color="#ada7af"/></linearGradient><linearGradient id="p" x1="29" y1="18" x2="33" y2="23" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#66386f"/><stop offset="1" stop-color="#461d4d"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#o)"/><circle cx="33" cy="31" r="28" fill="url(#m)"/><circle cx="35" cy="29" r="21" fill="url(#i)"/><circle cx="32" cy="32" r="14" fill="url(#c)"/><path d="M28 25v12l10-6z" fill="url(#p)"/></svg>`;
     const GEAR_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" style="fill: currentColor;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0 .59-.22L2.74 8.87c-.04.17 0 .42.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`;
 
+    function findFullscreenButton() {
+        const exactMatch = document.querySelector('[title="Enter fullscreen mode"], [title="Exit fullscreen mode"]');
+        if (exactMatch) {
+            return exactMatch;
+        }
+
+        const navButtonsContainer = document.querySelector(".buttons-container-Oc5z1");
+        const scopedTitleElements = navButtonsContainer
+            ? Array.from(navButtonsContainer.querySelectorAll("[title]"))
+            : [];
+        const scopedFullscreenButton = scopedTitleElements.find((element) =>
+            element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
+        );
+        if (scopedFullscreenButton) {
+            return scopedFullscreenButton;
+        }
+
+        return (
+            Array.from(document.querySelectorAll("[title]")).find((element) =>
+                element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
+            ) || null
+        );
+    }
+
+    function clampToViewport(value, minimum, maximum) {
+        return Math.min(Math.max(value, minimum), maximum);
+    }
+
+    function getCompactConfigButtonPosition() {
+        const fullscreenButton = findFullscreenButton();
+        if (!fullscreenButton) {
+            return null;
+        }
+
+        const rect = fullscreenButton.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+            return null;
+        }
+
+        const buttonSize = 32;
+        const gap = 8;
+        const viewportPadding = 8;
+        const centeredTop = rect.top + (rect.height - buttonSize) / 2;
+        const leftOfFullscreen = rect.left - buttonSize - gap;
+        const rightOfFullscreen = rect.right + gap;
+        let left = leftOfFullscreen;
+        let top = centeredTop;
+
+        if (
+            leftOfFullscreen < viewportPadding &&
+            rightOfFullscreen + buttonSize <= window.innerWidth - viewportPadding
+        ) {
+            left = rightOfFullscreen;
+        } else if (leftOfFullscreen < viewportPadding) {
+            left = rect.left + (rect.width - buttonSize) / 2;
+            top = rect.bottom + gap;
+        }
+
+        return {
+            left: clampToViewport(left, viewportPadding, window.innerWidth - buttonSize - viewportPadding),
+            top: clampToViewport(top, viewportPadding, window.innerHeight - buttonSize - viewportPadding),
+        };
+    }
+
+    function positionFloatingContainer(container, state) {
+        container.style.left = "auto";
+        container.style.right = "20px";
+        container.style.bottom = "100px";
+        container.style.top = "auto";
+        container.style.zIndex = "99999";
+        container.style.alignItems = "flex-end";
+        container.style.flexDirection = "column";
+
+        if (state.containerPosition !== "top-right") {
+            return;
+        }
+
+        const compactPosition = getCompactConfigButtonPosition();
+        container.style.bottom = "auto";
+        container.style.zIndex = "999999";
+
+        if (!compactPosition) {
+            container.style.top = "16px";
+            container.style.right = "70px";
+            return;
+        }
+
+        container.style.top = `${compactPosition.top}px`;
+        container.style.left = `${compactPosition.left}px`;
+        container.style.right = "auto";
+        container.style.alignItems = "flex-start";
+    }
+
+    let updateButtonFrame = null;
+
+    function scheduleUpdateButtonInfo() {
+        if (updateButtonFrame !== null) {
+            return;
+        }
+
+        updateButtonFrame = requestAnimationFrame(() => {
+            updateButtonFrame = null;
+            updateButtonInfo();
+        });
+    }
+
     function createFloatingButton() {
         if (document.getElementById("stremio-mpv-floating")) return;
 
@@ -2031,6 +2155,7 @@
         const state = applyIconMode(iconMode);
 
         container.style.display = state.containerVisible ? "flex" : "none";
+        positionFloatingContainer(container, state);
 
         const playBtn = document.getElementById("stremio-mpv-btn");
         if (playBtn) playBtn.style.display = state.mpvButtonVisible ? "flex" : "none";
@@ -2039,8 +2164,8 @@
         if (configBtn) {
             const svg = configBtn.querySelector("svg");
             configBtn.style.display = state.configButtonVisible ? "flex" : "none";
-            if (state.configButtonEnlarged) {
-                // 48x48 with 24x24 SVG (compact mode)
+            configBtn.style.order = state.containerPosition === "top-right" ? "0" : "";
+            if (state.configButtonSize === "large") {
                 configBtn.style.width = "48px";
                 configBtn.style.height = "48px";
                 configBtn.style.opacity = "1";
@@ -2064,6 +2189,7 @@
         // it on when we have a parsed episode to show.
         const info = document.getElementById("stremio-mpv-info");
         if (info) {
+            info.style.order = state.containerPosition === "top-right" ? "1" : "";
             const isDetail = window.location.hash.includes("/detail/");
             if (isDetail) {
                 const content = parseCurrentURL();
@@ -2729,6 +2855,12 @@
 
         notify(`v${version} initialized — ${providerSummary} — ${modeText}`);
 
+        if (typeof GM_registerMenuCommand === "function") {
+            GM_registerMenuCommand("Open MPV Bridge Settings", () => {
+                createConfigModal();
+            });
+        }
+
         // Check bridge server and show connected toast
         try {
             const isOnline = await checkServer();
@@ -2763,11 +2895,17 @@
             }
         }, 500);
 
+        window.addEventListener("resize", scheduleUpdateButtonInfo);
+
         window.addEventListener("beforeunload", () => {
             clearInterval(hashCheckInterval);
+            window.removeEventListener("resize", scheduleUpdateButtonInfo);
         });
         new MutationObserver(() => {
             if (!document.getElementById("stremio-mpv-floating")) createFloatingButton();
+            if (GM_getValue("iconMode", "default") === "compact") {
+                scheduleUpdateButtonInfo();
+            }
         }).observe(document.body, { childList: true, subtree: true });
     }
 

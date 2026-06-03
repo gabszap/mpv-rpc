@@ -141,6 +141,8 @@ export type IconVisibilityState = {
     mpvButtonVisible: boolean;
     configButtonVisible: boolean;
     configButtonEnlarged: boolean;
+    configButtonSize: "small" | "large";
+    containerPosition: "bottom-right" | "top-right";
 };
 
 /**
@@ -164,14 +166,18 @@ export function applyIconMode(iconMode: IconMode | undefined | null): IconVisibi
                 containerVisible: true,
                 mpvButtonVisible: false,
                 configButtonVisible: true,
-                configButtonEnlarged: false,
+                configButtonEnlarged: true,
+                configButtonSize: "large",
+                containerPosition: "bottom-right",
             };
         case "compact":
             return {
                 containerVisible: true,
                 mpvButtonVisible: false,
                 configButtonVisible: true,
-                configButtonEnlarged: true,
+                configButtonEnlarged: false,
+                configButtonSize: "small",
+                containerPosition: "top-right",
             };
         case "disabled":
             return {
@@ -179,14 +185,17 @@ export function applyIconMode(iconMode: IconMode | undefined | null): IconVisibi
                 mpvButtonVisible: false,
                 configButtonVisible: false,
                 configButtonEnlarged: false,
+                configButtonSize: "small",
+                containerPosition: "bottom-right",
             };
-        case "default":
         default:
             return {
                 containerVisible: true,
                 mpvButtonVisible: true,
                 configButtonVisible: true,
                 configButtonEnlarged: false,
+                configButtonSize: "small",
+                containerPosition: "bottom-right",
             };
     }
 }

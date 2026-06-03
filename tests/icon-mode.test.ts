@@ -8,33 +8,41 @@ describe("applyIconMode", () => {
             mpvButtonVisible: true,
             configButtonVisible: true,
             configButtonEnlarged: false,
+            configButtonSize: "small",
+            containerPosition: "bottom-right",
         });
     });
 
-    it("hides the MPV button and keeps the config button at default size for mode 'config-only'", () => {
+    it("hides the MPV button and shows a large bottom-right config button for mode 'config-only'", () => {
         expect(applyIconMode("config-only")).toEqual({
             containerVisible: true,
             mpvButtonVisible: false,
             configButtonVisible: true,
-            configButtonEnlarged: false,
+            configButtonEnlarged: true,
+            configButtonSize: "large",
+            containerPosition: "bottom-right",
         });
     });
 
-    it("enlarges the config button and hides the MPV button for mode 'compact'", () => {
+    it("hides the MPV button and shows a small top-right config button for mode 'compact'", () => {
         expect(applyIconMode("compact")).toEqual({
             containerVisible: true,
             mpvButtonVisible: false,
             configButtonVisible: true,
-            configButtonEnlarged: true,
+            configButtonEnlarged: false,
+            configButtonSize: "small",
+            containerPosition: "top-right",
         });
     });
 
-    it("hides the entire container (and all buttons) for mode 'disabled'", () => {
+    it("hides the entire container and all buttons for mode 'disabled'", () => {
         expect(applyIconMode("disabled")).toEqual({
             containerVisible: false,
             mpvButtonVisible: false,
             configButtonVisible: false,
             configButtonEnlarged: false,
+            configButtonSize: "small",
+            containerPosition: "bottom-right",
         });
     });
 
@@ -44,6 +52,8 @@ describe("applyIconMode", () => {
             mpvButtonVisible: true,
             configButtonVisible: true,
             configButtonEnlarged: false,
+            configButtonSize: "small",
+            containerPosition: "bottom-right",
         });
     });
 
@@ -53,6 +63,8 @@ describe("applyIconMode", () => {
             mpvButtonVisible: true,
             configButtonVisible: true,
             configButtonEnlarged: false,
+            configButtonSize: "small",
+            containerPosition: "bottom-right",
         });
     });
 
@@ -62,6 +74,8 @@ describe("applyIconMode", () => {
             mpvButtonVisible: true,
             configButtonVisible: true,
             configButtonEnlarged: false,
+            configButtonSize: "small",
+            containerPosition: "bottom-right",
         });
     });
 });
