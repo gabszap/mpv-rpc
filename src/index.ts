@@ -391,7 +391,6 @@ async function stop(): Promise<void> {
     }
 
     if (config.settings.discordRpc) {
-        await discord.clearActivity();
         await discord.disconnect();
     }
     // Clear forced title before disconnecting so MPV returns to normal titles

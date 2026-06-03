@@ -256,6 +256,48 @@
     }
 
     /**
+     * Resolve the visibility state for the floating button container given an
+     * `iconMode` string. Pure function — callers mutate the DOM based on the
+     * returned flags.
+     *
+     * Mirrors src/bridge-config-migration.ts — keep in sync.
+     */
+    function applyIconMode(iconMode) {
+        const mode = iconMode || "default";
+        switch (mode) {
+            case "config-only":
+                return {
+                    containerVisible: true,
+                    mpvButtonVisible: false,
+                    configButtonVisible: true,
+                    configButtonEnlarged: false,
+                };
+            case "compact":
+                return {
+                    containerVisible: true,
+                    mpvButtonVisible: false,
+                    configButtonVisible: true,
+                    configButtonEnlarged: true,
+                };
+            case "disabled":
+                return {
+                    containerVisible: false,
+                    mpvButtonVisible: false,
+                    configButtonVisible: false,
+                    configButtonEnlarged: false,
+                };
+            case "default":
+            default:
+                return {
+                    containerVisible: true,
+                    mpvButtonVisible: true,
+                    configButtonVisible: true,
+                    configButtonEnlarged: false,
+                };
+        }
+    }
+
+    /**
      * Migrate the userscript-side GM_setValue mirror from v1 (or unversioned)
      * to v2. Mirrors `migrateV1ToV2` in server.js and
      * src/bridge-config-migration.ts. Persists the migrated values back to
@@ -817,6 +859,17 @@
                             <button type="button" id="mpv-shortcut-btn" class="mpv-input" style="width: 80px; text-align: center; text-transform: uppercase; font-weight: bold; cursor: pointer; border: 1px dashed rgba(139, 92, 246, 0.5);">${mpvShortcut.toUpperCase()}</button>
                             <input type="hidden" id="mpv-shortcut" value="${mpvShortcut}">
                             <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
+                        </div>
+
+                        <div class="mpv-form-group">
+                            <label class="mpv-label">Floating Icons</label>
+                            <select id="mpv-icon-mode" class="mpv-input" style="cursor: pointer;">
+                                <option value="default" ${GM_getValue("iconMode", "default") === "default" ? "selected" : ""}>Show MPV + Config icons</option>
+                                <option value="config-only" ${GM_getValue("iconMode", "default") === "config-only" ? "selected" : ""}>Config icon only</option>
+                                <option value="compact" ${GM_getValue("iconMode", "default") === "compact" ? "selected" : ""}>Compact (larger config icon)</option>
+                                <option value="disabled" ${GM_getValue("iconMode", "default") === "disabled" ? "selected" : ""}>Hide all icons</option>
+                            </select>
+                            <div class="mpv-help" style="margin-top: 4px;">Controls the floating MPV / config buttons in the bottom-right corner.</div>
                         </div>
                     </div>
 
@@ -1639,7 +1692,15 @@
         // accepts the /config POST and migrates it.
         GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
         GM_setValue("autoFetchEnabled", true);
-        GM_setValue("iconMode", GM_getValue("iconMode", "default"));
+
+        // Phase 5B: read the iconMode from the modal's <select> (default
+        // "default" if absent) and persist it. Unknown values are coerced
+        // to "default" at read time by `applyIconMode`.
+        const iconModeSelect = modal.querySelector("#mpv-icon-mode");
+        const validIconModes = ["default", "config-only", "compact", "disabled"];
+        const selectedIconMode = iconModeSelect ? iconModeSelect.value : "default";
+        const iconMode = validIconModes.includes(selectedIconMode) ? selectedIconMode : "default";
+        GM_setValue("iconMode", iconMode);
 
         showToast("Settings saved!", "success");
 
@@ -1941,24 +2002,24 @@
         const container = document.getElementById("stremio-mpv-floating");
         if (!container) return;
 
-        const hash = window.location.hash;
-        const isDetail = hash.includes("/detail/");
-        const isAddons = hash.includes("/addons");
+        // Phase 5B: icon visibility is now driven by the explicit `iconMode`
+        // config rather than implicit URL inspection. The mode is read from
+        // GM_getValue (with a safe default of "default") and resolved to a
+        // visibility state via `applyIconMode` (mirrors the TS helper).
+        const iconMode = GM_getValue("iconMode", "default");
+        const state = applyIconMode(iconMode);
 
-        if (!isDetail && !isAddons) {
-            container.style.display = "none";
-            return;
-        }
-
-        container.style.display = "flex";
+        container.style.display = state.containerVisible ? "flex" : "none";
 
         const playBtn = document.getElementById("stremio-mpv-btn");
-        if (playBtn) playBtn.style.display = isDetail ? "flex" : "none";
+        if (playBtn) playBtn.style.display = state.mpvButtonVisible ? "flex" : "none";
 
         const configBtn = document.getElementById("stremio-mpv-config");
         if (configBtn) {
             const svg = configBtn.querySelector("svg");
-            if (isAddons) {
+            configBtn.style.display = state.configButtonVisible ? "flex" : "none";
+            if (state.configButtonEnlarged) {
+                // 48x48 with 24x24 SVG (compact mode)
                 configBtn.style.width = "48px";
                 configBtn.style.height = "48px";
                 configBtn.style.opacity = "1";
@@ -1977,17 +2038,23 @@
             }
         }
 
+        // Episode-pill display is independent of `iconMode` — it still shows
+        // S##E## on detail pages. The pill is hidden by default; only flip
+        // it on when we have a parsed episode to show.
         const info = document.getElementById("stremio-mpv-info");
-        if (isDetail) {
-            const content = parseCurrentURL();
-            if (content?.episode) {
-                info.textContent = `S${content.season}E${content.episode}`;
-                info.style.display = "block";
+        if (info) {
+            const isDetail = window.location.hash.includes("/detail/");
+            if (isDetail) {
+                const content = parseCurrentURL();
+                if (content?.episode) {
+                    info.textContent = `S${content.season}E${content.episode}`;
+                    info.style.display = "block";
+                } else {
+                    info.style.display = "none";
+                }
             } else {
                 info.style.display = "none";
             }
-        } else {
-            info.style.display = "none";
         }
     }
 

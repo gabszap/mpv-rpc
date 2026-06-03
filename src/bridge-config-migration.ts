@@ -128,3 +128,65 @@ export function migrateBridgeConfig(config: unknown): BridgeConfigV2 {
 
     return migrateV1ToV2(cfg as LegacyBridgeConfigV1);
 }
+
+/** All icon visibility modes understood by the v2 schema. */
+export type IconMode = "default" | "config-only" | "compact" | "disabled";
+
+/**
+ * Visibility state for the floating button container, derived from
+ * {@link IconMode}. Pure data — callers are responsible for mutating the DOM.
+ */
+export type IconVisibilityState = {
+    containerVisible: boolean;
+    mpvButtonVisible: boolean;
+    configButtonVisible: boolean;
+    configButtonEnlarged: boolean;
+};
+
+/**
+ * Resolve the icon visibility state for a given {@link IconMode}.
+ *
+ * Pure function. `undefined` / `null` / unknown values fall back to `"default"`,
+ * which keeps the function safe to call with `GM_getValue` results that may be
+ * missing or corrupted.
+ *
+ * Mirrored verbatim in `stremio-mpv-bridge/stremio-mpv.user.js` (as
+ * `applyIconMode`) — any change here MUST be applied there too.
+ *
+ * @param iconMode The user's configured icon mode (or `undefined` / `null`).
+ * @returns The visibility flags the floating UI should apply to the DOM.
+ */
+export function applyIconMode(iconMode: IconMode | undefined | null): IconVisibilityState {
+    const mode: IconMode = iconMode ?? "default";
+    switch (mode) {
+        case "config-only":
+            return {
+                containerVisible: true,
+                mpvButtonVisible: false,
+                configButtonVisible: true,
+                configButtonEnlarged: false,
+            };
+        case "compact":
+            return {
+                containerVisible: true,
+                mpvButtonVisible: false,
+                configButtonVisible: true,
+                configButtonEnlarged: true,
+            };
+        case "disabled":
+            return {
+                containerVisible: false,
+                mpvButtonVisible: false,
+                configButtonVisible: false,
+                configButtonEnlarged: false,
+            };
+        case "default":
+        default:
+            return {
+                containerVisible: true,
+                mpvButtonVisible: true,
+                configButtonVisible: true,
+                configButtonEnlarged: false,
+            };
+    }
+}
