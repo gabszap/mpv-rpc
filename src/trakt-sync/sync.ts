@@ -7,6 +7,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { config } from "../config";
 import type { MpvData } from "../mpv";
+import { readStremioPlaybackContext } from "../stremio-sync/context";
+import { getCanonicalEpisodePosition } from "../stremio-sync/identity";
 import {
     getHistory,
     getShowSeasons,
@@ -61,6 +63,7 @@ const lastSuccess = new Map<string, { episode: number; season: number; timestamp
 const lastAttempted = new Map<string, { timestamp: number }>();
 const syncInProgress = new Set<string>();
 const COOLDOWN_MS = 60 * 1000; // 60 seconds per episode
+const STOP_LOCK_WAIT_MS = 10_000;
 
 type SyncGateDecision = "allow" | "in_progress" | "already_success" | "cooldown";
 
@@ -97,6 +100,13 @@ function recordSyncAttempt(showId: number, episode: number, season: number): voi
 function recordSyncSuccess(showId: number, episode: number, season: number): void {
     const key = `${showId}:${season}:${episode}`;
     lastSuccess.set(key, { episode, season, timestamp: Date.now() });
+}
+
+async function waitForSyncLockRelease(lockKey: string): Promise<void> {
+    const startTime = Date.now();
+    while (syncInProgress.has(lockKey) && Date.now() - startTime < STOP_LOCK_WAIT_MS) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +181,7 @@ let currentState: ScrobbleState = "idle";
 let currentShow: TraktShow | null = null;
 let currentEpisode: TraktEpisode | null = null;
 let lastKnownProgress = 0;
+let stopCurrentScrobblePromise: Promise<void> | null = null;
 
 // ---------------------------------------------------------------------------
 // Media resolution chain (4.3)
@@ -471,12 +482,15 @@ export async function tryScrobble(data: MpvData): Promise<void> {
         return;
     }
 
+    const canonicalPosition = getCanonicalEpisodePosition(readStremioPlaybackContext(), data);
+
     // 4. Must have an episode number
-    const episodeNum = data.episode;
+    const episodeNum = canonicalPosition.episode;
     if (episodeNum == null) return;
+    const seasonNum = canonicalPosition.season;
 
     // 5. Detect metadata change (filename, title, season, or episode) → reset state machine
-    const metadataKey = `${data.filename}:${data.series_title}:${data.season}:${data.episode}`;
+    const metadataKey = `${data.filename}:${data.series_title}:${seasonNum}:${episodeNum}`;
     if (metadataKey !== currentMetadataKey) {
         // If we were actively playing, scrobble stop with last known progress
         if (
@@ -523,7 +537,7 @@ export async function tryScrobble(data: MpvData): Promise<void> {
 
     // 7. Resolve episode (cached)
     if (!currentEpisode) {
-        const resolvedEp = await resolveEpisode(currentShow, data.season, episodeNum);
+        const resolvedEp = await resolveEpisode(currentShow, seasonNum, episodeNum);
         if (!resolvedEp) {
             console.log(`[Trakt] Could not resolve episode ${episodeNum} for ${currentShow.title}`);
             return;
@@ -689,10 +703,29 @@ export async function tryScrobble(data: MpvData): Promise<void> {
  * Stop the current scrobble when MPV disconnects or the app shuts down.
  */
 export async function stopCurrentScrobble(): Promise<void> {
+    if (stopCurrentScrobblePromise) {
+        return stopCurrentScrobblePromise;
+    }
+
+    stopCurrentScrobblePromise = stopCurrentScrobbleOnce().finally(() => {
+        stopCurrentScrobblePromise = null;
+    });
+
+    return stopCurrentScrobblePromise;
+}
+
+async function stopCurrentScrobbleOnce(): Promise<void> {
     if ((currentState !== "playing" && currentState !== "paused") || !currentShow || !currentEpisode) return;
     if (lastKnownProgress < 1) return;
 
-    const gate = getSyncGateDecision(currentShow.ids.trakt, currentEpisode.number, currentEpisode.season, true);
+    const show = currentShow;
+    const episode = currentEpisode;
+    const progress = lastKnownProgress;
+    const lockKey = `${show.ids.trakt}:${episode.season}:${episode.number}`;
+
+    await waitForSyncLockRelease(lockKey);
+
+    const gate = getSyncGateDecision(show.ids.trakt, episode.number, episode.season, true);
     if (gate === "already_success") {
         // Already synced, just reset state
         currentState = "idle";
@@ -705,23 +738,23 @@ export async function stopCurrentScrobble(): Promise<void> {
     // Only block on "in_progress", allow through "cooldown" for disconnect/shutdown stops
     if (gate === "in_progress") return;
 
-    syncInProgress.add(`${currentShow.ids.trakt}:${currentEpisode.season}:${currentEpisode.number}`);
+    syncInProgress.add(lockKey);
     try {
-        const success = await scrobbleStop(currentEpisode, currentShow, lastKnownProgress);
+        const success = await scrobbleStop(episode, show, progress);
         if (success) {
-            recordSyncSuccess(currentShow.ids.trakt, currentEpisode.number, currentEpisode.season);
-
             // Warn user if progress is below threshold
             const threshold = config.trakt.syncThreshold;
-            if (lastKnownProgress < threshold) {
+            if (progress >= threshold) {
+                recordSyncSuccess(show.ids.trakt, episode.number, episode.season);
+            } else {
                 if (config.syncDryRun) {
                     console.log(
-                        `[Trakt][Dry-run] MPV closed at ${Math.round(lastKnownProgress)}% progress. ` +
+                        `[Trakt][Dry-run] MPV closed at ${Math.round(progress)}% progress. ` +
                             `Would save paused progress; Trakt only marks episodes as watched at >=${threshold}%.`,
                     );
                 } else {
                     console.log(
-                        `[Trakt] MPV closed at ${Math.round(lastKnownProgress)}% progress. ` +
+                        `[Trakt] MPV closed at ${Math.round(progress)}% progress. ` +
                             `Trakt only marks episodes as watched at >=${threshold}%. ` +
                             `Progress saved (paused state).`,
                     );
@@ -729,10 +762,10 @@ export async function stopCurrentScrobble(): Promise<void> {
             }
         } else {
             // Queue failed stop for retry on next reconnect
-            queueBacklog("stop", currentEpisode, currentShow, lastKnownProgress);
+            queueBacklog("stop", episode, show, progress);
         }
     } finally {
-        syncInProgress.delete(`${currentShow.ids.trakt}:${currentEpisode.season}:${currentEpisode.number}`);
+        syncInProgress.delete(lockKey);
     }
 
     currentState = "idle";

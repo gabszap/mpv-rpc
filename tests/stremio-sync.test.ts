@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { config } from "../src/config";
 import type { MpvData } from "../src/mpv";
 import * as api from "../src/stremio-sync/api";
 import * as auth from "../src/stremio-sync/auth";
 import { encodeWatched } from "../src/stremio-sync/bitset";
 import * as context from "../src/stremio-sync/context";
+import { logStremioSkipDetail } from "../src/stremio-sync/logging";
 import * as meta from "../src/stremio-sync/meta";
 import { resetStremioSyncStateForTests, trySyncStremio } from "../src/stremio-sync/sync";
 
 vi.mock("../src/config", () => ({
     config: {
+        debug: false,
+        syncDryRun: false,
         stremio: {
             enabled: true,
             syncThreshold: 85,
@@ -62,6 +66,8 @@ describe("Stremio sync MVP", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         resetStremioSyncStateForTests();
+        config.debug = false;
+        config.syncDryRun = false;
         vi.mocked(auth.getStremioAuthKey).mockReturnValue("auth-key");
         vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
             libraryItemId: "tt1234567",
@@ -204,6 +210,321 @@ describe("Stremio sync MVP", () => {
         });
 
         await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("logs canonical Stremio identity in dry-run when parser season is missing", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:30",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 30,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("S04E30"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("S00E06"));
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+        consoleLogSpy.mockRestore();
+    });
+
+    it("logs deterministic split-part canonical identity in dry-run without Stremio context", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue(null);
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone: Science Future Part 3",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("S04E30"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("S00E06"));
+        consoleLogSpy.mockRestore();
+    });
+
+    it("does not log placeholder dry-run identity or debug detail when debug is disabled", async () => {
+        config.syncDryRun = true;
+        config.debug = false;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        const consoleDebugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue(null);
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "N/A",
+                    series_title: "N/A",
+                    season: 0,
+                    episode: 0,
+                    filename: "stremio-playlist.m3u8",
+                    percent_pos: 0,
+                    time_pos: 0,
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+        logStremioSkipDetail("dry-run");
+
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("N/A S00E00"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("S00E00"));
+        expect(consoleDebugSpy).not.toHaveBeenCalledWith(expect.stringContaining("[Stremio][debug]"));
+        consoleLogSpy.mockRestore();
+        consoleDebugSpy.mockRestore();
+    });
+
+    it("allows Stremio skip detail when debug is enabled", () => {
+        config.debug = true;
+        const consoleDebugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+
+        logStremioSkipDetail("dry-run");
+
+        expect(consoleDebugSpy).toHaveBeenCalledWith(expect.stringContaining("[Stremio][debug] Skip detail: dry-run"));
+        consoleDebugSpy.mockRestore();
+    });
+
+    it("keeps first useful dry-run log when canonical identity exists", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:33",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 33,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E33.Wanting.Everything",
+                    series_title: "Dr Stone: Science Future",
+                    season: 4,
+                    episode: 33,
+                    filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 85,
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 85%"));
+        consoleLogSpy.mockRestore();
+    });
+
+    it("dedupes dry-run continue-watching logs by identity and coarse milestone", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:33",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 33,
+            episodesInSeason: 35,
+        });
+
+        const createDryRunData = (percent_pos: number): MpvData =>
+            createMpvData({
+                media_title: "Dr.STONE.S04E33.Wanting.Everything",
+                series_title: "Dr Stone: Science Future",
+                season: 4,
+                episode: 33,
+                filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+                imdb_id: "tt9679542",
+                percent_pos,
+                time_pos: percent_pos * 15,
+            });
+
+        for (const percent of [0, 0, 5, 12, 15, 20, 25, 25, 86, 86, 90, 90, 100, 100]) {
+            await expect(trySyncStremio(createDryRunData(percent))).resolves.toEqual({
+                status: "skipped",
+                reason: "dry-run",
+            });
+        }
+
+        expect(consoleLogSpy).toHaveBeenCalledTimes(5);
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(1, expect.stringContaining("Dr. Stone S04E33 0%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(2, expect.stringContaining("Dr. Stone S04E33 25%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(3, expect.stringContaining("Dr. Stone S04E33 80%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(4, expect.stringContaining("Dr. Stone S04E33 90%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(5, expect.stringContaining("Dr. Stone S04E33 100%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 5%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 12%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 15%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 20%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 86%"));
+        expect(
+            consoleLogSpy.mock.calls.filter(([message]) => String(message).includes("Dr. Stone S04E33 80%")),
+        ).toHaveLength(1);
+        consoleLogSpy.mockRestore();
+    });
+
+    it("syncs canonical Stremio identity when parser has local split-part episode", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:30",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 30,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt9679542",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 4,
+            episode: 30,
+            video_id: "tt9679542:4:30",
+        });
+    });
+
+    it("keeps explicit canonical filename position when MAL overflow data is local to a split part", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:33",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 33,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E33.Wanting.Everything",
+                    series_title: "Dr Stone: Science Future",
+                    season: 4,
+                    episode: 9,
+                    filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 80,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt9679542",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 4,
+            episode: 33,
+            video_id: "tt9679542:4:33",
+        });
+    });
+
+    it("skips stale same-title split-part context when canonical episode differs", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:29",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 29,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("skips canonical mismatch when title and IMDb identity are stale", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: null,
+            videoId: "tt9679542:4:30",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 30,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Another Show - 06",
+                    series_title: "Another Show",
+                    season: null,
+                    episode: 6,
+                    filename: "Another Show - 06.mkv",
+                    imdb_id: undefined,
+                }),
+            ),
+        ).resolves.toEqual({
             status: "skipped",
             reason: "playback-context-mismatch",
         });

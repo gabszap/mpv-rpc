@@ -23,6 +23,24 @@ vi.mock("../src/trakt-sync/api", () => ({
     getHistory: vi.fn(),
 }));
 
+vi.mock("../src/config", () => ({
+    config: {
+        syncDryRun: true,
+        trakt: {
+            enabled: true,
+            syncThreshold: 85,
+        },
+    },
+}));
+
+vi.mock("../src/trakt-sync/auth", () => ({
+    isAuthenticated: vi.fn(),
+}));
+
+vi.mock("../src/stremio-sync/context", () => ({
+    readStremioPlaybackContext: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -167,5 +185,239 @@ describe("resolveEpisode", () => {
         expect(result).not.toBeNull();
         expect(result?.season).toBe(3);
         expect(result?.number).toBe(5);
+    });
+});
+
+describe("tryScrobble canonical Stremio identity", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.resetModules();
+    });
+
+    it("uses canonical S04E30 from Stremio context instead of parser-local E06", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(1, "Dr. Stone") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(4, 30)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:30",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 30,
+            episodesInSeason: 30,
+        });
+
+        await localSync.tryScrobble({
+            media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+            series_title: "Dr. Stone",
+            season: null,
+            episode: 6,
+            episode_title: null,
+            filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+            pause: false,
+            percent_pos: 10,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 62568,
+            total_episodes: null,
+            adjusted_episode: null,
+            imdb_id: "tt9679542",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localApi.getShowSeasons).toHaveBeenCalledWith(1);
+        expect(localApi.scrobbleStart).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 4, number: 30 }),
+            expect.anything(),
+            10,
+        );
+    });
+
+    it("uses deterministic split-part S04E30 without Stremio context", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(1, "Dr. Stone") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(4, 30)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue(null);
+
+        await localSync.tryScrobble({
+            media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+            series_title: "Dr. Stone: Science Future Part 3",
+            season: null,
+            episode: 6,
+            episode_title: "Stone to Space",
+            filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+            pause: false,
+            percent_pos: 10,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 62568,
+            total_episodes: 13,
+            adjusted_episode: null,
+            imdb_id: "tt9679542",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localApi.scrobbleStart).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 4, number: 30 }),
+            expect.anything(),
+            10,
+        );
+    });
+
+    it("uses explicit canonical filename position instead of MAL-local overflow episode", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(1, "Dr. Stone") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(4, 35)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue(null);
+
+        await localSync.tryScrobble({
+            media_title: "Dr.STONE.S04E33.Wanting.Everything",
+            series_title: "Dr. Stone",
+            season: 4,
+            episode: 9,
+            episode_title: "Wanting Everything",
+            filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+            pause: false,
+            percent_pos: 79.5,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 57592,
+            total_episodes: 12,
+            adjusted_episode: 9,
+            imdb_id: "tt9679542",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localApi.scrobbleStart).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 4, number: 33 }),
+            expect.anything(),
+            79.5,
+        );
+    });
+
+    it("stops the active canonical scrobble when playback closes before the watched threshold", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(1, "Dr. Stone") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(4, 35)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localApi.scrobbleStop).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue(null);
+
+        await localSync.tryScrobble({
+            media_title: "Dr.STONE.S04E33.Wanting.Everything",
+            series_title: "Dr. Stone",
+            season: 4,
+            episode: 9,
+            episode_title: "Wanting Everything",
+            filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+            pause: false,
+            percent_pos: 11,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 57592,
+            total_episodes: 12,
+            adjusted_episode: 9,
+            imdb_id: "tt9679542",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        await localSync.stopCurrentScrobble();
+
+        expect(localApi.scrobbleStop).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 4, number: 33 }),
+            expect.anything(),
+            11,
+        );
+    });
+
+    it("dedupes concurrent shutdown cleanup for an active low-progress scrobble", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(1, "Dr. Stone") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(4, 35)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localApi.scrobbleStop).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue(null);
+
+        await localSync.tryScrobble({
+            media_title: "Dr.STONE.S04E33.Wanting.Everything",
+            series_title: "Dr. Stone",
+            season: 4,
+            episode: 9,
+            episode_title: "Wanting Everything",
+            filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+            pause: false,
+            percent_pos: 14,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 57592,
+            total_episodes: 12,
+            adjusted_episode: 9,
+            imdb_id: "tt9679542",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        await Promise.all([localSync.stopCurrentScrobble(), localSync.stopCurrentScrobble()]);
+
+        expect(localApi.scrobbleStop).toHaveBeenCalledTimes(1);
+        expect(localApi.scrobbleStop).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 4, number: 33 }),
+            expect.anything(),
+            14,
+        );
     });
 });

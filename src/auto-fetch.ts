@@ -5,6 +5,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { resolveCanonicalSplitPartEpisode } from "./canonical-episode";
 import { config } from "./config";
 import type { MpvData } from "./mpv";
 import { normalizeTitle } from "./trakt-sync/api";
@@ -56,6 +57,26 @@ interface SharedConfig {
     extraEpisodes?: number;
     [key: string]: unknown;
 }
+
+type EpisodePosition = {
+    season: number | null;
+    episode: number | null;
+};
+
+type CompleteEpisodePosition = {
+    season: number;
+    episode: number;
+};
+
+type AutoFetchBridgeResponse = {
+    success?: boolean;
+    status?: "completed" | "in_progress";
+    added?: number;
+    skippedInFlight?: number;
+    skippedCompleted?: number;
+    skippedPlaylist?: number;
+    error?: string;
+};
 
 function isAutoFetchEnabled(sharedConfig: SharedConfig): boolean {
     return sharedConfig.autoFetch?.enabled !== false;
@@ -110,6 +131,56 @@ function parseFilenameEpisode(filename: string): { season: number | null; episod
     }
 
     return { season: null, episode: null };
+}
+
+function hasCompleteEpisodePosition(position: EpisodePosition): position is CompleteEpisodePosition {
+    return position.season !== null && position.episode !== null;
+}
+
+function readPositiveInteger(value: number | null | undefined): number | null {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        return null;
+    }
+
+    return value;
+}
+
+function readStremioEpisodePosition(stremioMeta: StremioMeta): CompleteEpisodePosition | null {
+    const position = {
+        season: readPositiveInteger(stremioMeta.season),
+        episode: readPositiveInteger(stremioMeta.episode),
+    };
+
+    if (!hasCompleteEpisodePosition(position)) {
+        return null;
+    }
+
+    return position;
+}
+
+function resolveAutoFetchEpisodePosition(
+    parsed: EpisodePosition,
+    data: MpvData,
+    stremioMeta: StremioMeta,
+): EpisodePosition {
+    if (hasCompleteEpisodePosition(parsed)) {
+        return parsed;
+    }
+
+    const canonicalPosition = resolveCanonicalSplitPartEpisode(data);
+    if (canonicalPosition) {
+        return {
+            season: canonicalPosition.season,
+            episode: canonicalPosition.episode,
+        };
+    }
+
+    const stremioPosition = readStremioEpisodePosition(stremioMeta);
+    if (stremioPosition) {
+        return stremioPosition;
+    }
+
+    return parsed;
 }
 
 function readSharedConfig(): SharedConfig | null {
@@ -193,10 +264,9 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
             return;
         }
 
-        // Parse season/episode from filename (more reliable than config)
         const parsed = parseFilenameEpisode(data.filename);
-        const season = parsed.season ?? stremioMeta.season;
-        const episode = parsed.episode ?? stremioMeta.episode;
+        const position = resolveAutoFetchEpisodePosition(parsed, data, stremioMeta);
+        const { season, episode } = position;
 
         // Guard: couldn't determine episode number
         if (episode == null) {
@@ -281,9 +351,14 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
             signal: AbortSignal.timeout(30000),
         });
 
-        const result = (await res.json()) as { success?: boolean; added?: number; error?: string };
+        const result = (await res.json()) as AutoFetchBridgeResponse;
         if (result.success) {
-            console.log(`[AutoFetch] Added ${result.added} episode(s) to playlist.`);
+            if (result.status === "in_progress") {
+                const skippedCount = result.skippedInFlight ?? 0;
+                console.log(`[AutoFetch] Auto-fetch already in progress for ${skippedCount} target episode(s).`);
+            } else {
+                console.log(`[AutoFetch] Added ${result.added ?? 0} episode(s) to playlist.`);
+            }
             lastTriggerKey = triggerKey;
         } else {
             console.error(`[AutoFetch] Bridge returned error: ${result.error}`);

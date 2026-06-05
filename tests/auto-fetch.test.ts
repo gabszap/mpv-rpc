@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { config } from "../src/config";
 import type { MpvData } from "../src/mpv";
 
 // Mock config so autoFetch.enabled is predictable.
 vi.mock("../src/config", () => ({
     config: {
+        syncDryRun: false,
         autoFetch: {
             enabled: true,
         },
@@ -119,6 +121,8 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
     let fetchMock: ReturnType<typeof vi.fn>;
 
     beforeEach(async () => {
+        config.syncDryRun = false;
+
         // Setup fs mock to return our shared config.
         const fs = await import("node:fs");
         readFileSyncMock = vi.mocked(fs.readFileSync);
@@ -153,6 +157,168 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
             typeof u === "string" ? u.endsWith("/auto-fetch") : u.toString().endsWith("/auto-fetch"),
         );
         expect(autoFetchCall).toBeDefined();
+    });
+
+    it("logs bridge in-progress responses without saying zero episodes were added", async () => {
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input.toString();
+            if (url.endsWith("/health")) {
+                return mockJsonResponse({ status: "ok" });
+            }
+            if (url.endsWith("/auto-fetch")) {
+                return mockJsonResponse({ success: true, status: "in_progress", added: 0, skippedInFlight: 2 });
+            }
+            return mockJsonResponse({}, 404);
+        });
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(makeMpvData());
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            "[AutoFetch] Auto-fetch already in progress for 2 target episode(s).",
+        );
+        expect(consoleLogSpy).not.toHaveBeenCalledWith("[AutoFetch] Added 0 episode(s) to playlist.");
+        consoleLogSpy.mockRestore();
+    });
+
+    it("uses Stremio metadata season and episode for split-part playback", async () => {
+        readFileSyncMock.mockReturnValue(
+            JSON.stringify({
+                stremioMeta: {
+                    imdbId: "tt9679542",
+                    name: "Dr. Stone",
+                    season: 4,
+                    episode: 30,
+                    type: "series",
+                },
+                extraEpisodes: 2,
+            }),
+        );
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(
+            makeMpvData({
+                media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                series_title: "Dr. Stone",
+                season: null,
+                episode: 6,
+                filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                imdb_id: "tt9679542",
+            }),
+        );
+
+        const autoFetchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/auto-fetch"));
+        expect(autoFetchCall).toBeDefined();
+        const request = autoFetchCall?.[1] as RequestInit;
+        expect(JSON.parse(String(request.body))).toMatchObject({
+            season: 4,
+            episode: 30,
+        });
+    });
+
+    it("uses deterministic split-part canonical identity when Stremio metadata lacks season and episode", async () => {
+        readFileSyncMock.mockReturnValue(
+            JSON.stringify({
+                stremioMeta: {
+                    imdbId: "tt9679542",
+                    name: "Dr. Stone",
+                    type: "series",
+                },
+                extraEpisodes: 2,
+            }),
+        );
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(
+            makeMpvData({
+                media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                series_title: "Dr. Stone: Science Future Part 3",
+                season: null,
+                episode: 6,
+                filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                imdb_id: "tt9679542",
+            }),
+        );
+
+        const autoFetchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/auto-fetch"));
+        expect(autoFetchCall).toBeDefined();
+        const request = autoFetchCall?.[1] as RequestInit;
+        expect(JSON.parse(String(request.body))).toMatchObject({
+            season: 4,
+            episode: 30,
+        });
+    });
+
+    it("uses split-part canonical position atomically for dry-run next episodes", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        readFileSyncMock.mockReturnValue(
+            JSON.stringify({
+                stremioMeta: {
+                    imdbId: "tt9679542",
+                    name: "Dr. Stone",
+                    season: 4,
+                    episode: 6,
+                    type: "series",
+                },
+                extraEpisodes: 2,
+            }),
+        );
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(
+            makeMpvData({
+                media_title: "Dr Stone - Science Future Part 3 - Ep 06",
+                series_title: "Dr. Stone: Science Future Part 3",
+                season: null,
+                episode: 6,
+                filename: "Dr Stone - Science Future Part 3 - Ep 06.mkv",
+                imdb_id: "tt9679542",
+            }),
+        );
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            expect.stringContaining("Would POST /auto-fetch: 2 episode(s) (S04E31, S04E32)"),
+        );
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("S04E07"));
+        expect(fetchMock).not.toHaveBeenCalledWith("http://localhost:9632/auto-fetch", expect.anything());
+        consoleLogSpy.mockRestore();
+    });
+
+    it("keeps explicit canonical filename position ahead of MAL-local split episode", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        readFileSyncMock.mockReturnValue(
+            JSON.stringify({
+                stremioMeta: {
+                    imdbId: "tt9679542",
+                    name: "Dr. Stone",
+                    season: 4,
+                    episode: 9,
+                    type: "series",
+                },
+                extraEpisodes: 2,
+            }),
+        );
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(
+            makeMpvData({
+                media_title: "Dr.STONE.S04E33.Wanting.Everything",
+                series_title: "Dr Stone: Science Future",
+                season: 4,
+                episode: 9,
+                filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+                imdb_id: "tt9679542",
+            }),
+        );
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            expect.stringContaining("Would POST /auto-fetch: 2 episode(s) (S04E34, S04E35)"),
+        );
+        expect(fetchMock).not.toHaveBeenCalledWith("http://localhost:9632/auto-fetch", expect.anything());
+        consoleLogSpy.mockRestore();
     });
 
     it("skips a second concurrent tick that hits the same episode identity", async () => {
