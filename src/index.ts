@@ -12,6 +12,7 @@ import * as discord from "./discord";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
 import * as mpv from "./mpv";
 import { checkAvailability, parseFilename } from "./parser";
+import { logStremioSkipDetail } from "./stremio-sync/logging";
 import { trySyncStremio } from "./stremio-sync/sync";
 import { getUser } from "./trakt-sync/api";
 import { authorize as traktAuthorize, isAuthenticated as traktIsAuthenticated } from "./trakt-sync/auth";
@@ -26,6 +27,25 @@ let lastMalDiagnosticKey: string | null = null; // Avoid repeating MAL diagnosti
 let lastMalSyncSuccessKey: string | null = null; // Avoid repeated MAL success logs
 let lastStremioDiagnosticKey: string | null = null; // Avoid repeating Stremio diagnostic logs
 let lastStremioSyncSuccessKey: string | null = null; // Avoid repeated Stremio success logs
+let stopPromise: Promise<void> | null = null;
+
+async function clearPlaybackSession(reason: "disconnect" | "no-media"): Promise<void> {
+    await discord.clearActivity();
+    lastMalDiagnosticKey = null;
+    lastMalSyncSuccessKey = null;
+    lastStremioDiagnosticKey = null;
+    lastStremioSyncSuccessKey = null;
+
+    if (!config.trakt.enabled || !traktIsAuthenticated()) {
+        return;
+    }
+
+    try {
+        await stopCurrentScrobble();
+    } catch (e) {
+        console.error(`[Trakt] Error stopping scrobble on ${reason}:`, e);
+    }
+}
 
 function logMalDiagnostic(key: string, message: string): void {
     if (lastMalDiagnosticKey === key) {
@@ -45,42 +65,6 @@ function logStremioDiagnostic(key: string, message: string): void {
     console.log(message);
 }
 
-function formatStremioSkipReason(reason: string): string {
-    if (reason === "missing-auth") {
-        return "auth token not found; open something through the Stremio bridge to save .config/.stremio_tokens.json.";
-    }
-
-    if (reason === "missing-or-invalid-context") {
-        return "playback context not found, stale, or invalid; open the stream through the Stremio bridge again.";
-    }
-
-    if (reason === "invalid-playback-progress") {
-        return "MPV did not report valid time/duration yet.";
-    }
-
-    if (reason === "progress-too-low") {
-        return "playback is still near the start; waiting for at least 5 seconds and 1% before writing Continue Watching so a 0% offset is not saved.";
-    }
-
-    if (reason === "playback-context-mismatch") {
-        return "current MPV title/season/episode does not match saved .config/.stremio-mpv-config.json context.";
-    }
-
-    if (reason === "missing-video-id") {
-        return "saved context has no safe video_id for Continue Watching.";
-    }
-
-    if (reason === "progress-interval") {
-        return `waiting for progress interval (${config.stremio.progressIntervalMs}ms)`;
-    }
-
-    if (reason === "library-item-not-found") {
-        return "Stremio datastore returned no library item for the saved libraryItemId; Continue Watching can only update an existing library item.";
-    }
-
-    return reason;
-}
-
 /**
  * Main update loop - fetches MPV data and updates Discord
  */
@@ -95,20 +79,15 @@ async function update(): Promise<void> {
 
         if (!data) {
             // MPV not connected, clear Discord activity and stop Trakt scrobble
-            await discord.clearActivity();
-            lastMalDiagnosticKey = null;
-            lastMalSyncSuccessKey = null;
-            lastStremioDiagnosticKey = null;
-            lastStremioSyncSuccessKey = null;
+            await clearPlaybackSession("disconnect");
+            return;
+        }
 
-            // Stop Trakt scrobble if active
-            if (config.trakt.enabled && traktIsAuthenticated()) {
-                try {
-                    await stopCurrentScrobble();
-                } catch (e) {
-                    console.error("[Trakt] Error stopping scrobble on disconnect:", e);
-                }
-            }
+        if (data.filename === "N/A" || data.playlistCount <= 0) {
+            // MPV can briefly stay connected after playback ends while all
+            // media properties are already empty. Treat that the same as a
+            // disconnect so active Trakt scrobbles are explicitly finalized.
+            await clearPlaybackSession("no-media");
             return;
         }
 
@@ -202,11 +181,13 @@ async function update(): Promise<void> {
                         `[Stremio] Continue Watching sync failed: ${result.reason}`,
                     );
                 } else if (result.status === "skipped") {
-                    logStremioDiagnostic(
-                        `${data.filename}:skip:${result.reason}`,
-                        `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${result.reason}`,
-                    );
-                    console.debug?.(`[Stremio][debug] Skip detail: ${formatStremioSkipReason(result.reason)}`);
+                    if (!config.syncDryRun) {
+                        logStremioDiagnostic(
+                            `${data.filename}:skip:${result.reason}`,
+                            `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${result.reason}`,
+                        );
+                    }
+                    logStremioSkipDetail(result.reason);
                 } else if (result.status === "synced") {
                     const syncKey = `${data.filename}:${result.libraryItemId}`;
                     if (lastStremioSyncSuccessKey !== syncKey) {
@@ -368,6 +349,15 @@ async function start(): Promise<void> {
  * Stop the RPC service
  */
 async function stop(): Promise<void> {
+    if (stopPromise) {
+        return stopPromise;
+    }
+
+    stopPromise = stopOnce();
+    return stopPromise;
+}
+
+async function stopOnce(): Promise<void> {
     console.log("\n[Main] Shutting down...");
     _isRunning = false;
 

@@ -73,16 +73,21 @@ describe("Phase 4 log cleanup", () => {
         it("no longer contains the old verbose 'Continue Watching synced' template with libraryItemId and MVP", () => {
             expect(source).not.toContain("Watched badges are not updated");
         });
+
+        it("does not emit user-facing Stremio dry-run skip diagnostics", () => {
+            expect(source).toContain("if (!config.syncDryRun)");
+            expect(source).toContain("[Stremio] Continue Watching skipped at");
+        });
     });
 
-    describe("src/index.ts — formatStremioSkipReason progress-interval branch simplified", () => {
-        const source = readSource("index.ts");
+    describe("src/stremio-sync/logging.ts — formatStremioSkipReason progress-interval branch simplified", () => {
+        const source = readSource(path.join("stremio-sync", "logging.ts"));
 
         it("uses the simplified 'progress interval' phrasing", () => {
             expect(source).toContain("progress interval (${");
         });
 
-        it("no longer references 'STREMIO_PROGRESS_INTERVAL_MS (' in src/index.ts", () => {
+        it("no longer references 'STREMIO_PROGRESS_INTERVAL_MS (' in Stremio logging", () => {
             expect(source).not.toContain("STREMIO_PROGRESS_INTERVAL_MS (");
         });
     });

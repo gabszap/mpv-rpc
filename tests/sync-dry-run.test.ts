@@ -288,6 +288,7 @@ describe("Stremio sync dry-run", () => {
         expect(logSpy).toHaveBeenCalledWith(
             expect.stringContaining("[Stremio][dry-run] Would write continue-watching: Test Show S03E05"),
         );
+        expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("Continue Watching skipped"));
     });
 
     it("trySyncStremio with dry-run=false: putLibraryItem IS called (control)", async () => {
