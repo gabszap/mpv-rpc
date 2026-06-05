@@ -48,21 +48,22 @@
         if (id === "stremthru-store") {
             return {
                 url: "",
-                tooltip: "Supported StremThru Store providers:\n- dev 'muniftanjim': https://stremthru.13377001.xyz/stremio/store/\n- elfhosted: https://stremthru.elfhosted.com/stremio/store/\n- midnight: https://stremthrufortheweebs.midnightignite.me/stremio/store/",
-                placeholder: "Paste StremThru Store manifest.json link here"
+                tooltip:
+                    "Supported StremThru Store providers:\n- dev 'muniftanjim': https://stremthru.13377001.xyz/stremio/store/\n- elfhosted: https://stremthru.elfhosted.com/stremio/store/\n- midnight: https://stremthrufortheweebs.midnightignite.me/stremio/store/",
+                placeholder: "Paste StremThru Store manifest.json link here",
             };
         }
         if (id === "intell-debridsearch") {
             return {
                 url: "",
                 tooltip: "Intell Debrid Search (store-like addon):\nhttps://intell-debridsearch.nepiraw.com/",
-                placeholder: "Paste Intell Debrid Search manifest.json link here"
+                placeholder: "Paste Intell Debrid Search manifest.json link here",
             };
         }
         return {
             url: "",
             tooltip: "",
-            placeholder: "Paste manifest.json link here"
+            placeholder: "Paste manifest.json link here",
         };
     }
 
@@ -624,7 +625,7 @@
                         : "";
                 const defaults = getProviderDefaults(p.id);
                 const placeholder = defaults.placeholder;
-                const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, '&quot;')}"` : "";
+                const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, "&quot;")}"` : "";
                 const helpSpan = defaults.tooltip ? `<span class="mpv-tooltip-help" ${tooltipAttr}>?</span>` : "";
 
                 return `
@@ -941,17 +942,19 @@
                                 <div class="mpv-dropdown-category">Providers</div>
                                 ${AVAILABLE_PROVIDERS.providers.map((p) => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}"><span class="mpv-dropdown-item-name">${p.name}</span></div>`).join("")}
                                 <div class="mpv-dropdown-category">Debrid Services</div>
-                                ${AVAILABLE_PROVIDERS.debrid.map((p) => {
-                                    if (p.id === "torbox") {
-                                        return `<div class="mpv-dropdown-item disabled" data-id="${p.id}" data-name="${p.name}" style="opacity: 0.4; cursor: not-allowed;"><span class="mpv-dropdown-item-name">${p.name}</span> <span class="mpv-tooltip-help" title="Disabled in May 2026 by Torbox">?</span></div>`;
-                                    }
-                                    const defaults = getProviderDefaults(p.id);
-                                    let tooltipSpan = "";
-                                    if (defaults.tooltip) {
-                                        tooltipSpan = ` <span class="mpv-tooltip-help" title="${defaults.tooltip.replace(/"/g, '&quot;')}">?</span>`;
-                                    }
-                                    return `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}"><span class="mpv-dropdown-item-name">${p.name}</span>${tooltipSpan}</div>`;
-                                }).join("")}
+                                ${AVAILABLE_PROVIDERS.debrid
+                                    .map((p) => {
+                                        if (p.id === "torbox") {
+                                            return `<div class="mpv-dropdown-item disabled" data-id="${p.id}" data-name="${p.name}" style="opacity: 0.4; cursor: not-allowed;"><span class="mpv-dropdown-item-name">${p.name}</span> <span class="mpv-tooltip-help" title="Disabled in May 2026 by Torbox">?</span></div>`;
+                                        }
+                                        const defaults = getProviderDefaults(p.id);
+                                        let tooltipSpan = "";
+                                        if (defaults.tooltip) {
+                                            tooltipSpan = ` <span class="mpv-tooltip-help" title="${defaults.tooltip.replace(/"/g, "&quot;")}">?</span>`;
+                                        }
+                                        return `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}"><span class="mpv-dropdown-item-name">${p.name}</span>${tooltipSpan}</div>`;
+                                    })
+                                    .join("")}
                                 <div style="margin-top: 16px; padding: 12px 16px; font-size: 12px; color: #666; text-align: center; border-top: 1px solid rgba(255,255,255,0.08);">
                                     Missing your favorite service? <a href="https://github.com/gabszap/mpv-rpc/issues" target="_blank" style="color: #8b7bba; text-decoration: underline; font-size: 13px;">open an issue</a>
                                 </div>
@@ -1285,7 +1288,9 @@
         if (iconModePills && iconModeInput) {
             iconModePills.forEach((pill) => {
                 pill.addEventListener("click", () => {
-                    iconModePills.forEach((p) => p.classList.remove("active"));
+                    iconModePills.forEach((p) => {
+                        p.classList.remove("active");
+                    });
                     pill.classList.add("active");
                     iconModeInput.value = pill.dataset.mode;
                 });
@@ -1330,9 +1335,9 @@
         pillBtns.forEach((btn) => {
             btn.addEventListener("click", () => {
                 btn.classList.toggle("active");
-                const activeQualities = Array.from(modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn.active")).map(
-                    (b) => b.dataset.quality,
-                );
+                const activeQualities = Array.from(
+                    modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn.active"),
+                ).map((b) => b.dataset.quality);
                 qualityInput.value = activeQualities.join(",");
             });
         });
@@ -1669,7 +1674,7 @@
             const container = modal.querySelector("#mpv-providers-container");
             const defaults = getProviderDefaults(id);
             const initialUrl = defaults.url;
-            const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, '&quot;')}"` : "";
+            const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, "&quot;")}"` : "";
             const helpSpan = defaults.tooltip ? `<span class="mpv-tooltip-help" ${tooltipAttr}>?</span>` : "";
             const placeholder = defaults.placeholder;
 
