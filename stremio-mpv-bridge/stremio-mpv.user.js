@@ -2240,40 +2240,52 @@
     const MPV_ICON = `<svg viewBox="0 0 64 64" width="48" height="48" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="o" x1="13" y1="0" x2="53" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f9f9f9"/><stop offset="1" stop-color="#b9b9b9"/></linearGradient><linearGradient id="m" x1="44" y1="43" x2="18" y2="-2" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#451b4c"/><stop offset="1" stop-color="#6c3c76"/></linearGradient><linearGradient id="i" x1="25" y1="5" x2="49" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2f0e35"/><stop offset="1" stop-color="#732e7d"/></linearGradient><linearGradient id="c" x1="24" y1="12" x2="42" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f1f0f1"/><stop offset="1" stop-color="#ada7af"/></linearGradient><linearGradient id="p" x1="29" y1="18" x2="33" y2="23" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#66386f"/><stop offset="1" stop-color="#461d4d"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#o)"/><circle cx="33" cy="31" r="28" fill="url(#m)"/><circle cx="35" cy="29" r="21" fill="url(#i)"/><circle cx="32" cy="32" r="14" fill="url(#c)"/><path d="M28 25v12l10-6z" fill="url(#p)"/></svg>`;
     const GEAR_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" style="fill: currentColor;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0 .59-.22L2.74 8.87c-.04.17 0 .42.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`;
 
-    function findFullscreenButton() {
-        const exactMatch = document.querySelector('[title="Enter fullscreen mode"], [title="Exit fullscreen mode"]');
-        if (exactMatch) {
-            return exactMatch;
-        }
+function getVisibleChild(wrapper) {
+	if (!wrapper || !wrapper.firstElementChild) {
+		return wrapper;
+	}
+	for (const child of wrapper.children) {
+		const rect = child.getBoundingClientRect();
+		if (rect.width > 0 && rect.height > 0) {
+			return child;
+		}
+	}
+	return wrapper;
+}
 
-        const navButtonsContainer = document.querySelector(".buttons-container-Oc5z1");
-        const scopedTitleElements = navButtonsContainer
-            ? Array.from(navButtonsContainer.querySelectorAll("[title]"))
-            : [];
-        const scopedFullscreenButton = scopedTitleElements.find((element) =>
-            element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
-        );
-        if (scopedFullscreenButton) {
-            return scopedFullscreenButton;
-        }
+function findFullscreenButton() {
+	const exactMatch = document.querySelector('[title="Enter fullscreen mode"], [title="Exit fullscreen mode"]');
+	if (exactMatch) {
+		return getVisibleChild(exactMatch);
+	}
 
-        if (navButtonsContainer) {
-            const visibleButton = Array.from(navButtonsContainer.children)
-                .filter((element) => {
-                    const rect = element.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0;
-                })
-                .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
+	const navButtonsContainer = document.querySelector(".buttons-container-Oc5z1");
+	const scopedTitleElements = navButtonsContainer
+		? Array.from(navButtonsContainer.querySelectorAll("[title]"))
+		: [];
+	const scopedFullscreenButton = scopedTitleElements.find((element) =>
+		element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
+	);
+	if (scopedFullscreenButton) {
+		return getVisibleChild(scopedFullscreenButton);
+	}
 
-            return visibleButton || navButtonsContainer;
-        }
+	if (navButtonsContainer) {
+		const visibleButton = Array.from(navButtonsContainer.children)
+			.filter((element) => {
+				const rect = element.getBoundingClientRect();
+				return rect.width > 0 && rect.height > 0;
+			})
+			.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
 
-        return (
-            Array.from(document.querySelectorAll("[title]")).find((element) =>
-                element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
-            ) || null
-        );
-    }
+		return visibleButton ? getVisibleChild(visibleButton) : navButtonsContainer;
+	}
+
+	const docFullscreen = Array.from(document.querySelectorAll("[title]")).find((element) =>
+		element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
+	);
+	return docFullscreen ? getVisibleChild(docFullscreen) : null;
+}
 
     function clampToViewport(value, minimum, maximum) {
         return Math.min(Math.max(value, minimum), maximum);
