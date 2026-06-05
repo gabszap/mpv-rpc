@@ -82,4 +82,29 @@ describe("JikanProvider error logging", () => {
             "formatted-detail",
         );
     });
+
+    it("falls back to episode list when individual episode lookup fails", async () => {
+        axiosGetMock
+            .mockRejectedValueOnce({
+                message: "Request failed with status code 500",
+                response: { status: 500 },
+            })
+            .mockResolvedValueOnce({
+                status: 200,
+                data: {
+                    data: [
+                        { mal_id: 5, title: "Previous Episode" },
+                        { mal_id: 6, title: "Science Future" },
+                    ],
+                },
+            });
+
+        const { JikanProvider } = await import("../src/providers/jikan");
+        const provider = new JikanProvider();
+
+        await expect(provider.getEpisodeTitle(62568, 6)).resolves.toBe("Science Future");
+        expect(axiosGetMock).toHaveBeenCalledTimes(2);
+        expect(axiosGetMock.mock.calls[0]?.[0]).toContain("/anime/62568/episodes/6");
+        expect(axiosGetMock.mock.calls[1]?.[0]).toContain("/anime/62568/episodes");
+    });
 });
