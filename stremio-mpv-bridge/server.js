@@ -861,7 +861,7 @@ async function fetchStreams(baseUrl, id, season, episode) {
         ? `${baseUrl}/stream/series/${id}:${episode}.json`
         : `${baseUrl}/stream/series/${id}:${season}:${episode}.json`;
 
-    const data = await httpGetWithRetry(url, { maxRetries: 2, delayMs: 1000, timeoutMs: 10000 });
+    const data = await httpGetWithRetry(url, { maxRetries: 2, delayMs: 1000, timeoutMs: 25000 });
     return data?.streams ? data.streams : [];
 }
 
