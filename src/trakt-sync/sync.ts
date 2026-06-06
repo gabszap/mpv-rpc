@@ -12,6 +12,7 @@ import { getCanonicalEpisodePosition } from "../stremio-sync/identity";
 import {
     getHistory,
     getShowSeasons,
+    logTraktDiagnostic,
     lookupById,
     normalizeTitle,
     scrobblePause,
@@ -54,6 +55,9 @@ const seasonCache = new Map<number, TraktSeasonEpisode[]>();
 
 /** Cache for history checks, keyed by "showId:season:episode" */
 const historyCache = new Map<string, boolean | null>();
+
+/** Unresolved episode logs, keyed by "showId:season:episode" to avoid update-loop spam. */
+const unresolvedEpisodeLogCache = new Set<string>();
 
 // ---------------------------------------------------------------------------
 // Cooldown / dedup state
@@ -100,6 +104,20 @@ function recordSyncAttempt(showId: number, episode: number, season: number): voi
 function recordSyncSuccess(showId: number, episode: number, season: number): void {
     const key = `${showId}:${season}:${episode}`;
     lastSuccess.set(key, { episode, season, timestamp: Date.now() });
+}
+
+function logUnresolvedEpisodeOnce(show: TraktShow, season: number | null, episode: number, message: string): void {
+    const key = `${show.ids.trakt}:${season ?? "absolute"}:${episode}`;
+    if (unresolvedEpisodeLogCache.has(key)) return;
+
+    unresolvedEpisodeLogCache.add(key);
+    logTraktDiagnostic(message);
+    console.log(message);
+}
+
+function logResolutionDiagnostic(message: string): void {
+    logTraktDiagnostic(message);
+    console.log(message);
 }
 
 async function waitForSyncLockRelease(lockKey: string): Promise<void> {
@@ -220,13 +238,13 @@ export async function resolveTraktShow(data: MpvData): Promise<{ show: TraktShow
                     ? !resolvedTitle.includes(expectedTitle) && !expectedTitle.includes(resolvedTitle)
                     : resolvedTitle !== expectedTitle);
             if (titlesMismatch) {
-                console.log(
+                logResolutionDiagnostic(
                     `[Trakt] IMDB ID ${imdbId} resolved to "${result.show.title}" but expected "${title}" — falling back to title search`,
                 );
             } else {
                 const entry: { show: TraktShow; imdbId?: string } = { show: result.show, imdbId };
                 showCache.set(cacheKey, entry);
-                console.log(`[Trakt] Resolved show via imdb_id: ${result.show.title}`);
+                logResolutionDiagnostic(`[Trakt] Resolved show via imdb_id: ${result.show.title}`);
                 return entry;
             }
         }
@@ -249,13 +267,13 @@ export async function resolveTraktShow(data: MpvData): Promise<{ show: TraktShow
                     ? !resolvedTitle.includes(expectedTitle) && !expectedTitle.includes(resolvedTitle)
                     : resolvedTitle !== expectedTitle);
             if (titlesMismatch) {
-                console.log(
+                logResolutionDiagnostic(
                     `[Trakt] TVDB ID ${tvdbId} resolved to "${result.show.title}" but expected "${title}" — falling back to title search`,
                 );
             } else {
                 const entry: { show: TraktShow; imdbId?: string } = { show: result.show };
                 showCache.set(cacheKey, entry);
-                console.log(`[Trakt] Resolved show via tvdb_id: ${result.show.title}`);
+                logResolutionDiagnostic(`[Trakt] Resolved show via tvdb_id: ${result.show.title}`);
                 return entry;
             }
         }
@@ -279,7 +297,7 @@ export async function resolveTraktShow(data: MpvData): Promise<{ show: TraktShow
         imdbId: best.show.ids.imdb,
     };
     showCache.set(cacheKey, entry);
-    console.log(`[Trakt] Resolved show via search: ${best.show.title} (score: ${best.score})`);
+    logResolutionDiagnostic(`[Trakt] Resolved show via search: ${best.show.title} (score: ${best.score})`);
     return entry;
 }
 
@@ -297,6 +315,26 @@ export type SeasonEpisode = { season: number; episode: number };
 
 /** Minimal season metadata required to compute absolute episode positions. */
 export type SeasonInfo = { season: number; episodeCount: number };
+
+type AbsoluteSeasonCountRule = {
+    normalizedTitleIncludes: string;
+    seasonEpisodeCounts: readonly number[];
+};
+
+const ABSOLUTE_SEASON_COUNT_RULES: AbsoluteSeasonCountRule[] = [
+    {
+        normalizedTitleIncludes: "jujutsu kaisen",
+        seasonEpisodeCounts: [24, 23, 24],
+    },
+];
+
+function hasRegularEpisodeNumber(traktEpisode: TraktEpisode): boolean {
+    return traktEpisode.season > 0 && Number.isInteger(traktEpisode.number) && traktEpisode.number > 0;
+}
+
+function readPositiveEpisodeCount(value: unknown): number | null {
+    return Number.isInteger(value) && typeof value === "number" && value > 0 ? value : null;
+}
 
 /**
  * Map a season/episode pair to its absolute episode position across a sequence
@@ -322,38 +360,192 @@ export function mapSeasonEpisodeToAbsolute(
     // Specials (season 0) live outside the main series; the helper is
     // not useful for them.
     if (current.season <= 0) return null;
+    if (current.episode <= 0) return null;
 
-    const sorted = [...seasons].sort((a, b) => a.season - b.season);
-    const priorRegularSeasons = sorted.filter((s) => s.season > 0 && s.season < current.season);
+    const episodeCountBySeason = new Map<number, number>();
+    for (const seasonInfo of seasons) {
+        if (seasonInfo.season <= 0) continue;
+        if (!Number.isInteger(seasonInfo.episodeCount) || seasonInfo.episodeCount < 1) return null;
+        if (episodeCountBySeason.has(seasonInfo.season)) return null;
 
-    // Consecutiveness check: the regular seasons before `current.season` must
-    // be exactly 1, 2, …, current.season-1. A missing prior season makes the
-    // absolute position ambiguous, so refuse the mapping.
-    const expected = new Set<number>();
-    for (let n = 1; n < current.season; n++) expected.add(n);
-    const present = new Set(priorRegularSeasons.map((s) => s.season));
-    if (present.size !== expected.size || ![...expected].every((n) => present.has(n))) {
+        episodeCountBySeason.set(seasonInfo.season, seasonInfo.episodeCount);
+    }
+
+    let priorEpisodeCount = 0;
+    for (let seasonNumber = 1; seasonNumber < current.season; seasonNumber++) {
+        const episodeCount = episodeCountBySeason.get(seasonNumber);
+        if (!episodeCount) return null;
+
+        priorEpisodeCount += episodeCount;
+    }
+
+    const currentSeasonEpisodeCount = episodeCountBySeason.get(current.season);
+    if (currentSeasonEpisodeCount !== undefined && current.episode > currentSeasonEpisodeCount) {
         return null;
     }
 
-    const sum = priorRegularSeasons.reduce((acc, s) => acc + s.episodeCount, 0);
     return {
-        absoluteEpisode: sum + current.episode,
+        absoluteEpisode: priorEpisodeCount + current.episode,
         seasonEpisode: `S${pad2(current.season)}E${pad2(current.episode)}`,
     };
+}
+
+function readTopLevelSeasonInfos(seasons: TraktSeasonEpisode[]): SeasonInfo[] {
+    const seasonInfos: SeasonInfo[] = [];
+
+    for (const seasonData of seasons) {
+        if (seasonData.number <= 0) continue;
+
+        if (Array.isArray(seasonData.episodes)) {
+            const listedEpisodeCount = seasonData.episodes.filter(hasRegularEpisodeNumber).length;
+            if (listedEpisodeCount > 0) {
+                seasonInfos.push({ season: seasonData.number, episodeCount: listedEpisodeCount });
+            }
+            continue;
+        }
+
+        const fallbackEpisodeCount =
+            readPositiveEpisodeCount(seasonData.episode_count) ?? readPositiveEpisodeCount(seasonData.aired_episodes);
+        if (fallbackEpisodeCount) {
+            seasonInfos.push({ season: seasonData.number, episodeCount: fallbackEpisodeCount });
+        }
+    }
+
+    return seasonInfos;
+}
+
+function readNestedEpisodeSeasonInfos(seasons: TraktSeasonEpisode[]): SeasonInfo[] {
+    const episodeCountBySeason = new Map<number, number>();
+
+    for (const seasonData of seasons) {
+        for (const traktEpisode of seasonData.episodes ?? []) {
+            if (traktEpisode.season <= 0) continue;
+            if (!hasRegularEpisodeNumber(traktEpisode)) continue;
+
+            const currentCount = episodeCountBySeason.get(traktEpisode.season) ?? 0;
+            episodeCountBySeason.set(traktEpisode.season, currentCount + 1);
+        }
+    }
+
+    return [...episodeCountBySeason.entries()].map(([seasonNumber, episodeCount]) => ({
+        season: seasonNumber,
+        episodeCount,
+    }));
+}
+
+function mapSeasonEpisodeToSafeAbsolute(
+    seasons: TraktSeasonEpisode[],
+    current: SeasonEpisode,
+): { absoluteEpisode: number; seasonEpisode: string } | null {
+    return (
+        mapSeasonEpisodeToAbsolute(current, readTopLevelSeasonInfos(seasons)) ??
+        mapSeasonEpisodeToAbsolute(current, readNestedEpisodeSeasonInfos(seasons))
+    );
+}
+
+function mapKnownAbsoluteSeasonEpisode(
+    show: TraktShow,
+    current: SeasonEpisode,
+): { absoluteEpisode: number; seasonEpisode: string } | null {
+    const normalizedTitle = normalizeTitle(show.title);
+    const rule = ABSOLUTE_SEASON_COUNT_RULES.find((candidate) =>
+        normalizedTitle.includes(candidate.normalizedTitleIncludes),
+    );
+    if (!rule) return null;
+
+    const seasonInfos = rule.seasonEpisodeCounts.map((episodeCount, index) => ({
+        season: index + 1,
+        episodeCount,
+    }));
+    return mapSeasonEpisodeToAbsolute(current, seasonInfos);
+}
+
+function hasSingleRegularSeasonBucket(seasons: TraktSeasonEpisode[]): boolean {
+    const regularSeasonNumbers = seasons
+        .map((seasonData) => seasonData.number)
+        .filter((seasonNumber) => seasonNumber > 0);
+
+    return regularSeasonNumbers.length === 1 && regularSeasonNumbers[0] === 1;
+}
+
+function findDirectSeasonEpisode(seasons: TraktSeasonEpisode[], season: number, episode: number): TraktEpisode | null {
+    for (const seasonData of seasons) {
+        for (const traktEpisode of seasonData.episodes ?? []) {
+            if (traktEpisode.season === season && traktEpisode.number === episode) {
+                return traktEpisode;
+            }
+        }
+    }
+
+    const targetSeasonData = seasons.find((seasonData) => seasonData.number === season);
+    return targetSeasonData?.episodes?.find((traktEpisode) => traktEpisode.number === episode) ?? null;
+}
+
+function resolveAbsoluteEpisode(seasons: TraktSeasonEpisode[], absoluteEpisode: number): TraktEpisode | null {
+    if (absoluteEpisode < 1) return null;
+
+    let expectedSeason = 1;
+    let absoluteCount = 0;
+    const sortedRegularSeasons = [...seasons]
+        .filter((seasonData) => seasonData.number > 0)
+        .sort((a, b) => a.number - b.number);
+
+    for (const seasonData of sortedRegularSeasons) {
+        if (seasonData.number !== expectedSeason) {
+            return null;
+        }
+
+        expectedSeason++;
+
+        for (const traktEpisode of seasonData.episodes ?? []) {
+            if (!hasRegularEpisodeNumber(traktEpisode)) continue;
+
+            absoluteCount++;
+            if (absoluteCount === absoluteEpisode) {
+                return traktEpisode;
+            }
+        }
+    }
+
+    return null;
+}
+
+function findEpisodeByNumberAcrossRegularSeasons(
+    seasons: TraktSeasonEpisode[],
+    episodeNumber: number,
+): TraktEpisode | null {
+    if (episodeNumber < 1) return null;
+
+    const sortedRegularSeasons = [...seasons]
+        .filter((seasonData) => seasonData.number > 0)
+        .sort((a, b) => a.number - b.number);
+
+    for (const seasonData of sortedRegularSeasons) {
+        const match = seasonData.episodes?.find(
+            (traktEpisode) => hasRegularEpisodeNumber(traktEpisode) && traktEpisode.number === episodeNumber,
+        );
+        if (match) return match;
+    }
+
+    return null;
+}
+
+function resolveCumulativeAbsoluteEpisode(seasons: TraktSeasonEpisode[], absoluteEpisode: number): TraktEpisode | null {
+    return (
+        findEpisodeByNumberAcrossRegularSeasons(seasons, absoluteEpisode) ??
+        resolveAbsoluteEpisode(seasons, absoluteEpisode)
+    );
 }
 
 /**
  * Resolve a season + episode pair to a Trakt episode object.
  *
- * When the exact season/episode match fails AND a season was provided,
- * attempts a safe absolute mapping across consecutive seasons. If prior
- * seasons are missing the mapping is refused (returns null) so the caller
- * skips the scrobble rather than marking the wrong episode.
+ * When a season was provided, direct season/episode matches are preferred.
+ * If that direct lookup fails, a cumulative absolute episode is only attempted
+ * when prior regular season counts are consecutive and therefore safe.
  *
- * When season is null (common for anime), falls back to absolute
- * episode-number matching across all seasons — the position counter is
- * the same loop, just seeded with the raw episode number.
+ * When season is null (common for anime-local numbering), falls back to
+ * absolute episode-number matching across consecutive regular seasons.
  *
  * Season data is cached in-memory per session.
  */
@@ -361,6 +553,7 @@ export async function resolveEpisode(
     show: TraktShow,
     season: number | null,
     episode: number,
+    options: { allowKnownAbsoluteSeasonMapping?: boolean } = {},
 ): Promise<TraktEpisode | null> {
     if (episode == null) return null;
 
@@ -370,7 +563,7 @@ export async function resolveEpisode(
     if (!seasonCache.has(showId)) {
         const seasons = await getShowSeasons(showId);
         if (seasons.length === 0) {
-            console.log(`[Trakt] No season data for show: ${show.title}`);
+            logResolutionDiagnostic(`[Trakt] No season data for show: ${show.title}`);
             return null;
         }
         seasonCache.set(showId, seasons);
@@ -379,56 +572,43 @@ export async function resolveEpisode(
     const seasons = seasonCache.get(showId);
     if (!seasons) return null;
 
-    // Default to season 1 when season is null (common for anime)
-    const targetSeason = season ?? 1;
-
-    // Try exact season + episode match
-    const targetSeasonData = seasons.find((s) => s.number === targetSeason);
-    if (targetSeasonData && targetSeasonData.episodes.length > 0) {
-        const ep = targetSeasonData.episodes.find((e) => e.number === episode);
-        if (ep) return ep;
-    }
-
-    // Determine the absolute position to look up. When a season was provided,
-    // use the safe consecutive-season mapping; when not, treat `episode` as
-    // the absolute position directly.
-    let targetPosition: number;
     if (season != null) {
-        const seasonInfos: SeasonInfo[] = seasons.map((s) => ({
-            season: s.number,
-            episodeCount: s.episodes.length,
-        }));
-        const mapping = mapSeasonEpisodeToAbsolute({ season, episode }, seasonInfos);
-        if (!mapping) {
-            console.log(
-                `[Trakt] Skipped scrobble: could not safely map ${show.title} S${pad2(season)}E${pad2(episode)} to Trakt absolute episode.`,
-            );
-            return null;
-        }
-        console.log(
-            `[Trakt] Absolute mapping: ${show.title} ${mapping.seasonEpisode} → absolute ${mapping.absoluteEpisode}`,
-        );
-        targetPosition = mapping.absoluteEpisode;
-    } else {
-        targetPosition = episode;
-    }
+        const directEpisode = findDirectSeasonEpisode(seasons, season, episode);
+        if (directEpisode) return directEpisode;
 
-    // Fallback: locate the TraktEpisode at `targetPosition` across all seasons
-    let absoluteCount = 0;
-    const sortedSeasons = [...seasons].sort((a, b) => a.number - b.number);
-    for (const seasonData of sortedSeasons) {
-        for (const ep of seasonData.episodes) {
-            absoluteCount++;
-            if (absoluteCount === targetPosition) {
-                console.log(
-                    `[Trakt] Absolute episode match: ep ${targetPosition} → S${String(ep.season).padStart(2, "0")}E${String(ep.number).padStart(2, "0")}`,
+        const absoluteMapping =
+            mapSeasonEpisodeToSafeAbsolute(seasons, { season, episode }) ??
+            (options.allowKnownAbsoluteSeasonMapping === false || !hasSingleRegularSeasonBucket(seasons)
+                ? null
+                : mapKnownAbsoluteSeasonEpisode(show, { season, episode }));
+        if (absoluteMapping) {
+            const cumulativeEpisode = resolveCumulativeAbsoluteEpisode(seasons, absoluteMapping.absoluteEpisode);
+            if (cumulativeEpisode) {
+                logResolutionDiagnostic(
+                    `[Trakt] Cumulative episode match: ${absoluteMapping.seasonEpisode} → absolute ep ${absoluteMapping.absoluteEpisode} → S${pad2(cumulativeEpisode.season)}E${pad2(cumulativeEpisode.number)}`,
                 );
-                return ep;
+                return cumulativeEpisode;
             }
         }
+
+        logUnresolvedEpisodeOnce(
+            show,
+            season,
+            episode,
+            `[Trakt] Could not resolve ${show.title} S${pad2(season)}E${pad2(episode)} directly in Trakt seasons.`,
+        );
+        return null;
     }
 
-    console.log(`[Trakt] Could not resolve episode ${episode} for ${show.title}`);
+    const absoluteMatch = resolveAbsoluteEpisode(seasons, episode);
+    if (absoluteMatch) {
+        logResolutionDiagnostic(
+            `[Trakt] Absolute episode match: ep ${episode} → S${String(absoluteMatch.season).padStart(2, "0")}E${String(absoluteMatch.number).padStart(2, "0")}`,
+        );
+        return absoluteMatch;
+    }
+
+    logUnresolvedEpisodeOnce(show, season, episode, `[Trakt] Could not resolve episode ${episode} for ${show.title}`);
     return null;
 }
 
@@ -537,9 +717,16 @@ export async function tryScrobble(data: MpvData): Promise<void> {
 
     // 7. Resolve episode (cached)
     if (!currentEpisode) {
-        const resolvedEp = await resolveEpisode(currentShow, seasonNum, episodeNum);
+        const resolvedEp = await resolveEpisode(currentShow, seasonNum, episodeNum, {
+            allowKnownAbsoluteSeasonMapping: canonicalPosition.source !== "playback",
+        });
         if (!resolvedEp) {
-            console.log(`[Trakt] Could not resolve episode ${episodeNum} for ${currentShow.title}`);
+            logUnresolvedEpisodeOnce(
+                currentShow,
+                seasonNum,
+                episodeNum,
+                `[Trakt] Could not resolve episode ${episodeNum} for ${currentShow.title}`,
+            );
             return;
         }
         currentEpisode = resolvedEp;
