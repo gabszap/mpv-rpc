@@ -2254,36 +2254,67 @@
     }
 
     function findFullscreenButton() {
-        const exactMatch = document.querySelector('[title="Enter fullscreen mode"], [title="Exit fullscreen mode"]');
-        if (exactMatch) {
-            return getVisibleChild(exactMatch);
-        }
-
-        const navButtonsContainer = document.querySelector(".buttons-container-Oc5z1");
-        const scopedTitleElements = navButtonsContainer
-            ? Array.from(navButtonsContainer.querySelectorAll("[title]"))
-            : [];
-        const scopedFullscreenButton = scopedTitleElements.find((element) =>
-            element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
+        const matches = Array.from(
+            document.querySelectorAll(
+                '[title*="fullscreen" i], [title*="tela cheia" i], [title*="pantalla" i], [title*="plein" i], [title*="vollbild" i]',
+            ),
         );
-        if (scopedFullscreenButton) {
-            return getVisibleChild(scopedFullscreenButton);
+        for (const match of matches) {
+            const child = getVisibleChild(match);
+            const rect = child.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                return child;
+            }
         }
 
+        const navButtonsContainer = document.querySelector('[class*="buttons-container-"]');
         if (navButtonsContainer) {
-            const visibleButton = Array.from(navButtonsContainer.children)
+            const scopedTitleElements = Array.from(navButtonsContainer.querySelectorAll("[title]"));
+            for (const element of scopedTitleElements) {
+                const title = element.getAttribute("title")?.toLowerCase() || "";
+                if (
+                    title.includes("fullscreen") ||
+                    title.includes("tela cheia") ||
+                    title.includes("pantalla") ||
+                    title.includes("plein") ||
+                    title.includes("vollbild")
+                ) {
+                    const child = getVisibleChild(element);
+                    const rect = child.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        return child;
+                    }
+                }
+            }
+
+            const visibleChildren = Array.from(navButtonsContainer.children)
                 .filter((element) => {
                     const rect = element.getBoundingClientRect();
                     return rect.width > 0 && rect.height > 0;
                 })
-                .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
+                .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
 
-            return visibleButton ? getVisibleChild(visibleButton) : navButtonsContainer;
+            if (visibleChildren.length > 0) {
+                return getVisibleChild(visibleChildren[0]);
+            }
+            return navButtonsContainer;
         }
 
-        const docFullscreen = Array.from(document.querySelectorAll("[title]")).find((element) =>
-            element.getAttribute("title")?.toLowerCase().includes("fullscreen"),
-        );
+        const docFullscreen = Array.from(document.querySelectorAll("[title]")).find((element) => {
+            const title = element.getAttribute("title")?.toLowerCase() || "";
+            if (
+                title.includes("fullscreen") ||
+                title.includes("tela cheia") ||
+                title.includes("pantalla") ||
+                title.includes("plein") ||
+                title.includes("vollbild")
+            ) {
+                const child = getVisibleChild(element);
+                const rect = child.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }
+            return false;
+        });
         return docFullscreen ? getVisibleChild(docFullscreen) : null;
     }
 
@@ -2327,7 +2358,7 @@
         };
     }
 
-    function positionFloatingContainer(container, state) {
+    function positionFloatingContainer(container, state, precomputedCompactPosition) {
         container.style.left = "auto";
         container.style.right = "20px";
         container.style.bottom = "100px";
@@ -2340,7 +2371,7 @@
             return;
         }
 
-        const compactPosition = getCompactConfigButtonPosition();
+        const compactPosition = precomputedCompactPosition ?? getCompactConfigButtonPosition();
         container.style.bottom = "auto";
         container.style.zIndex = "999999";
 
@@ -2370,23 +2401,41 @@
         });
     }
 
-    function positionCompactConfigButton() {
+    const COMPACT_RETRY_MAX = 5;
+    const COMPACT_RETRY_DELAY = 250;
+    let compactRetryCount = 0;
+
+    function positionCompactConfigButton(isRetry = false) {
         const container = document.getElementById("stremio-mpv-floating");
         if (!container || isPlayerRoute() || GM_getValue("iconMode", "default") !== "compact") {
             return;
         }
 
-        positionFloatingContainer(container, applyIconMode("compact"));
+        if (!isRetry) {
+            compactRetryCount = 0;
+        }
+
+        const compactPosition = getCompactConfigButtonPosition();
+        positionFloatingContainer(container, applyIconMode("compact"), compactPosition);
+
+        if (compactPosition === null && compactRetryCount < COMPACT_RETRY_MAX) {
+            compactRetryCount++;
+            setTimeout(() => {
+                schedulePositionCompactConfigButton(true);
+            }, COMPACT_RETRY_DELAY);
+        } else if (compactPosition !== null) {
+            compactRetryCount = 0;
+        }
     }
 
-    function schedulePositionCompactConfigButton() {
+    function schedulePositionCompactConfigButton(isRetry = false) {
         if (compactPositionFrame !== null) {
             return;
         }
 
         compactPositionFrame = requestAnimationFrame(() => {
             compactPositionFrame = null;
-            positionCompactConfigButton();
+            positionCompactConfigButton(isRetry);
         });
     }
 
