@@ -100,16 +100,106 @@ function doesContextNameExactlyMatchPlayback(context: StremioPlaybackContext, da
     return getSafePlaybackTitleCandidates(data).some((playbackTitle) => playbackTitle === normalizedContextName);
 }
 
-function doesContextIdMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
-    return Boolean(context.imdbId && data.imdb_id && context.imdbId === data.imdb_id);
+function readProviderNumericId(value: string | null | undefined, provider: "mal" | "tvdb" | "kitsu"): number | null {
+    if (!value) {
+        return null;
+    }
+
+    const match = value.match(new RegExp(`(?:^|:)${provider}:(\\d+)(?::|$)`, "i"));
+    if (!match) {
+        return null;
+    }
+
+    const numericId = Number.parseInt(match[1], 10);
+    return Number.isInteger(numericId) && numericId > 0 ? numericId : null;
+}
+
+function getContextIdCandidates(context: StremioPlaybackContext): string[] {
+    return [context.libraryItemId, context.seriesId, context.videoId].filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+}
+
+function readContextProviderId(context: StremioPlaybackContext, provider: "mal" | "tvdb" | "kitsu"): number | null {
+    for (const candidate of getContextIdCandidates(context)) {
+        const providerId = readProviderNumericId(candidate, provider);
+        if (providerId) {
+            return providerId;
+        }
+    }
+
+    return null;
+}
+
+function readMpvNumericId(data: MpvData, field: "mal_id" | "tvdb_id" | "kitsu_id"): number | null {
+    const value = (data as unknown as Record<string, unknown>)[field];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        return null;
+    }
+
+    return value;
+}
+
+function doKnownSecureIdsConflict(context: StremioPlaybackContext, data: MpvData): boolean {
+    if (context.imdbId && data.imdb_id && context.imdbId !== data.imdb_id) {
+        return true;
+    }
+
+    const contextMalId = readContextProviderId(context, "mal");
+    const dataMalId = readMpvNumericId(data, "mal_id");
+    if (contextMalId && dataMalId && contextMalId !== dataMalId) {
+        return true;
+    }
+
+    const contextTvdbId = readContextProviderId(context, "tvdb");
+    const dataTvdbId = readMpvNumericId(data, "tvdb_id");
+    if (contextTvdbId && dataTvdbId && contextTvdbId !== dataTvdbId) {
+        return true;
+    }
+
+    const contextKitsuId = readContextProviderId(context, "kitsu");
+    const dataKitsuId = readMpvNumericId(data, "kitsu_id");
+    return Boolean(contextKitsuId && dataKitsuId && contextKitsuId !== dataKitsuId);
+}
+
+function doesContextSecureIdMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+    if (context.imdbId && data.imdb_id && context.imdbId === data.imdb_id) {
+        return true;
+    }
+
+    const contextMalId = readContextProviderId(context, "mal");
+    const dataMalId = readMpvNumericId(data, "mal_id");
+    if (contextMalId && dataMalId && contextMalId === dataMalId) {
+        return true;
+    }
+
+    const contextTvdbId = readContextProviderId(context, "tvdb");
+    const dataTvdbId = readMpvNumericId(data, "tvdb_id");
+    if (contextTvdbId && dataTvdbId && contextTvdbId === dataTvdbId) {
+        return true;
+    }
+
+    const contextKitsuId = readContextProviderId(context, "kitsu");
+    const dataKitsuId = readMpvNumericId(data, "kitsu_id");
+    return Boolean(contextKitsuId && dataKitsuId && contextKitsuId === dataKitsuId);
 }
 
 function doesContextSecurelyMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
-    if (context.imdbId && data.imdb_id && context.imdbId !== data.imdb_id) {
+    if (doKnownSecureIdsConflict(context, data)) {
         return false;
     }
 
-    return doesContextIdMatchPlayback(context, data) || doesContextNameExactlyMatchPlayback(context, data);
+    return doesContextSecureIdMatchPlayback(context, data) || doesContextNameExactlyMatchPlayback(context, data);
+}
+
+function isContextEpisodeEqualToLocalPlaybackEpisode(context: StremioPlaybackContext, data: MpvData): boolean {
+    const currentPosition = getCurrentEpisodePosition(data);
+
+    return (
+        currentPosition.season === null &&
+        currentPosition.episode !== null &&
+        currentPosition.episode === context.episode
+    );
 }
 
 function isSeriesPositionSafeForContext(context: StremioPlaybackContext, data: MpvData): boolean {
@@ -130,6 +220,10 @@ function isSeriesPositionSafeForContext(context: StremioPlaybackContext, data: M
             context.season === canonicalSplitPartPosition.season &&
             context.episode === canonicalSplitPartPosition.episode
         );
+    }
+
+    if (isContextEpisodeEqualToLocalPlaybackEpisode(context, data)) {
+        return doesContextSecureIdMatchPlayback(context, data) || doesContextNameExactlyMatchPlayback(context, data);
     }
 
     return false;

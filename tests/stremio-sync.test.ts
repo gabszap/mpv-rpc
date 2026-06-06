@@ -431,6 +431,85 @@ describe("Stremio sync MVP", () => {
         });
     });
 
+    it("syncs bridge canonical identity for Jujutsu Kaisen split-entry playback", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:5",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 5,
+            episodesInSeason: null,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E05",
+                    series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+                    season: null,
+                    episode: 5,
+                    filename:
+                        "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+                    imdb_id: undefined,
+                    mal_id: 57658,
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "mal:57658",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 3,
+            episode: 5,
+            video_id: "tt12343534:3:5",
+        });
+        expect(updatedItem.state).not.toMatchObject({
+            season: 1,
+            episode: 5,
+        });
+    });
+
+    it("rejects stale Jujutsu Kaisen context when the bridge episode differs", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:6",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 6,
+            episodesInSeason: null,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E05",
+                    series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+                    season: null,
+                    episode: 5,
+                    filename:
+                        "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+                    imdb_id: undefined,
+                    mal_id: 57658,
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
     it("keeps explicit canonical filename position when MAL overflow data is local to a split part", async () => {
         vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
             libraryItemId: "tt9679542",

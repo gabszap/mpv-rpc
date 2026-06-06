@@ -113,6 +113,7 @@ describe("Stremio playback context", () => {
             }),
         ).toMatchObject({
             libraryItemId: "tt22248376",
+            seriesId: "tt22248376",
             imdbId: "tt22248376",
             videoId: null,
         });

@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 export type StremioPlaybackContext = {
     libraryItemId: string;
+    seriesId?: string | null;
     imdbId: string | null;
     videoId: string | null;
     name: string | null;
@@ -80,8 +81,10 @@ export function parseStremioPlaybackContext(rawConfig: unknown): StremioPlayback
         return null;
     }
 
+    const seriesId = readString(meta.seriesId);
     return {
         libraryItemId,
+        ...(seriesId ? { seriesId } : {}),
         imdbId: readRealImdbId(meta.imdbId),
         videoId: readString(meta.videoId),
         name: readString(meta.name),

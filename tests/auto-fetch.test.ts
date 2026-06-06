@@ -250,6 +250,45 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         });
     });
 
+    it("uses Jujutsu Kaisen Stremio metadata as canonical for split-entry playback", async () => {
+        readFileSyncMock.mockReturnValue(
+            JSON.stringify({
+                stremioMeta: {
+                    seriesId: "mal:57658",
+                    imdbId: "tt12343534",
+                    libraryItemId: "mal:57658",
+                    videoId: "tt12343534:3:5",
+                    name: "Jujutsu Kaisen",
+                    season: 3,
+                    episode: 5,
+                    type: "series",
+                },
+                extraEpisodes: 2,
+            }),
+        );
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(
+            makeMpvData({
+                media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E05",
+                series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+                season: null,
+                episode: 5,
+                filename:
+                    "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+                imdb_id: "tt12343534",
+            }),
+        );
+
+        const autoFetchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/auto-fetch"));
+        expect(autoFetchCall).toBeDefined();
+        const request = autoFetchCall?.[1] as RequestInit;
+        expect(JSON.parse(String(request.body))).toMatchObject({
+            season: 3,
+            episode: 5,
+        });
+    });
+
     it("uses split-part canonical position atomically for dry-run next episodes", async () => {
         config.syncDryRun = true;
         const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
