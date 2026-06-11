@@ -22,17 +22,20 @@ export function buildCanonicalVideoId(imdbId: string | null | undefined, positio
     return `${imdbId}:${position.season}:${position.episode}`;
 }
 
-export function buildVideoIdWhenSafe(context: StremioPlaybackContext): string | null {
-    if (context.videoId) {
-        return context.videoId;
-    }
-
+export function buildVideoIdWhenSafe(
+    context: StremioPlaybackContext,
+    position: EpisodePosition = { season: context.season, episode: context.episode },
+): string | null {
     if (context.type === "movie" && context.imdbId) {
         return context.imdbId;
     }
 
-    if (context.type === "series" && context.imdbId && context.season && context.episode) {
-        return `${context.imdbId}:${context.season}:${context.episode}`;
+    if (context.type === "series" && context.imdbId && position.season !== null && position.episode !== null) {
+        return `${context.imdbId}:${position.season}:${position.episode}`;
+    }
+
+    if (context.videoId) {
+        return context.videoId;
     }
 
     return null;
@@ -140,11 +143,11 @@ function readMpvNumericId(data: MpvData, field: "mal_id" | "tvdb_id" | "kitsu_id
     return value;
 }
 
-function doKnownSecureIdsConflict(context: StremioPlaybackContext, data: MpvData): boolean {
-    if (context.imdbId && data.imdb_id && context.imdbId !== data.imdb_id) {
-        return true;
-    }
+function doesKnownImdbIdConflict(context: StremioPlaybackContext, data: MpvData): boolean {
+    return Boolean(context.imdbId && data.imdb_id && context.imdbId !== data.imdb_id);
+}
 
+function doKnownProviderIdsConflict(context: StremioPlaybackContext, data: MpvData): boolean {
     const contextMalId = readContextProviderId(context, "mal");
     const dataMalId = readMpvNumericId(data, "mal_id");
     if (contextMalId && dataMalId && contextMalId !== dataMalId) {
@@ -160,6 +163,38 @@ function doKnownSecureIdsConflict(context: StremioPlaybackContext, data: MpvData
     const contextKitsuId = readContextProviderId(context, "kitsu");
     const dataKitsuId = readMpvNumericId(data, "kitsu_id");
     return Boolean(contextKitsuId && dataKitsuId && contextKitsuId !== dataKitsuId);
+}
+
+function doesContextCanonicalVideoIdMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+    const canonicalSplitPartPosition = resolveCanonicalSplitPartEpisode(data);
+    if (!canonicalSplitPartPosition) {
+        return false;
+    }
+
+    const expectedVideoId = buildCanonicalVideoId(context.imdbId, canonicalSplitPartPosition);
+    if (!expectedVideoId || context.videoId !== expectedVideoId) {
+        return false;
+    }
+
+    return (
+        context.season === canonicalSplitPartPosition.season && context.episode === canonicalSplitPartPosition.episode
+    );
+}
+
+function doesContextSecurelyMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+    if (doesKnownImdbIdConflict(context, data)) {
+        return false;
+    }
+
+    if (doesContextCanonicalVideoIdMatchPlayback(context, data)) {
+        return true;
+    }
+
+    if (doKnownProviderIdsConflict(context, data)) {
+        return false;
+    }
+
+    return doesContextSecureIdMatchPlayback(context, data) || doesContextNameExactlyMatchPlayback(context, data);
 }
 
 function doesContextSecureIdMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
@@ -184,12 +219,28 @@ function doesContextSecureIdMatchPlayback(context: StremioPlaybackContext, data:
     return Boolean(contextKitsuId && dataKitsuId && contextKitsuId === dataKitsuId);
 }
 
-function doesContextSecurelyMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
-    if (doKnownSecureIdsConflict(context, data)) {
+function isContextFreshEnoughForTitleOnlyMatch(context: StremioPlaybackContext): boolean {
+    return context.isFresh !== false;
+}
+
+function doesContextIdentityMatchPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+    if (isContextFreshEnoughForTitleOnlyMatch(context)) {
+        return doesContextSecurelyMatchPlayback(context, data);
+    }
+
+    if (doesKnownImdbIdConflict(context, data)) {
         return false;
     }
 
-    return doesContextSecureIdMatchPlayback(context, data) || doesContextNameExactlyMatchPlayback(context, data);
+    if (doesContextCanonicalVideoIdMatchPlayback(context, data)) {
+        return true;
+    }
+
+    if (doKnownProviderIdsConflict(context, data)) {
+        return false;
+    }
+
+    return doesContextSecureIdMatchPlayback(context, data);
 }
 
 function isContextEpisodeEqualToLocalPlaybackEpisode(context: StremioPlaybackContext, data: MpvData): boolean {
@@ -230,7 +281,7 @@ function isSeriesPositionSafeForContext(context: StremioPlaybackContext, data: M
 }
 
 export function isPlaybackContextMatchingData(context: StremioPlaybackContext, data: MpvData): boolean {
-    if (!doesContextSecurelyMatchPlayback(context, data)) {
+    if (!doesContextIdentityMatchPlayback(context, data)) {
         return false;
     }
 
@@ -293,7 +344,7 @@ export function getCanonicalStremioIdentity(
     const videoId =
         canonicalPosition.source === "split-part-rule"
             ? buildCanonicalVideoId(context.imdbId, canonicalPosition)
-            : buildVideoIdWhenSafe(context);
+            : buildVideoIdWhenSafe(context, canonicalPosition);
 
     return {
         context,
