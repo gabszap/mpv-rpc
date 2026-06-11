@@ -275,3 +275,80 @@ describe("TvdbProvider.getEpisodeTitle", () => {
         expect(axiosGetMock.mock.calls.some(([url]) => String(url).includes("/series/42/extended"))).toBe(false);
     });
 });
+
+describe("mapTvdbAiredEpisodeToAbsolute", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.resetModules();
+        axiosPostMock.mockResolvedValue({
+            data: {
+                data: {
+                    token: "test-token",
+                },
+            },
+        });
+    });
+
+    it("maps aired/default S03E05 to absolute episode 52 by TVDB episode id", async () => {
+        axiosGetMock.mockImplementation(async (url: string, options?: { params?: Record<string, unknown> }) => {
+            const params = options?.params ?? {};
+
+            if (url.endsWith("/series/42/episodes/absolute") && params.page === 0) {
+                return {
+                    data: {
+                        data: {
+                            episodes: [
+                                { id: 3005, seasonNumber: 1, number: 52, absoluteNumber: 52 },
+                                { id: 3006, seasonNumber: 1, number: 53, absoluteNumber: 53 },
+                            ],
+                        },
+                    },
+                };
+            }
+
+            if (url.endsWith("/series/42/episodes/official") && params.page === 0) {
+                return {
+                    data: {
+                        data: {
+                            episodes: [
+                                { id: 3005, seasonNumber: 3, number: 5, absoluteNumber: 52 },
+                                { id: 3006, seasonNumber: 3, number: 6, absoluteNumber: 53 },
+                            ],
+                        },
+                    },
+                };
+            }
+
+            throw new Error(`Unexpected URL/params: ${url} ${JSON.stringify(params)}`);
+        });
+
+        const { mapTvdbAiredEpisodeToAbsolute } = await import("../src/providers/tvdb");
+
+        await expect(mapTvdbAiredEpisodeToAbsolute(42, 3, 5)).resolves.toMatchObject({
+            absoluteEpisode: 52,
+            episode: 5,
+            season: 3,
+            seasonType: "official",
+        });
+        await expect(mapTvdbAiredEpisodeToAbsolute(42, 3, 6)).resolves.toMatchObject({
+            absoluteEpisode: 53,
+            episode: 6,
+            season: 3,
+            seasonType: "official",
+        });
+    });
+
+    it("returns null when absolute order is unavailable", async () => {
+        axiosGetMock.mockResolvedValue({
+            data: {
+                data: {
+                    episodes: [],
+                },
+            },
+        });
+
+        const { mapTvdbAiredEpisodeToAbsolute } = await import("../src/providers/tvdb");
+
+        await expect(mapTvdbAiredEpisodeToAbsolute(42, 3, 5)).resolves.toBeNull();
+    });
+});

@@ -12,6 +12,7 @@ import { formatProviderErrorDetails, logApiCall } from "./types";
 
 const TVDB_BASE = "https://api4.thetvdb.com/v4";
 const MAX_SEASON_LOOKUP_PAGES = 3;
+const MAX_ORDER_MAPPING_PAGES = 20;
 const MIN_INFERENCE_SCORE = 40;
 const TITLE_HINT_STOP_WORDS = new Set([
     "a",
@@ -29,12 +30,23 @@ const TITLE_HINT_STOP_WORDS = new Set([
 ]);
 
 type TvdbSeasonType = "official" | "default";
+type TvdbEpisodeOrderType = TvdbSeasonType | "absolute";
 
 interface TvdbEpisodeRecord {
     id?: number | string;
     name?: string | null;
     seasonNumber?: number | string;
     number?: number | string;
+    absoluteNumber?: number | string | null;
+}
+
+export interface TvdbAiredToAbsoluteMapping {
+    seriesId: number;
+    season: number;
+    episode: number;
+    absoluteEpisode: number;
+    seasonType: TvdbSeasonType;
+    episodeId: number | null;
 }
 
 interface TvdbSeasonRecord {
@@ -65,6 +77,11 @@ const TOKEN_TTL = 28 * 24 * 60 * 60 * 1000; // 28 days
 // Rate limiting
 let lastRequestTime = 0;
 const MIN_REQUEST_INTERVAL = 500;
+
+const episodeOrderCache = new Map<string, Promise<TvdbEpisodeRecord[]>>();
+const airedToAbsoluteCache = new Map<string, { expiresAt: number; result: TvdbAiredToAbsoluteMapping | null }>();
+const ORDER_MAPPING_SUCCESS_TTL_MS = 24 * 60 * 60 * 1000;
+const ORDER_MAPPING_FAILURE_TTL_MS = 10 * 60 * 1000;
 
 // Circuit Breaker
 const circuitBreaker = {
@@ -225,6 +242,26 @@ function extractEpisodeList(response: any): TvdbEpisodeRecord[] {
     return Array.isArray(episodes) ? (episodes as TvdbEpisodeRecord[]) : [];
 }
 
+function readNextPage(response: any): number | null {
+    const nextPage = response?.data?.links?.next ?? response?.links?.next;
+    const normalizedNextPage = normalizeEpisodeNumber(nextPage);
+
+    return normalizedNextPage !== null && normalizedNextPage >= 0 ? normalizedNextPage : null;
+}
+
+function getEpisodeRecordId(episode: TvdbEpisodeRecord): number | null {
+    return normalizeEpisodeNumber(episode.id);
+}
+
+function getAbsoluteEpisodeNumber(episode: TvdbEpisodeRecord): number | null {
+    const absoluteNumber = normalizeEpisodeNumber(episode.absoluteNumber);
+    if (absoluteNumber !== null && absoluteNumber > 0) {
+        return absoluteNumber;
+    }
+
+    return null;
+}
+
 function findExactEpisode(episodes: TvdbEpisodeRecord[], season: number, episode: number): TvdbEpisodeRecord | null {
     const seasonNum = normalizeEpisodeNumber(season);
     const episodeNum = normalizeEpisodeNumber(episode);
@@ -240,6 +277,226 @@ function findExactEpisode(episodes: TvdbEpisodeRecord[], season: number, episode
                 normalizeEpisodeNumber(candidate.number) === episodeNum,
         ) || null
     );
+}
+
+async function fetchEpisodeOrder(seriesId: number, seasonType: TvdbEpisodeOrderType): Promise<TvdbEpisodeRecord[]> {
+    const cacheKey = `${seriesId}:${seasonType}`;
+    const cachedOrder = episodeOrderCache.get(cacheKey);
+    if (cachedOrder) {
+        return cachedOrder;
+    }
+
+    const orderPromise = fetchEpisodeOrderPages(seriesId, seasonType);
+    episodeOrderCache.set(cacheKey, orderPromise);
+    return orderPromise;
+}
+
+async function fetchEpisodeOrderPages(
+    seriesId: number,
+    seasonType: TvdbEpisodeOrderType,
+): Promise<TvdbEpisodeRecord[]> {
+    const episodes: TvdbEpisodeRecord[] = [];
+    let page = 0;
+
+    for (let pageCount = 0; pageCount < MAX_ORDER_MAPPING_PAGES; pageCount++) {
+        const pageResponse = await tvdbRequest(
+            `/series/${seriesId}/episodes/${seasonType}`,
+            { page },
+            "getEpisodeOrder",
+        );
+        const pageEpisodes = extractEpisodeList(pageResponse);
+        if (pageEpisodes.length === 0) {
+            break;
+        }
+
+        episodes.push(...pageEpisodes);
+
+        const nextPage = readNextPage(pageResponse);
+        if (nextPage === null || nextPage === page) {
+            break;
+        }
+
+        page = nextPage;
+    }
+
+    return episodes;
+}
+
+function findAbsoluteNumberByEpisodeId(
+    absoluteEpisodes: TvdbEpisodeRecord[],
+    airedEpisode: TvdbEpisodeRecord,
+): number | null {
+    const airedEpisodeId = getEpisodeRecordId(airedEpisode);
+    if (airedEpisodeId === null) {
+        return null;
+    }
+
+    const absoluteEpisode = absoluteEpisodes.find((candidate) => getEpisodeRecordId(candidate) === airedEpisodeId);
+    if (!absoluteEpisode) {
+        return null;
+    }
+
+    return getAbsoluteEpisodeNumber(absoluteEpisode) ?? normalizeEpisodeNumber(absoluteEpisode.number);
+}
+
+function buildAiredToAbsoluteMapping(
+    seriesId: number,
+    season: number,
+    episode: number,
+    seasonType: TvdbSeasonType,
+    airedEpisodes: TvdbEpisodeRecord[],
+    absoluteEpisodes: TvdbEpisodeRecord[],
+): TvdbAiredToAbsoluteMapping | null {
+    const airedEpisode = findExactEpisode(airedEpisodes, season, episode);
+    if (!airedEpisode) {
+        return null;
+    }
+
+    const absoluteEpisode =
+        getAbsoluteEpisodeNumber(airedEpisode) ?? findAbsoluteNumberByEpisodeId(absoluteEpisodes, airedEpisode);
+    if (absoluteEpisode === null || absoluteEpisode < 1) {
+        return null;
+    }
+
+    return {
+        seriesId,
+        season,
+        episode,
+        absoluteEpisode,
+        seasonType,
+        episodeId: getEpisodeRecordId(airedEpisode),
+    };
+}
+
+function getCachedAiredToAbsoluteMapping(cacheKey: string): TvdbAiredToAbsoluteMapping | null | undefined {
+    const cachedMapping = airedToAbsoluteCache.get(cacheKey);
+    if (!cachedMapping) {
+        return undefined;
+    }
+
+    if (Date.now() >= cachedMapping.expiresAt) {
+        airedToAbsoluteCache.delete(cacheKey);
+        return undefined;
+    }
+
+    return cachedMapping.result;
+}
+
+function cacheAiredToAbsoluteMapping(cacheKey: string, result: TvdbAiredToAbsoluteMapping | null): void {
+    airedToAbsoluteCache.set(cacheKey, {
+        expiresAt: Date.now() + (result ? ORDER_MAPPING_SUCCESS_TTL_MS : ORDER_MAPPING_FAILURE_TTL_MS),
+        result,
+    });
+}
+
+export async function mapTvdbAiredEpisodeToAbsolute(
+    seriesId: number | null | undefined,
+    season: number | null | undefined,
+    episode: number | null | undefined,
+): Promise<TvdbAiredToAbsoluteMapping | null> {
+    if (!config.tvdb.apiKey) {
+        logApiCall("TVDB", "mapAiredToAbsolute", {}, "DETAIL", "skip: missing TVDB_API_KEY");
+        return null;
+    }
+
+    if (!Number.isInteger(seriesId) || !Number.isInteger(season) || !Number.isInteger(episode)) {
+        return null;
+    }
+
+    if ((seriesId ?? 0) < 1 || (season ?? 0) < 1 || (episode ?? 0) < 1) {
+        return null;
+    }
+
+    const resolvedSeriesId = seriesId as number;
+    const resolvedSeason = season as number;
+    const resolvedEpisode = episode as number;
+
+    const cacheKey = `${resolvedSeriesId}:${resolvedSeason}:${resolvedEpisode}`;
+    const cachedMapping = getCachedAiredToAbsoluteMapping(cacheKey);
+    if (cachedMapping !== undefined) {
+        return cachedMapping;
+    }
+
+    logApiCall(
+        "TVDB",
+        "mapAiredToAbsolute",
+        { seriesId: resolvedSeriesId, season: resolvedSeason, episode: resolvedEpisode },
+        "DETAIL",
+        "attempt official/default → absolute",
+    );
+
+    try {
+        const absoluteEpisodes = await fetchEpisodeOrder(resolvedSeriesId, "absolute");
+        if (absoluteEpisodes.length === 0) {
+            logApiCall(
+                "TVDB",
+                "mapAiredToAbsolute",
+                { seriesId: resolvedSeriesId, season: resolvedSeason, episode: resolvedEpisode },
+                "DETAIL",
+                "fail-safe: absolute order unavailable",
+            );
+            cacheAiredToAbsoluteMapping(cacheKey, null);
+            return null;
+        }
+
+        for (const seasonType of ["default", "official"] as TvdbSeasonType[]) {
+            let airedEpisodes: TvdbEpisodeRecord[];
+            try {
+                airedEpisodes = await fetchEpisodeOrder(resolvedSeriesId, seasonType);
+            } catch (error) {
+                logApiCall(
+                    "TVDB",
+                    "mapAiredToAbsolute",
+                    { seriesId: resolvedSeriesId, season: resolvedSeason, episode: resolvedEpisode },
+                    "DETAIL",
+                    `seasonType=${seasonType} unavailable: ${error instanceof Error ? error.message : "unknown"}`,
+                );
+                continue;
+            }
+
+            const mapping = buildAiredToAbsoluteMapping(
+                resolvedSeriesId,
+                resolvedSeason,
+                resolvedEpisode,
+                seasonType,
+                airedEpisodes,
+                absoluteEpisodes,
+            );
+            if (!mapping) {
+                continue;
+            }
+
+            logApiCall(
+                "TVDB",
+                "mapAiredToAbsolute",
+                { seriesId: resolvedSeriesId, season: resolvedSeason, episode: resolvedEpisode },
+                "DETAIL",
+                `seasonType=${seasonType} absolute=${mapping.absoluteEpisode}`,
+            );
+            cacheAiredToAbsoluteMapping(cacheKey, mapping);
+            return mapping;
+        }
+
+        logApiCall(
+            "TVDB",
+            "mapAiredToAbsolute",
+            { seriesId: resolvedSeriesId, season: resolvedSeason, episode: resolvedEpisode },
+            "DETAIL",
+            "fail-safe: no aired/default episode id matched absolute order",
+        );
+        cacheAiredToAbsoluteMapping(cacheKey, null);
+        return null;
+    } catch (error) {
+        logApiCall(
+            "TVDB",
+            "mapAiredToAbsolute",
+            { seriesId: resolvedSeriesId, season: resolvedSeason, episode: resolvedEpisode },
+            "DETAIL",
+            `fail-safe: ${error instanceof Error ? error.message : "mapping unavailable"}`,
+        );
+        cacheAiredToAbsoluteMapping(cacheKey, null);
+        return null;
+    }
 }
 
 function normalizeTitleForComparison(value: string): string {

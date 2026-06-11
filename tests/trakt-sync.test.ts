@@ -38,6 +38,10 @@ vi.mock("../src/trakt-sync/auth", () => ({
     isAuthenticated: vi.fn(),
 }));
 
+vi.mock("../src/providers/tvdb", () => ({
+    mapTvdbAiredEpisodeToAbsolute: vi.fn(),
+}));
+
 vi.mock("../src/stremio-sync/context", () => ({
     readStremioPlaybackContext: vi.fn(),
 }));
@@ -86,7 +90,7 @@ function makeShow(id: number, title: string): TraktShow {
     return {
         title,
         year: 2020,
-        ids: { trakt: id, slug: `show-${id}` },
+        ids: { trakt: id, slug: `show-${id}`, tvdb: id + 10000 },
     };
 }
 
@@ -255,13 +259,42 @@ describe("resolveEpisode", () => {
 
     it("maps Jujutsu Kaisen canonical S03E05 to absolute episode 52 in one continuous Trakt season", async () => {
         const localApi = await import("../src/trakt-sync/api");
+        const localTvdb = await import("../src/providers/tvdb");
         const localSync = await import("../src/trakt-sync/sync");
 
         vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 80)]);
+        vi.mocked(localTvdb.mapTvdbAiredEpisodeToAbsolute).mockResolvedValue({
+            seriesId: 10005,
+            season: 3,
+            episode: 5,
+            absoluteEpisode: 52,
+            seasonType: "official",
+            episodeId: 3005,
+        });
 
-        const result = await localSync.resolveEpisode(makeShow(5, "Jujutsu Kaisen"), 3, 5);
+        const result = await localSync.resolveEpisode(makeShow(5, "Jujutsu Kaisen"), 3, 5, {
+            allowTvdbAbsoluteMapping: true,
+        });
 
         expect(result).toMatchObject({ season: 1, number: 52 });
+    });
+
+    it("does not map canonical S03E05 to unsafe S01E05 when TVDB mapping is unavailable", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localTvdb = await import("../src/providers/tvdb");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 80)]);
+        vi.mocked(localTvdb.mapTvdbAiredEpisodeToAbsolute).mockResolvedValue(null);
+
+        const result = await localSync.resolveEpisode(makeShow(5, "Jujutsu Kaisen"), 3, 5, {
+            allowTvdbAbsoluteMapping: true,
+        });
+
+        expect(result).toBeNull();
+        expect(localApi.logTraktDiagnostic).toHaveBeenCalledWith(
+            "[Trakt] TVDB order mapping unavailable for Jujutsu Kaisen S03E05; not guessing absolute episode",
+        );
     });
 
     it("does not map canonical S03E05 when prior season data is missing", async () => {
@@ -284,11 +317,54 @@ describe("resolveEpisode", () => {
 
         vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 100)]);
 
-        const result = await localSync.resolveEpisode(makeShow(2, "Jujutsu Kaisen"), 3, 5, {
-            allowKnownAbsoluteSeasonMapping: false,
-        });
+        const result = await localSync.resolveEpisode(makeShow(2, "Jujutsu Kaisen"), 3, 5);
 
         expect(result).toBeNull();
+    });
+});
+
+describe("resolveTraktShow", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.resetModules();
+    });
+
+    it("falls back to title search when a stale IMDb ID resolves to a different show", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(2, "Jujutsu Kaisen") });
+        vi.mocked(localApi.searchByTitle).mockResolvedValue([{ show: makeShow(1, "Dr. Stone"), score: 99 }]);
+
+        const result = await localSync.resolveTraktShow({
+            media_title: "Dr.STONE.S04E30.Stone.to.Space",
+            series_title: "Dr. Stone",
+            season: 4,
+            episode: 30,
+            episode_title: "Stone to Space",
+            filename: "Dr.STONE.S04E30.Stone.to.Space.mkv",
+            pause: false,
+            percent_pos: 10,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 62568,
+            total_episodes: null,
+            adjusted_episode: null,
+            imdb_id: "tt12343534",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localApi.lookupById).toHaveBeenCalledWith("imdb", "tt12343534");
+        expect(localApi.searchByTitle).toHaveBeenCalledWith("Dr. Stone", "show");
+        expect(result?.show.title).toBe("Dr. Stone");
+        expect(result?.imdbId).toBeUndefined();
+        expect(localApi.logTraktDiagnostic).toHaveBeenCalledWith(
+            '[Trakt] IMDB ID tt12343534 resolved to "Jujutsu Kaisen" but expected "Dr. Stone" — falling back to title search',
+        );
     });
 });
 
@@ -470,7 +546,7 @@ describe("tryScrobble canonical Stremio identity", () => {
         );
     });
 
-    it("scrobbles Jujutsu Kaisen bridge canonical S03E05 as absolute episode 52 in one Trakt season", async () => {
+    it("allows previous-day Jujutsu Kaisen bridge context to use Trakt absolute episode mapping", async () => {
         const localApi = await import("../src/trakt-sync/api");
         const localAuth = await import("../src/trakt-sync/auth");
         const localContext = await import("../src/stremio-sync/context");
@@ -478,9 +554,80 @@ describe("tryScrobble canonical Stremio identity", () => {
 
         vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
         vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(2, "Jujutsu Kaisen") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([
+            makeAbsoluteNumberedSeasonBucket(1, 1, 24),
+            makeAbsoluteNumberedSeasonBucket(2, 25, 23, 1, 24),
+            makeAbsoluteNumberedSeasonBucket(3, 48, 24),
+        ]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:5",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 5,
+            episodesInSeason: null,
+            isFresh: false,
+            savedAtMs: Date.parse("2026-06-05T23:58:21.008Z"),
+        });
+
+        await localSync.tryScrobble({
+            media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E05",
+            series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+            season: null,
+            episode: 5,
+            episode_title: "Fever",
+            filename:
+                "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+            pause: false,
+            percent_pos: 13,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 57658,
+            total_episodes: null,
+            adjusted_episode: null,
+            imdb_id: "tt12343534",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localApi.scrobbleStart).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 1, number: 52, title: "Absolute 52" }),
+            expect.anything(),
+            13,
+        );
+        expect(localApi.logTraktDiagnostic).toHaveBeenCalledWith(
+            "[Trakt] Cumulative episode match: S03E05 → absolute ep 52 → S01E52",
+        );
+    });
+
+    it("scrobbles Jujutsu Kaisen bridge canonical S03E05 as absolute episode 52 in one Trakt season", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localTvdb = await import("../src/providers/tvdb");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(2, "Jujutsu Kaisen") });
         vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 80)]);
         vi.mocked(localApi.getHistory).mockResolvedValue([]);
         vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localTvdb.mapTvdbAiredEpisodeToAbsolute).mockResolvedValue({
+            seriesId: 10002,
+            season: 3,
+            episode: 5,
+            absoluteEpisode: 52,
+            seasonType: "official",
+            episodeId: 3005,
+        });
         vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue({
             libraryItemId: "mal:57658",
             seriesId: "mal:57658",
@@ -525,6 +672,140 @@ describe("tryScrobble canonical Stremio identity", () => {
             expect.objectContaining({ season: 1, number: 5 }),
             expect.anything(),
             expect.anything(),
+        );
+        expect(localTvdb.mapTvdbAiredEpisodeToAbsolute).toHaveBeenCalledWith(10002, 3, 5);
+    });
+
+    it("scrobbles auto-fetched Jujutsu Kaisen S03E08 as trusted TVDB absolute episode 55", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localTvdb = await import("../src/providers/tvdb");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(2, "Jujutsu Kaisen") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 80)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localTvdb.mapTvdbAiredEpisodeToAbsolute).mockResolvedValue({
+            seriesId: 10002,
+            season: 3,
+            episode: 8,
+            absoluteEpisode: 55,
+            seasonType: "official",
+            episodeId: 3008,
+        });
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:8",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 8,
+            episodesInSeason: null,
+        });
+
+        await localSync.tryScrobble({
+            media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E08",
+            series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+            season: null,
+            episode: 8,
+            episode_title: "Tokyo No. 1 Colony, Part 2",
+            filename: "Jujutsu.Kaisen.S03E08.1080p.WEB-DL.mkv",
+            path: "https://streams.example.test/jjk-s03e08.mkv",
+            pause: false,
+            percent_pos: 24,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 57658,
+            total_episodes: null,
+            adjusted_episode: null,
+            imdb_id: "tt12343534",
+            type: "series",
+            playlistPos: 1,
+            playlistCount: 3,
+        });
+
+        expect(localApi.scrobbleStart).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 1, number: 55 }),
+            expect.anything(),
+            24,
+        );
+        expect(localTvdb.mapTvdbAiredEpisodeToAbsolute).toHaveBeenCalledWith(10002, 3, 8);
+    });
+
+    it("maps explicit bridge S03E05 through trusted TVDB order after direct Trakt lookup fails", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localTvdb = await import("../src/providers/tvdb");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(2, "Jujutsu Kaisen") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 80)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localTvdb.mapTvdbAiredEpisodeToAbsolute).mockResolvedValue({
+            seriesId: 75299,
+            season: 3,
+            episode: 5,
+            absoluteEpisode: 52,
+            seasonType: "default",
+            episodeId: 3005,
+        });
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tvdb:75299",
+            seriesId: "tvdb:75299",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:5",
+            name: "JUJUTSU KAISEN",
+            type: "series",
+            season: 3,
+            episode: 5,
+            episodesInSeason: null,
+        });
+
+        await localSync.tryScrobble({
+            media_title: "JUJUTSU KAISEN S03E05 - Passion",
+            series_title: "JUJUTSU KAISEN",
+            season: 3,
+            episode: 5,
+            episode_title: "Passion",
+            filename: "JUJUTSU.KAISEN.S03E05.Passion.1080p.CR.WEB-DL.MULTi.AAC2.0.H.264-VARYG.mkv",
+            pause: false,
+            percent_pos: 24,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 57658,
+            total_episodes: null,
+            adjusted_episode: null,
+            imdb_id: "tt12343534",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localTvdb.mapTvdbAiredEpisodeToAbsolute).toHaveBeenCalledWith(75299, 3, 5);
+        expect(localApi.scrobbleStart).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 1, number: 52 }),
+            expect.anything(),
+            24,
+        );
+        expect(localApi.scrobbleStart).not.toHaveBeenCalledWith(
+            expect.objectContaining({ season: 1, number: 5 }),
+            expect.anything(),
+            expect.anything(),
+        );
+        expect(localApi.logTraktDiagnostic).toHaveBeenCalledWith(
+            "[Trakt] Cumulative episode match: S03E05 → absolute ep 52 → S01E52",
         );
     });
 
@@ -590,11 +871,20 @@ describe("tryScrobble canonical Stremio identity", () => {
         const localApi = await import("../src/trakt-sync/api");
         const localAuth = await import("../src/trakt-sync/auth");
         const localContext = await import("../src/stremio-sync/context");
+        const localTvdb = await import("../src/providers/tvdb");
         const localSync = await import("../src/trakt-sync/sync");
 
         vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
         vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(2, "Jujutsu Kaisen") });
         vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 100)]);
+        vi.mocked(localTvdb.mapTvdbAiredEpisodeToAbsolute).mockResolvedValue({
+            seriesId: 10002,
+            season: 3,
+            episode: 5,
+            absoluteEpisode: 52,
+            seasonType: "default",
+            episodeId: 3005,
+        });
         vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue(null);
 
         await localSync.tryScrobble({
@@ -620,6 +910,94 @@ describe("tryScrobble canonical Stremio identity", () => {
         });
 
         expect(localApi.scrobbleStart).not.toHaveBeenCalled();
+        expect(localTvdb.mapTvdbAiredEpisodeToAbsolute).not.toHaveBeenCalled();
+    });
+
+    it("does not scrobble Jujutsu Kaisen parser-only split arc E05 as Trakt S01E05", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(2, "Jujutsu Kaisen") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 80)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localApi.scrobbleStop).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue(null);
+
+        await localSync.tryScrobble({
+            media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - Fever",
+            series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+            season: null,
+            episode: 5,
+            episode_title: "Fever",
+            filename:
+                "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+            pause: false,
+            percent_pos: 81,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 57658,
+            total_episodes: null,
+            adjusted_episode: null,
+            imdb_id: "tt12343534",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localApi.scrobbleStart).not.toHaveBeenCalled();
+        expect(localApi.scrobbleStop).not.toHaveBeenCalled();
+        expect(localApi.logTraktDiagnostic).toHaveBeenCalledWith(
+            "[Trakt] Episode-only playback for Jujutsu Kaisen ep 5 is not trusted enough for absolute Trakt mapping; skipping scrobble.",
+        );
+        expect(localApi.logTraktDiagnostic).not.toHaveBeenCalledWith("[Trakt] Absolute episode match: ep 5 → S01E05");
+    });
+
+    it("preserves generic episode-only absolute filenames when title context is exact", async () => {
+        const localApi = await import("../src/trakt-sync/api");
+        const localAuth = await import("../src/trakt-sync/auth");
+        const localContext = await import("../src/stremio-sync/context");
+        const localSync = await import("../src/trakt-sync/sync");
+
+        vi.mocked(localAuth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(localApi.lookupById).mockResolvedValue({ show: makeShow(7, "Frieren") });
+        vi.mocked(localApi.getShowSeasons).mockResolvedValue([makeSeason(1, 28)]);
+        vi.mocked(localApi.getHistory).mockResolvedValue([]);
+        vi.mocked(localApi.scrobbleStart).mockResolvedValue(true);
+        vi.mocked(localContext.readStremioPlaybackContext).mockReturnValue(null);
+
+        await localSync.tryScrobble({
+            media_title: "Frieren - 05",
+            series_title: "Frieren",
+            season: null,
+            episode: 5,
+            episode_title: "Phantoms of the Dead",
+            filename: "Frieren - 05.mkv",
+            pause: false,
+            percent_pos: 24,
+            time_pos: 120,
+            duration: 1200,
+            artist: "N/A",
+            cover_image: null,
+            mal_id: 52991,
+            total_episodes: null,
+            adjusted_episode: null,
+            imdb_id: "tt22248376",
+            type: "series",
+            playlistPos: 0,
+            playlistCount: 1,
+        });
+
+        expect(localApi.scrobbleStart).toHaveBeenCalledWith(
+            expect.objectContaining({ season: 1, number: 5 }),
+            expect.anything(),
+            24,
+        );
     });
 
     it("uses deterministic split-part S04E30 without Stremio context", async () => {

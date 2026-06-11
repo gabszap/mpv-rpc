@@ -7,8 +7,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { config } from "../config";
 import type { MpvData } from "../mpv";
+import { mapTvdbAiredEpisodeToAbsolute } from "../providers/tvdb";
 import { readStremioPlaybackContext } from "../stremio-sync/context";
-import { getCanonicalEpisodePosition } from "../stremio-sync/identity";
+import { getCanonicalEpisodePosition, isPlaybackContextMatchingData } from "../stremio-sync/identity";
 import {
     getHistory,
     getShowSeasons,
@@ -316,17 +317,13 @@ export type SeasonEpisode = { season: number; episode: number };
 /** Minimal season metadata required to compute absolute episode positions. */
 export type SeasonInfo = { season: number; episodeCount: number };
 
-type AbsoluteSeasonCountRule = {
-    normalizedTitleIncludes: string;
-    seasonEpisodeCounts: readonly number[];
-};
+export type EpisodeResolutionSource = "playback" | "stremio-context" | "split-part-rule";
 
-const ABSOLUTE_SEASON_COUNT_RULES: AbsoluteSeasonCountRule[] = [
-    {
-        normalizedTitleIncludes: "jujutsu kaisen",
-        seasonEpisodeCounts: [24, 23, 24],
-    },
-];
+type EpisodePositionWithSource = {
+    season: number | null;
+    episode: number | null;
+    source: EpisodeResolutionSource;
+};
 
 function hasRegularEpisodeNumber(traktEpisode: TraktEpisode): boolean {
     return traktEpisode.season > 0 && Number.isInteger(traktEpisode.number) && traktEpisode.number > 0;
@@ -443,23 +440,6 @@ function mapSeasonEpisodeToSafeAbsolute(
     );
 }
 
-function mapKnownAbsoluteSeasonEpisode(
-    show: TraktShow,
-    current: SeasonEpisode,
-): { absoluteEpisode: number; seasonEpisode: string } | null {
-    const normalizedTitle = normalizeTitle(show.title);
-    const rule = ABSOLUTE_SEASON_COUNT_RULES.find((candidate) =>
-        normalizedTitle.includes(candidate.normalizedTitleIncludes),
-    );
-    if (!rule) return null;
-
-    const seasonInfos = rule.seasonEpisodeCounts.map((episodeCount, index) => ({
-        season: index + 1,
-        episodeCount,
-    }));
-    return mapSeasonEpisodeToAbsolute(current, seasonInfos);
-}
-
 function hasSingleRegularSeasonBucket(seasons: TraktSeasonEpisode[]): boolean {
     const regularSeasonNumbers = seasons
         .map((seasonData) => seasonData.number)
@@ -537,6 +517,143 @@ function resolveCumulativeAbsoluteEpisode(seasons: TraktSeasonEpisode[], absolut
     );
 }
 
+function readPositiveInteger(value: unknown): number | null {
+    return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function readProviderNumericId(value: string | null | undefined, provider: "tvdb"): number | null {
+    if (!value) {
+        return null;
+    }
+
+    const match = value.match(new RegExp(`(?:^|:)${provider}:(\\d+)(?::|$)`, "i"));
+    if (!match) {
+        return null;
+    }
+
+    return readPositiveInteger(Number.parseInt(match[1], 10));
+}
+
+function getTrustedTvdbSeriesId(show: TraktShow, options: ResolveEpisodeOptions): number | null {
+    return (
+        readPositiveInteger(options.tvdbSeriesId) ??
+        readProviderNumericId(options.stremioSeriesId, "tvdb") ??
+        readProviderNumericId(options.stremioLibraryItemId, "tvdb") ??
+        readPositiveInteger(show.ids.tvdb)
+    );
+}
+
+async function mapTrustedEpisodeToTvdbAbsolute(
+    show: TraktShow,
+    current: SeasonEpisode,
+    options: ResolveEpisodeOptions,
+): Promise<{ absoluteEpisode: number; seasonEpisode: string } | null> {
+    if (!options.allowTvdbAbsoluteMapping) {
+        return null;
+    }
+
+    const tvdbSeriesId = getTrustedTvdbSeriesId(show, options);
+    if (!tvdbSeriesId) {
+        logResolutionDiagnostic(
+            `[Trakt] TVDB order mapping skipped for ${show.title} S${pad2(current.season)}E${pad2(current.episode)}: missing TVDB series id`,
+        );
+        return null;
+    }
+
+    const mapping = await mapTvdbAiredEpisodeToAbsolute(tvdbSeriesId, current.season, current.episode);
+    if (!mapping) {
+        logResolutionDiagnostic(
+            `[Trakt] TVDB order mapping unavailable for ${show.title} S${pad2(current.season)}E${pad2(current.episode)}; not guessing absolute episode`,
+        );
+        return null;
+    }
+
+    return {
+        absoluteEpisode: mapping.absoluteEpisode,
+        seasonEpisode: `S${pad2(current.season)}E${pad2(current.episode)}`,
+    };
+}
+
+export type ResolveEpisodeOptions = {
+    allowTvdbAbsoluteMapping?: boolean;
+    allowEpisodeOnlyAbsoluteMapping?: boolean;
+    resolutionSource?: EpisodeResolutionSource;
+    tvdbSeriesId?: number | null;
+    stremioLibraryItemId?: string | null;
+    stremioSeriesId?: string | null;
+};
+
+function normalizeTitleForEpisodeOnlyMapping(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .replace(/\s+/g, " ");
+}
+
+function stripEpisodeOnlyMarkers(value: string): string {
+    return value
+        .replace(/\.[^.\\/]+$/, "")
+        .replace(/\[[^\]]*]/g, " ")
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/[Ss]\d{1,2}[\s._-]*[Ee]\d{1,4}.*/g, " ")
+        .replace(/\b[Ee][Pp]?\s*\d{1,4}\b.*/g, " ")
+        .replace(/[\s._-]+\d{1,4}\b.*/g, " ");
+}
+
+function isGenericEpisodeOnlyAbsolutePlayback(data: MpvData, show: TraktShow): boolean {
+    const normalizedShowTitle = normalizeTitleForEpisodeOnlyMapping(show.title);
+    if (!normalizedShowTitle) {
+        return false;
+    }
+
+    const titleCandidates = [data.series_title, data.media_title, data.filename];
+    return titleCandidates.some(
+        (candidate) => normalizeTitleForEpisodeOnlyMapping(stripEpisodeOnlyMarkers(candidate)) === normalizedShowTitle,
+    );
+}
+
+function canUseEpisodeOnlyAbsoluteMapping(
+    data: MpvData,
+    show: TraktShow,
+    canonicalPosition: EpisodePositionWithSource,
+): boolean {
+    if (canonicalPosition.season !== null) {
+        return false;
+    }
+
+    if (canonicalPosition.source !== "playback") {
+        return true;
+    }
+
+    return isGenericEpisodeOnlyAbsolutePlayback(data, show);
+}
+
+function canUseTvdbAbsoluteMapping(
+    data: MpvData,
+    playbackContext: ReturnType<typeof readStremioPlaybackContext>,
+    canonicalPosition: EpisodePositionWithSource,
+): boolean {
+    if (canonicalPosition.source !== "playback") {
+        return true;
+    }
+
+    if (canonicalPosition.season === null || canonicalPosition.episode === null) {
+        return false;
+    }
+
+    const tvdbSeriesId = readPositiveInteger((data as unknown as Record<string, unknown>).tvdb_id);
+    if (tvdbSeriesId) {
+        return true;
+    }
+
+    if (!playbackContext) {
+        return false;
+    }
+
+    return isPlaybackContextMatchingData(playbackContext, data);
+}
+
 /**
  * Resolve a season + episode pair to a Trakt episode object.
  *
@@ -553,7 +670,7 @@ export async function resolveEpisode(
     show: TraktShow,
     season: number | null,
     episode: number,
-    options: { allowKnownAbsoluteSeasonMapping?: boolean } = {},
+    options: ResolveEpisodeOptions = {},
 ): Promise<TraktEpisode | null> {
     if (episode == null) return null;
 
@@ -578,9 +695,9 @@ export async function resolveEpisode(
 
         const absoluteMapping =
             mapSeasonEpisodeToSafeAbsolute(seasons, { season, episode }) ??
-            (options.allowKnownAbsoluteSeasonMapping === false || !hasSingleRegularSeasonBucket(seasons)
-                ? null
-                : mapKnownAbsoluteSeasonEpisode(show, { season, episode }));
+            (hasSingleRegularSeasonBucket(seasons)
+                ? await mapTrustedEpisodeToTvdbAbsolute(show, { season, episode }, options)
+                : null);
         if (absoluteMapping) {
             const cumulativeEpisode = resolveCumulativeAbsoluteEpisode(seasons, absoluteMapping.absoluteEpisode);
             if (cumulativeEpisode) {
@@ -596,6 +713,16 @@ export async function resolveEpisode(
             season,
             episode,
             `[Trakt] Could not resolve ${show.title} S${pad2(season)}E${pad2(episode)} directly in Trakt seasons.`,
+        );
+        return null;
+    }
+
+    if (!options.allowEpisodeOnlyAbsoluteMapping) {
+        logUnresolvedEpisodeOnce(
+            show,
+            season,
+            episode,
+            `[Trakt] Episode-only playback for ${show.title} ep ${episode} is not trusted enough for absolute Trakt mapping; skipping scrobble.`,
         );
         return null;
     }
@@ -662,7 +789,8 @@ export async function tryScrobble(data: MpvData): Promise<void> {
         return;
     }
 
-    const canonicalPosition = getCanonicalEpisodePosition(readStremioPlaybackContext(), data);
+    const playbackContext = readStremioPlaybackContext(data);
+    const canonicalPosition = getCanonicalEpisodePosition(playbackContext, data);
 
     // 4. Must have an episode number
     const episodeNum = canonicalPosition.episode;
@@ -718,7 +846,12 @@ export async function tryScrobble(data: MpvData): Promise<void> {
     // 7. Resolve episode (cached)
     if (!currentEpisode) {
         const resolvedEp = await resolveEpisode(currentShow, seasonNum, episodeNum, {
-            allowKnownAbsoluteSeasonMapping: canonicalPosition.source !== "playback",
+            allowTvdbAbsoluteMapping: canUseTvdbAbsoluteMapping(data, playbackContext, canonicalPosition),
+            allowEpisodeOnlyAbsoluteMapping: canUseEpisodeOnlyAbsoluteMapping(data, currentShow, canonicalPosition),
+            resolutionSource: canonicalPosition.source,
+            stremioLibraryItemId: playbackContext?.libraryItemId,
+            stremioSeriesId: playbackContext?.seriesId,
+            tvdbSeriesId: (data as unknown as Record<string, number | undefined>).tvdb_id,
         });
         if (!resolvedEp) {
             logUnresolvedEpisodeOnce(
