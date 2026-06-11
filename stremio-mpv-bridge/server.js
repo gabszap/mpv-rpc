@@ -58,7 +58,7 @@ app.get("/health", (_req, res) => {
     res.json({ status: "ok", mpvPath: MPV_PATH });
 });
 
-const CONFIG_DIR = path.resolve(__dirname, "..", ".config");
+const CONFIG_DIR = path.resolve(process.env.STREMIO_MPV_CONFIG_DIR || path.resolve(__dirname, "..", ".config"));
 const CONFIG_PATH = path.join(CONFIG_DIR, ".stremio-mpv-config.json");
 const STREMIO_TOKEN_PATH = path.join(CONFIG_DIR, ".stremio_tokens.json");
 
@@ -68,7 +68,15 @@ const STREMIO_TOKEN_PATH = path.join(CONFIG_DIR, ".stremio_tokens.json");
 const CURRENT_CONFIG_VERSION = 2;
 
 const AUTO_FETCH_DEDUPE_TTL_MS = 10 * 60 * 1000;
+// Negative cache for explicitly completed stream lookups with no playable result.
+// Forty-five minutes is long enough to stop same-playback retry storms near the
+// latest released episode, but short enough for newly released episodes to be
+// retried later without a bridge restart.
+const AUTO_FETCH_NOT_FOUND_TTL_MS = 45 * 60 * 1000;
 const AUTO_FETCH_DEDUPE_MAX_ENTRIES = 500;
+// Per-appended-item playback contexts expire sooner than the primary Stremio metadata.
+const AUTO_FETCH_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
+const AUTO_FETCH_CONTEXT_MAX_ENTRIES = 100;
 const autoFetchEpisodeDedupe = new Map();
 
 function normalizeAutoFetchIdentity(imdbId, name) {
@@ -144,6 +152,14 @@ function completeAutoFetchEpisodeKey(key, now = Date.now()) {
     pruneAutoFetchDedupe(now);
 }
 
+function markAutoFetchEpisodeNotFound(key, now = Date.now()) {
+    autoFetchEpisodeDedupe.set(key, {
+        state: "not-found",
+        expiresAt: now + AUTO_FETCH_NOT_FOUND_TTL_MS,
+    });
+    pruneAutoFetchDedupe(now);
+}
+
 function releaseAutoFetchEpisodeKey(key) {
     if (getAutoFetchEpisodeStatus(key) !== "in-flight") {
         return;
@@ -154,6 +170,253 @@ function releaseAutoFetchEpisodeKey(key) {
 
 function resetAutoFetchDedupeForTests() {
     autoFetchEpisodeDedupe.clear();
+}
+
+function isPlainObject(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNonEmptyString(value) {
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const trimmedValue = value.trim();
+    return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function readPositiveIntegerValue(value) {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        return null;
+    }
+
+    return value;
+}
+
+function normalizeAutoFetchedPlaybackIdentifier(value) {
+    const identifier = readNonEmptyString(value);
+    return identifier ? identifier : null;
+}
+
+function hashAutoFetchedPlaybackIdentifier(value) {
+    const identifier = normalizeAutoFetchedPlaybackIdentifier(value);
+    if (!identifier) {
+        return null;
+    }
+
+    return crypto.createHash("sha256").update(identifier).digest("hex");
+}
+
+function normalizeAutoFetchedTitleKey(value) {
+    const title = readNonEmptyString(value);
+    if (!title) {
+        return null;
+    }
+
+    return title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .replace(/\s+/g, " ");
+}
+
+function buildAutoFetchedPlaybackMatchKeys(url, title) {
+    const keys = new Set();
+    const urlHash = hashAutoFetchedPlaybackIdentifier(url);
+    if (urlHash) {
+        keys.add(`url:${urlHash}`);
+    }
+
+    const urlValue = readNonEmptyString(url);
+    if (urlValue) {
+        try {
+            const decodedUrlHash = hashAutoFetchedPlaybackIdentifier(decodeURIComponent(urlValue));
+            if (decodedUrlHash) {
+                keys.add(`url:${decodedUrlHash}`);
+            }
+        } catch (_) {
+            // Invalid percent-encoding only means there is no decoded alias.
+        }
+    }
+
+    const titleKey = normalizeAutoFetchedTitleKey(title);
+    const titleHash = titleKey ? hashAutoFetchedPlaybackIdentifier(titleKey) : null;
+    if (titleHash) {
+        keys.add(`title:${titleHash}`);
+    }
+
+    return [...keys];
+}
+
+function readAutoFetchedContextSavedAtMs(entry) {
+    if (!isPlainObject(entry)) {
+        return null;
+    }
+
+    const savedAt = readNonEmptyString(entry.savedAt);
+    if (!savedAt) {
+        return null;
+    }
+
+    const savedAtMs = Date.parse(savedAt);
+    return Number.isNaN(savedAtMs) ? null : savedAtMs;
+}
+
+function pruneAutoFetchedPlaybackContexts(rawContexts, now = Date.now()) {
+    if (!isPlainObject(rawContexts)) {
+        return {};
+    }
+
+    const freshEntries = Object.entries(rawContexts)
+        .filter(([key, entry]) => {
+            const savedAtMs = readAutoFetchedContextSavedAtMs(entry);
+            return typeof key === "string" && savedAtMs !== null && now - savedAtMs <= AUTO_FETCH_CONTEXT_TTL_MS;
+        })
+        .sort(([, left], [, right]) => {
+            const leftSavedAtMs = readAutoFetchedContextSavedAtMs(left) ?? 0;
+            const rightSavedAtMs = readAutoFetchedContextSavedAtMs(right) ?? 0;
+            return rightSavedAtMs - leftSavedAtMs;
+        })
+        .slice(0, AUTO_FETCH_CONTEXT_MAX_ENTRIES);
+
+    return Object.fromEntries(freshEntries);
+}
+
+function parseCanonicalSeriesVideoId(value) {
+    const videoId = readNonEmptyString(value);
+    if (!videoId) {
+        return null;
+    }
+
+    const match = videoId.match(/^(tt\d+):(\d+):(\d+)$/);
+    if (!match) {
+        return null;
+    }
+
+    const season = Number.parseInt(match[2], 10);
+    const episode = Number.parseInt(match[3], 10);
+    if (!Number.isInteger(season) || season < 1 || !Number.isInteger(episode) || episode < 1) {
+        return null;
+    }
+
+    return { imdbId: match[1], season, episode };
+}
+
+function buildTargetAutoFetchedVideoId(sourceContext, item, target) {
+    const itemVideoId = readNonEmptyString(item.videoId);
+    const itemCanonicalVideoId = parseCanonicalSeriesVideoId(itemVideoId);
+    if (itemCanonicalVideoId) {
+        const matchesTarget =
+            itemCanonicalVideoId.season === target.season && itemCanonicalVideoId.episode === target.episode;
+        const matchesImdb = !target.imdbId || itemCanonicalVideoId.imdbId === target.imdbId;
+        if (matchesTarget && matchesImdb) {
+            return itemVideoId;
+        }
+
+        if (target.imdbId && itemCanonicalVideoId.imdbId === target.imdbId) {
+            return `${target.imdbId}:${target.season}:${target.episode}`;
+        }
+
+        return null;
+    }
+
+    const sourceType = readNonEmptyString(sourceContext.type) ?? "series";
+    if (sourceType !== "series") {
+        return itemVideoId ?? null;
+    }
+
+    if (target.imdbId) {
+        return `${target.imdbId}:${target.season}:${target.episode}`;
+    }
+
+    const sourceVideoId = parseCanonicalSeriesVideoId(sourceContext.videoId);
+    if (!sourceVideoId) {
+        return itemVideoId ?? null;
+    }
+
+    return `${sourceVideoId.imdbId}:${target.season}:${target.episode}`;
+}
+
+function buildAutoFetchedPlaybackContext(sourceContext, item) {
+    if (!isPlainObject(sourceContext) || !isPlainObject(item)) {
+        return null;
+    }
+
+    const libraryItemId =
+        readNonEmptyString(sourceContext.libraryItemId) ??
+        readNonEmptyString(sourceContext.seriesId) ??
+        readNonEmptyString(sourceContext.imdbId);
+    if (!libraryItemId) {
+        return null;
+    }
+
+    const season = readPositiveIntegerValue(item.season);
+    const episode = readPositiveIntegerValue(item.episode);
+    if (!season || !episode) {
+        return null;
+    }
+
+    const imdbId = readNonEmptyString(sourceContext.imdbId);
+    const realImdbId = imdbId && /^tt\d+$/.test(imdbId) ? imdbId : null;
+    const videoId = buildTargetAutoFetchedVideoId(sourceContext, item, {
+        imdbId: realImdbId,
+        season,
+        episode,
+    });
+    const context = {
+        libraryItemId,
+        seriesId: readNonEmptyString(sourceContext.seriesId) ?? libraryItemId,
+        imdbId: realImdbId,
+        videoId,
+        name: readNonEmptyString(sourceContext.name),
+        episodeTitle: readNonEmptyString(item.title),
+        type: readNonEmptyString(sourceContext.type) ?? "series",
+        season,
+        episode,
+        episodesInSeason: readPositiveIntegerValue(sourceContext.episodesInSeason),
+    };
+
+    const sanitizedContext = sanitizeStremioContext(context);
+    return sanitizedContext.error ? null : sanitizedContext.value;
+}
+
+function upsertAutoFetchedPlaybackContexts(config, sourceContext, items, now = Date.now()) {
+    const nextConfig = isPlainObject(config) ? { ...config } : {};
+    const contexts = pruneAutoFetchedPlaybackContexts(nextConfig.autoFetchedPlaybackContexts, now);
+
+    if (!Array.isArray(items) || items.length === 0) {
+        nextConfig.autoFetchedPlaybackContexts = contexts;
+        return nextConfig;
+    }
+
+    for (const item of items) {
+        const context = buildAutoFetchedPlaybackContext(sourceContext, item);
+        if (!context) {
+            continue;
+        }
+
+        const titleKey = normalizeAutoFetchedTitleKey(item.title);
+        for (const matchKey of buildAutoFetchedPlaybackMatchKeys(item.url, item.title)) {
+            contexts[matchKey] = {
+                ...context,
+                matchKey,
+                titleKey,
+            };
+        }
+    }
+
+    nextConfig.autoFetchedPlaybackContexts = pruneAutoFetchedPlaybackContexts(contexts, now);
+    return nextConfig;
+}
+
+function saveAutoFetchedPlaybackContexts(sourceContext, items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return;
+    }
+
+    const existing = readConfig();
+    const updated = upsertAutoFetchedPlaybackContexts(existing, sourceContext, items);
+    writeConfig(updated);
 }
 
 function readEpisodeKeyFromPlaylistValue(value) {
@@ -367,6 +630,10 @@ function normalizeBridgeConfig(config) {
         ...(sanitized.stremioMeta && typeof sanitized.stremioMeta === "object"
             ? { stremioMeta: sanitized.stremioMeta }
             : {}),
+        ...(() => {
+            const contexts = pruneAutoFetchedPlaybackContexts(sanitized.autoFetchedPlaybackContexts);
+            return Object.keys(contexts).length > 0 ? { autoFetchedPlaybackContexts: contexts } : {};
+        })(),
     };
 }
 
@@ -411,9 +678,9 @@ function readConfig() {
             } catch (_) {
                 // Best effort only — fall through and return the in-memory migration.
             }
-            return migrated;
+            return normalizeBridgeConfig(migrated);
         }
-        return parsed;
+        return normalizeBridgeConfig(parsed);
     } catch (_) {
         return {};
     }
@@ -483,6 +750,30 @@ function validateProvider(p) {
     if (typeof p.url !== "string") return "provider.url must be a string";
     if (typeof p.enabled !== "boolean") return "provider.enabled must be a boolean";
     return null;
+}
+
+function readAutoFetchRequestProviders(body) {
+    if (!Array.isArray(body.providers)) {
+        return null;
+    }
+
+    const validProviders = body.providers.filter((provider) => validateProvider(provider) === null);
+    const hasEnabledProvider = validProviders.some((provider) => provider.enabled && readNonEmptyString(provider.url));
+    return hasEnabledProvider ? validProviders : null;
+}
+
+function mergeAutoFetchRequestConfig(savedConfig, body) {
+    const normalizedConfig = normalizeBridgeConfig(savedConfig);
+    const requestProviders = readAutoFetchRequestProviders(body);
+
+    if (!requestProviders) {
+        return normalizedConfig;
+    }
+
+    return {
+        ...normalizedConfig,
+        providers: requestProviders,
+    };
 }
 
 function isConfigFieldType(value, expectedType) {
@@ -851,6 +1142,45 @@ async function httpGetWithRetry(url, { maxRetries = 2, delayMs = 1000, timeoutMs
     return null;
 }
 
+async function httpGetStreamPayload(url, { maxRetries = 2, delayMs = 1000, timeoutMs = 25000 } = {}) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (attempt > 0) {
+            console.log(`[MPV Bridge] Retrying GET ${url} (attempt ${attempt + 1}/${maxRetries + 1})...`);
+            await new Promise((r) => setTimeout(r, delayMs));
+        }
+
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+            const response = await fetch(url, {
+                signal: controller.signal,
+                headers: { Accept: "application/json" },
+            });
+
+            clearTimeout(timer);
+
+            if (response.status === 200) {
+                return { completed: true, data: await response.json() };
+            }
+
+            if (response.status === 404) {
+                console.log(`[MPV Bridge] GET ${url} returned status 404`);
+                return { completed: true, data: null };
+            }
+
+            console.log(`[MPV Bridge] GET ${url} returned status ${response.status}`);
+        } catch (err) {
+            console.log(`[MPV Bridge] GET ${url} failed: ${err.message}`);
+            if (attempt === maxRetries) {
+                return { completed: false, data: null };
+            }
+        }
+    }
+
+    return { completed: false, data: null };
+}
+
 /**
  * Fetch streams from a Stremio addon provider for a given episode.
  * Handles Kitsu IDs (kitsu:{id}:{episode}) and standard IMDb IDs.
@@ -861,7 +1191,12 @@ async function fetchStreams(baseUrl, id, season, episode) {
         ? `${baseUrl}/stream/series/${id}:${episode}.json`
         : `${baseUrl}/stream/series/${id}:${season}:${episode}.json`;
 
-    const data = await httpGetWithRetry(url, { maxRetries: 2, delayMs: 1000, timeoutMs: 25000 });
+    const result = await httpGetStreamPayload(url, { maxRetries: 2, delayMs: 1000, timeoutMs: 25000 });
+    if (!result.completed) {
+        return null;
+    }
+
+    const data = result.data;
     return data?.streams ? data.streams : [];
 }
 
@@ -1169,17 +1504,32 @@ async function showMpvMessage(text, duration = 3000) {
  * Fetches metadata from providers to discover episode list,
  * then tries to find streams for each next episode.
  */
-async function collectNextEpisodes(config, imdbId, name, season, episode, extraEpisodes) {
+async function collectNextEpisodes(
+    config,
+    imdbId,
+    name,
+    season,
+    episode,
+    extraEpisodes,
+    currentPlaylistOverride = undefined,
+) {
     const providers = config.providers || [];
     const enabledProviders = providers.filter((p) => p.enabled && p.url);
 
     if (enabledProviders.length === 0) {
         console.log("[MPV Bridge] No enabled providers for auto-fetch");
-        return { items: [], skippedInFlight: 0, skippedCompleted: 0, skippedPlaylist: 0 };
+        return {
+            items: [],
+            skippedInFlight: 0,
+            skippedCompleted: 0,
+            skippedNotFound: 0,
+            skippedPlaylist: 0,
+            newlyNotFound: 0,
+        };
     }
 
     // Get current MPV playlist to skip already-present episodes
-    const currentPlaylist = await getMpvPlaylist();
+    const currentPlaylist = currentPlaylistOverride ?? (await getMpvPlaylist());
     const existingTitles = new Set();
     const existingEpisodeKeys = new Set();
     if (currentPlaylist && Array.isArray(currentPlaylist)) {
@@ -1243,7 +1593,9 @@ async function collectNextEpisodes(config, imdbId, name, season, episode, extraE
     const items = [];
     let skippedInFlight = 0;
     let skippedCompleted = 0;
+    let skippedNotFound = 0;
     let skippedPlaylist = 0;
+    let newlyNotFound = 0;
     // Target dedupe: track SxxExx keys we've already added in THIS request so
     // that two concurrent auto-fetch calls (or a single call whose response
     // includes the same target twice) cannot both append the same episode.
@@ -1275,6 +1627,8 @@ async function collectNextEpisodes(config, imdbId, name, season, episode, extraE
                 skippedInFlight++;
             } else if (status === "completed") {
                 skippedCompleted++;
+            } else if (status === "not-found") {
+                skippedNotFound++;
             }
             continue;
         }
@@ -1287,9 +1641,20 @@ async function collectNextEpisodes(config, imdbId, name, season, episode, extraE
         }
 
         let found = false;
+        let completedProviderLookups = 0;
+        let failedProviderLookups = 0;
         for (const p of enabledProviders) {
             console.log(`[MPV Bridge] Auto-fetch: Trying ${p.name || p.id} for ${epKey}...`);
             const streams = await fetchStreams(p.url, imdbId, ep.season, ep.episode);
+            if (streams === null) {
+                failedProviderLookups++;
+                console.log(
+                    `[MPV Bridge] Auto-fetch: ${epKey} lookup failed on ${p.name || p.id}; target remains retryable`,
+                );
+                continue;
+            }
+
+            completedProviderLookups++;
             const streamItem = findBestStream(streams, config);
             if (streamItem) {
                 // Check if already in MPV playlist
@@ -1317,12 +1682,18 @@ async function collectNextEpisodes(config, imdbId, name, season, episode, extraE
         }
 
         if (!found) {
-            releaseAutoFetchEpisodeKey(dedupeKey);
-            console.log(`[MPV Bridge] Auto-fetch: ${epKey} not found on any provider`);
+            if (completedProviderLookups > 0 && failedProviderLookups === 0) {
+                markAutoFetchEpisodeNotFound(dedupeKey);
+                newlyNotFound++;
+                console.log(`[MPV Bridge] Auto-fetch: ${epKey} not found on any provider; cached for retry later`);
+            } else {
+                releaseAutoFetchEpisodeKey(dedupeKey);
+                console.log(`[MPV Bridge] Auto-fetch: ${epKey} lookup incomplete; target remains retryable`);
+            }
         }
     }
 
-    return { items, skippedInFlight, skippedCompleted, skippedPlaylist };
+    return { items, skippedInFlight, skippedCompleted, skippedNotFound, skippedPlaylist, newlyNotFound };
 }
 
 /**
@@ -1370,13 +1741,26 @@ app.post("/auto-fetch", async (req, res) => {
         extraEpisodes = Math.max(1, Math.min(25, body.extraEpisodes));
     }
 
-    const config = readConfig();
-    if (config.autoFetch?.enabled === false) {
+    const savedConfig = readConfig();
+    if (savedConfig.autoFetch?.enabled === false) {
         console.log("[MPV Bridge] Auto-fetch disabled by config");
         return res.json({ success: true, added: 0, message: "Auto-fetch disabled by config" });
     }
 
+    const config = mergeAutoFetchRequestConfig(savedConfig, body);
     const { imdbId, name, season, episode } = body;
+    const sourceStremioContext = {
+        ...(isPlainObject(savedConfig.stremioMeta) ? savedConfig.stremioMeta : {}),
+        libraryItemId:
+            readNonEmptyString(body.libraryItemId) ?? readNonEmptyString(savedConfig.stremioMeta?.libraryItemId),
+        seriesId: readNonEmptyString(body.seriesId) ?? readNonEmptyString(savedConfig.stremioMeta?.seriesId),
+        imdbId,
+        name,
+        type: body.type,
+        episodesInSeason:
+            readPositiveIntegerValue(body.episodesInSeason) ??
+            readPositiveIntegerValue(savedConfig.stremioMeta?.episodesInSeason),
+    };
 
     console.log(`[MPV Bridge] Auto-fetch: ${name} S${season}E${episode} (+${extraEpisodes} episodes)`);
 
@@ -1393,7 +1777,39 @@ app.post("/auto-fetch", async (req, res) => {
                 added: 0,
                 skippedInFlight: autoFetchResult.skippedInFlight,
                 skippedCompleted: autoFetchResult.skippedCompleted,
+                skippedNotFound: autoFetchResult.skippedNotFound,
                 skippedPlaylist: autoFetchResult.skippedPlaylist,
+            });
+        }
+
+        if (autoFetchResult.skippedNotFound > 0 && autoFetchResult.newlyNotFound === 0) {
+            console.log("[MPV Bridge] Auto-fetch: Target episodes were recently confirmed unavailable");
+            return res.json({
+                success: true,
+                status: "no_new_episodes_recently",
+                added: 0,
+                message: "Target episodes were recently confirmed unavailable; retry after negative-cache expiry",
+                skippedInFlight: 0,
+                skippedCompleted: autoFetchResult.skippedCompleted,
+                skippedNotFound: autoFetchResult.skippedNotFound,
+                skippedPlaylist: autoFetchResult.skippedPlaylist,
+                retryAfterMs: AUTO_FETCH_NOT_FOUND_TTL_MS,
+            });
+        }
+
+        if (autoFetchResult.newlyNotFound > 0) {
+            console.log("[MPV Bridge] Auto-fetch: No released episodes found");
+            return res.json({
+                success: true,
+                status: "no_released_episodes",
+                added: 0,
+                message: "No released episodes found on enabled providers; cached for retry later",
+                skippedInFlight: 0,
+                skippedCompleted: autoFetchResult.skippedCompleted,
+                skippedNotFound: autoFetchResult.skippedNotFound,
+                skippedPlaylist: autoFetchResult.skippedPlaylist,
+                newlyNotFound: autoFetchResult.newlyNotFound,
+                retryAfterMs: AUTO_FETCH_NOT_FOUND_TTL_MS,
             });
         }
 
@@ -1404,17 +1820,20 @@ app.post("/auto-fetch", async (req, res) => {
             added: 0,
             skippedInFlight: 0,
             skippedCompleted: autoFetchResult.skippedCompleted,
+            skippedNotFound: autoFetchResult.skippedNotFound,
             skippedPlaylist: autoFetchResult.skippedPlaylist,
         });
     }
 
     // Append each episode to MPV via IPC
     let added = 0;
+    const appendedItems = [];
     for (const item of nextItems) {
         const success = await appendToMpvPlaylist(item.url);
         if (success) {
             console.log(`[MPV Bridge] Auto-fetch: Appended S${item.season}E${item.episode}`);
             completeAutoFetchEpisodeKey(item.dedupeKey);
+            appendedItems.push(item);
             added++;
         } else {
             console.log(`[MPV Bridge] Auto-fetch: Failed to append S${item.season}E${item.episode}`);
@@ -1429,6 +1848,11 @@ app.post("/auto-fetch", async (req, res) => {
     console.log(`[MPV Bridge] Auto-fetch: Successfully appended ${added}/${nextItems.length} episode(s)`);
 
     if (added > 0) {
+        try {
+            saveAutoFetchedPlaybackContexts(sourceStremioContext, appendedItems);
+        } catch (contextErr) {
+            console.error("[MPV Bridge] Failed to save auto-fetched playback context:", contextErr.message);
+        }
         await showMpvMessage(`Auto-fetch: ${added} episode(s) added`, 5000);
     }
 
@@ -1436,16 +1860,26 @@ app.post("/auto-fetch", async (req, res) => {
 });
 
 module.exports = {
+    app,
     _autoFetchDedupeForTests: {
+        AUTO_FETCH_NOT_FOUND_TTL_MS,
         buildAutoFetchEpisodeKey,
+        collectNextEpisodes,
         completeAutoFetchEpisodeKey,
         getAutoFetchEpisodeStatus,
         isPlayableStremioStream,
         findBestStream,
+        markAutoFetchEpisodeNotFound,
         readEpisodeKeyFromPlaylistValue,
         releaseAutoFetchEpisodeKey,
         reserveAutoFetchEpisodeKey,
         resetAutoFetchDedupeForTests,
+        AUTO_FETCH_CONTEXT_MAX_ENTRIES,
+        AUTO_FETCH_CONTEXT_TTL_MS,
+        buildAutoFetchedPlaybackMatchKeys,
+        pruneAutoFetchedPlaybackContexts,
+        upsertAutoFetchedPlaybackContexts,
+        mergeAutoFetchRequestConfig,
     },
 };
 

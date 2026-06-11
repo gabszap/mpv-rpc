@@ -32,6 +32,8 @@ vi.mock("node:fs", async () => {
     };
 });
 
+const ENABLED_PROVIDERS = [{ id: "torrentio", name: "Torrentio", url: "https://provider.example", enabled: true }];
+
 const SHARED_CONFIG = {
     stremioMeta: {
         imdbId: "tt1234567",
@@ -41,6 +43,7 @@ const SHARED_CONFIG = {
         type: "series",
     },
     extraEpisodes: 2,
+    providers: ENABLED_PROVIDERS,
 };
 
 function makeMpvData(overrides: Partial<MpvData> = {}): MpvData {
@@ -159,6 +162,18 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         expect(autoFetchCall).toBeDefined();
     });
 
+    it("sends configured providers with the auto-fetch request", async () => {
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(makeMpvData());
+
+        const autoFetchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/auto-fetch"));
+        expect(autoFetchCall).toBeDefined();
+        const request = autoFetchCall?.[1] as RequestInit;
+        expect(JSON.parse(String(request.body))).toMatchObject({
+            providers: ENABLED_PROVIDERS,
+        });
+    });
+
     it("logs bridge in-progress responses without saying zero episodes were added", async () => {
         const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
         fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
@@ -177,6 +192,62 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
 
         expect(consoleLogSpy).toHaveBeenCalledWith(
             "[AutoFetch] Auto-fetch already in progress for 2 target episode(s).",
+        );
+        expect(consoleLogSpy).not.toHaveBeenCalledWith("[AutoFetch] Added 0 episode(s) to playlist.");
+        consoleLogSpy.mockRestore();
+    });
+
+    it("logs recently missing auto-fetch targets without saying zero episodes were added", async () => {
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input.toString();
+            if (url.endsWith("/health")) {
+                return mockJsonResponse({ status: "ok" });
+            }
+            if (url.endsWith("/auto-fetch")) {
+                return mockJsonResponse({
+                    success: true,
+                    status: "no_new_episodes_recently",
+                    added: 0,
+                    skippedNotFound: 2,
+                });
+            }
+            return mockJsonResponse({}, 404);
+        });
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(makeMpvData());
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            "[AutoFetch] No new released episodes recently; bridge skipped 2 cached missing target(s).",
+        );
+        expect(consoleLogSpy).not.toHaveBeenCalledWith("[AutoFetch] Added 0 episode(s) to playlist.");
+        consoleLogSpy.mockRestore();
+    });
+
+    it("logs newly confirmed unreleased auto-fetch targets without saying zero episodes were added", async () => {
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input.toString();
+            if (url.endsWith("/health")) {
+                return mockJsonResponse({ status: "ok" });
+            }
+            if (url.endsWith("/auto-fetch")) {
+                return mockJsonResponse({
+                    success: true,
+                    status: "no_released_episodes",
+                    added: 0,
+                    newlyNotFound: 2,
+                });
+            }
+            return mockJsonResponse({}, 404);
+        });
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(makeMpvData());
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            "[AutoFetch] No released episodes found on enabled providers; cached 2 missing target(s) for retry later.",
         );
         expect(consoleLogSpy).not.toHaveBeenCalledWith("[AutoFetch] Added 0 episode(s) to playlist.");
         consoleLogSpy.mockRestore();

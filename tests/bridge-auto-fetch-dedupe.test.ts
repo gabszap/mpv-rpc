@@ -1,13 +1,96 @@
-import { afterEach, describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import type { Server } from "node:http";
+import * as http from "node:http";
+import type { AddressInfo } from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
+const originalBridgeConfigDir = process.env.STREMIO_MPV_CONFIG_DIR;
+const bridgeConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-auto-fetch-test-"));
+process.env.STREMIO_MPV_CONFIG_DIR = bridgeConfigDir;
 process.env.NODE_ENV = "test";
 
 const bridgeModule = await import("../stremio-mpv-bridge/server.js");
-const { _autoFetchDedupeForTests } = bridgeModule.default ?? bridgeModule;
+const { app, _autoFetchDedupeForTests } = bridgeModule.default ?? bridgeModule;
+
+function clearBridgeConfigDir(): void {
+    for (const entry of fs.readdirSync(bridgeConfigDir)) {
+        fs.rmSync(path.join(bridgeConfigDir, entry), { recursive: true, force: true });
+    }
+}
+
+function listenBridgeApp(): Promise<Server> {
+    return new Promise((resolve) => {
+        const server = app.listen(0, "127.0.0.1", () => resolve(server));
+    });
+}
+
+function closeServer(server: Server): Promise<void> {
+    return new Promise((resolve, reject) => {
+        server.close((error) => {
+            if (error) {
+                reject(error);
+                return;
+            }
+
+            resolve();
+        });
+    });
+}
+
+function postJson(server: Server, endpoint: string, payload: unknown): Promise<{ statusCode: number; body: unknown }> {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+        throw new Error("Bridge test server did not expose a TCP address");
+    }
+
+    const requestBody = JSON.stringify(payload);
+    const options: http.RequestOptions = {
+        hostname: "127.0.0.1",
+        port: (address as AddressInfo).port,
+        path: endpoint,
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(requestBody),
+        },
+    };
+
+    return new Promise((resolve, reject) => {
+        const request = http.request(options, (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.on("end", () => {
+                const rawBody = Buffer.concat(chunks).toString("utf-8");
+                const parsedBody = rawBody ? JSON.parse(rawBody) : null;
+                resolve({ statusCode: response.statusCode ?? 0, body: parsedBody });
+            });
+        });
+
+        request.on("error", reject);
+        request.write(requestBody);
+        request.end();
+    });
+}
 
 describe("bridge auto-fetch episode dedupe", () => {
     afterEach(() => {
         _autoFetchDedupeForTests.resetAutoFetchDedupeForTests();
+        clearBridgeConfigDir();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+    });
+
+    afterAll(() => {
+        fs.rmSync(bridgeConfigDir, { recursive: true, force: true });
+        if (originalBridgeConfigDir === undefined) {
+            delete process.env.STREMIO_MPV_CONFIG_DIR;
+            return;
+        }
+
+        process.env.STREMIO_MPV_CONFIG_DIR = originalBridgeConfigDir;
     });
 
     it("reserves overlapping target episodes and releases failed lookups for later retries", () => {
@@ -31,6 +114,178 @@ describe("bridge auto-fetch episode dedupe", () => {
 
         expect(_autoFetchDedupeForTests.getAutoFetchEpisodeStatus(key)).toBe("completed");
         expect(_autoFetchDedupeForTests.reserveAutoFetchEpisodeKey(key)).toBe(false);
+    });
+
+    it("caches completed not-found lookups so repeated requests skip stream provider calls", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/")) {
+                return Response.json({
+                    meta: {
+                        videos: [{ id: "tt9679542:4:35" }, { id: "tt9679542:4:36" }],
+                    },
+                });
+            }
+
+            return Response.json({ streams: [] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "AIOStreams" }],
+        };
+
+        const first = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            34,
+            2,
+            [],
+        );
+        const streamCallsAfterFirstRequest = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+
+        const second = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            34,
+            2,
+            [],
+        );
+        const streamCallsAfterSecondRequest = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+
+        expect(first).toMatchObject({ items: [], newlyNotFound: 2, skippedNotFound: 0 });
+        expect(second).toMatchObject({ items: [], newlyNotFound: 0, skippedNotFound: 2 });
+        expect(streamCallsAfterFirstRequest).toHaveLength(2);
+        expect(streamCallsAfterSecondRequest).toHaveLength(2);
+    });
+
+    it("expires not-found entries so newly released episodes can be retried later", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-09T22:00:00.000Z"));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/")) {
+                return Response.json({ meta: { videos: [{ id: "tt9679542:4:35" }] } });
+            }
+
+            return Response.json({ streams: [] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "AIOStreams" }],
+        };
+
+        await _autoFetchDedupeForTests.collectNextEpisodes(config, "tt9679542", "Dr. Stone", 4, 34, 1, []);
+        vi.setSystemTime(new Date(Date.now() + _autoFetchDedupeForTests.AUTO_FETCH_NOT_FOUND_TTL_MS + 1));
+        await _autoFetchDedupeForTests.collectNextEpisodes(config, "tt9679542", "Dr. Stone", 4, 34, 1, []);
+
+        const streamCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+        expect(streamCalls).toHaveLength(2);
+    });
+
+    it("does not cache incomplete stream lookups as not found", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/")) {
+                return Response.json({ meta: { videos: [{ id: "tt9679542:4:35" }] } });
+            }
+
+            return new Response(JSON.stringify({ error: "gateway timeout" }), { status: 504 });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "AIOStreams" }],
+        };
+        const key = _autoFetchDedupeForTests.buildAutoFetchEpisodeKey("tt9679542", "Dr. Stone", 4, 35);
+
+        const result = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            34,
+            1,
+            [],
+        );
+
+        expect(result).toMatchObject({ items: [], newlyNotFound: 0, skippedNotFound: 0 });
+        expect(_autoFetchDedupeForTests.getAutoFetchEpisodeStatus(key)).toBeNull();
+    });
+
+    it("uses saved normalized providers for partial /auto-fetch playback context requests", async () => {
+        const server = await listenBridgeApp();
+        try {
+            const configResponse = await postJson(server, "/config", {
+                providers: [{ id: "torrentio", name: "Torrentio", url: "https://provider.example", enabled: true }],
+                autoFetch: { enabled: true },
+                extraEpisodes: 1,
+                iconMode: "default",
+                playlistMode: "batch",
+                mpvShortcut: "v",
+                preferredGroup: "",
+                preferredQuality: "",
+                mpvArgsStr: "",
+                debug: false,
+            });
+            expect(configResponse.statusCode).toBe(200);
+
+            const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+                const url = String(input);
+                if (url.includes("/meta/series/")) {
+                    return Response.json({ meta: { videos: [{ id: "tt1234567:1:2" }] } });
+                }
+
+                if (url.includes("/stream/")) {
+                    return Response.json({ streams: [] });
+                }
+
+                return Response.json({});
+            });
+            vi.stubGlobal("fetch", fetchMock);
+
+            const autoFetchResponse = await postJson(server, "/auto-fetch", {
+                imdbId: "tt1234567",
+                name: "Test Show",
+                season: 1,
+                episode: 1,
+                type: "series",
+                extraEpisodes: 1,
+                providers: [],
+            });
+
+            expect(autoFetchResponse.statusCode).toBe(200);
+            expect(autoFetchResponse.body).toMatchObject({ success: true, status: "no_released_episodes" });
+            expect(
+                fetchMock.mock.calls.some(([url]) => String(url).includes("https://provider.example/meta/series/")),
+            ).toBe(true);
+            expect(fetchMock.mock.calls.some(([url]) => String(url).includes("https://provider.example/stream/"))).toBe(
+                true,
+            );
+        } finally {
+            await closeServer(server);
+        }
+    });
+
+    it("keeps invalid provider config rejected by /config", async () => {
+        const server = await listenBridgeApp();
+        try {
+            const response = await postJson(server, "/config", {
+                providers: [{ id: "broken", name: "Broken", url: 123, enabled: true }],
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(response.body).toMatchObject({
+                error: "Invalid provider at index 0: provider.url must be a string",
+            });
+        } finally {
+            await closeServer(server);
+        }
     });
 
     it("detects season/episode markers from playlist filenames and titles", () => {
@@ -74,5 +329,93 @@ describe("bridge auto-fetch episode dedupe", () => {
                 title: "Fansub release mirrored on GitHub issue #1",
             }),
         ).toBe(true);
+    });
+
+    it("prunes auto-fetched playback contexts after six hours without changing not-found TTL", () => {
+        const sixHoursMs = 6 * 60 * 60 * 1000;
+        const now = Date.parse("2026-06-10T12:00:00.000Z");
+
+        const contexts = _autoFetchDedupeForTests.pruneAutoFetchedPlaybackContexts(
+            {
+                fresh: { savedAt: new Date(now - sixHoursMs + 1).toISOString() },
+                expired: { savedAt: new Date(now - sixHoursMs - 1).toISOString() },
+            },
+            now,
+        );
+
+        expect(_autoFetchDedupeForTests.AUTO_FETCH_CONTEXT_TTL_MS).toBe(sixHoursMs);
+        expect(_autoFetchDedupeForTests.AUTO_FETCH_NOT_FOUND_TTL_MS).toBe(45 * 60 * 1000);
+        expect(contexts).toEqual({
+            fresh: { savedAt: new Date(now - sixHoursMs + 1).toISOString() },
+        });
+    });
+
+    it("stores bounded auto-fetched playback contexts for appended episodes", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-10T10:05:00.000Z"));
+        const sourceContext = {
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:8",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 8,
+            episodesInSeason: null,
+        };
+        const items = [
+            {
+                url: "https://streams.example.test/jjk-s03e08.mkv",
+                title: "Jujutsu Kaisen S03E08",
+                season: 3,
+                episode: 8,
+            },
+            {
+                url: "https://streams.example.test/jjk-s03e09.mkv",
+                title: "Jujutsu Kaisen S03E09",
+                season: 3,
+                episode: 9,
+            },
+            {
+                url: "https://streams.example.test/jjk-s03e10.mkv",
+                title: "Jujutsu Kaisen S03E10",
+                season: 3,
+                episode: 10,
+            },
+        ];
+
+        const updated = _autoFetchDedupeForTests.upsertAutoFetchedPlaybackContexts({}, sourceContext, items);
+        const contexts = updated.autoFetchedPlaybackContexts;
+        const episode8Keys = _autoFetchDedupeForTests.buildAutoFetchedPlaybackMatchKeys(items[0].url, items[0].title);
+        const episode9Keys = _autoFetchDedupeForTests.buildAutoFetchedPlaybackMatchKeys(items[1].url, items[1].title);
+        const episode10Keys = _autoFetchDedupeForTests.buildAutoFetchedPlaybackMatchKeys(items[2].url, items[2].title);
+
+        expect(contexts[episode8Keys[0]]).toMatchObject({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:8",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 8,
+        });
+        expect(contexts[episode9Keys[0]]).toMatchObject({ videoId: "tt12343534:3:9", season: 3, episode: 9 });
+        expect(contexts[episode10Keys[0]]).toMatchObject({ videoId: "tt12343534:3:10", season: 3, episode: 10 });
+        expect(JSON.stringify(contexts)).not.toContain(items[0].url);
+        expect(JSON.stringify(contexts)).not.toContain(items[1].url);
+        expect(JSON.stringify(contexts)).not.toContain(items[2].url);
+
+        const manyItems = Array.from({ length: 60 }, (_, index) => ({
+            url: `https://streams.example.test/jjk-s03e${String(index + 10).padStart(2, "0")}.mkv`,
+            title: `Jujutsu Kaisen S03E${String(index + 10).padStart(2, "0")}`,
+            season: 3,
+            episode: index + 10,
+        }));
+        const bounded = _autoFetchDedupeForTests.upsertAutoFetchedPlaybackContexts(updated, sourceContext, manyItems);
+        expect(Object.keys(bounded.autoFetchedPlaybackContexts)).toHaveLength(
+            _autoFetchDedupeForTests.AUTO_FETCH_CONTEXT_MAX_ENTRIES,
+        );
     });
 });
