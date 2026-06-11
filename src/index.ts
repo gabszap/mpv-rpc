@@ -181,7 +181,7 @@ async function update(): Promise<void> {
                         `[Stremio] Continue Watching sync failed: ${result.reason}`,
                     );
                 } else if (result.status === "skipped") {
-                    if (!config.syncDryRun) {
+                    if (!config.syncDryRun && !result.silent) {
                         logStremioDiagnostic(
                             `${data.filename}:skip:${result.reason}`,
                             `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${result.reason}`,

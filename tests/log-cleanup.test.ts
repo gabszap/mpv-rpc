@@ -75,7 +75,7 @@ describe("Phase 4 log cleanup", () => {
         });
 
         it("does not emit user-facing Stremio dry-run skip diagnostics", () => {
-            expect(source).toContain("if (!config.syncDryRun)");
+            expect(source).toContain("if (!config.syncDryRun && !result.silent)");
             expect(source).toContain("[Stremio] Continue Watching skipped at");
         });
     });

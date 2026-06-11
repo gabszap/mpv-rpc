@@ -32,11 +32,14 @@ export function appendSyncLog(entry: Record<string, unknown>): void {
 }
 
 export type StremioSyncResult =
-    | { status: "skipped"; reason: string }
+    | { status: "skipped"; reason: string; silent?: boolean }
     | { status: "synced"; libraryItemId: string }
     | { status: "error"; reason: string };
 
 const lastProgressSyncByLibraryItem = new Map<string, number>();
+const lastSyncedProgressByPlaybackIdentity = new Map<string, string>();
+const lastProgressIntervalSkipByPlaybackIdentity = new Map<string, string>();
+const watchedMarkByLibraryVideoId = new Set<string>();
 const dryRunContinueWatchingMilestonesByIdentity = new Map<string, Set<number>>();
 const MIN_CONTINUE_WATCHING_PERCENT = 1;
 const MIN_CONTINUE_WATCHING_SECONDS = 5;
@@ -49,6 +52,117 @@ function shouldSyncProgress(libraryItemId: string, nowMs: number): boolean {
     }
 
     return true;
+}
+
+type WatchedMarkResult = {
+    changed: boolean;
+    item: LibraryItem;
+};
+
+function canMarkWatched(
+    context: StremioPlaybackContext,
+    season: number | null,
+    episode: number | null,
+    videoId: string,
+    videoIds: string[] | null,
+    percentPos: number,
+    syncThreshold: number,
+): videoIds is string[] {
+    return (
+        context.type === "series" &&
+        season !== null &&
+        episode !== null &&
+        videoId.length > 0 &&
+        videoIds !== null &&
+        videoIds.length > 0 &&
+        percentPos >= syncThreshold
+    );
+}
+
+function getWatchedMarkKey(context: StremioPlaybackContext, videoId: string): string {
+    return `${context.libraryItemId}|${videoId}`;
+}
+
+function cloneLibraryItemWithWatchedMark(
+    item: LibraryItem,
+    context: StremioPlaybackContext,
+    season: number | null,
+    episode: number | null,
+    videoId: string,
+    videoIds: string[] | null,
+    now: Date,
+    syncThreshold: number,
+    percentPos: number,
+): WatchedMarkResult {
+    if (!canMarkWatched(context, season, episode, videoId, videoIds, percentPos, syncThreshold)) {
+        return { changed: false, item };
+    }
+
+    const watchedMarkKey = getWatchedMarkKey(context, videoId);
+    if (watchedMarkByLibraryVideoId.has(watchedMarkKey)) {
+        return { changed: false, item };
+    }
+
+    const existingState =
+        typeof item.state === "object" && item.state !== null && !Array.isArray(item.state) ? item.state : {};
+
+    try {
+        const existingWatched = existingState.watched;
+        const hasExistingWatched = typeof existingWatched === "string" && existingWatched.length > 0;
+
+        if (hasExistingWatched && isEpisodeWatched(existingWatched, videoIds.length, videoId, videoIds)) {
+            return { changed: false, item };
+        }
+
+        const result = markEpisodeWatched(
+            hasExistingWatched ? existingWatched : null,
+            videoIds.length,
+            videoId,
+            videoIds,
+        );
+        if (!result.changed) {
+            return { changed: false, item };
+        }
+
+        const nextState: LibraryItemState = {
+            ...existingState,
+            watched: result.watched,
+        };
+        if (typeof existingState.flagged_watched === "number") {
+            nextState.flagged_watched = 1;
+        }
+        if (typeof existingState.times_watched === "number") {
+            nextState.times_watched = existingState.times_watched + 1;
+        }
+
+        watchedMarkByLibraryVideoId.add(watchedMarkKey);
+
+        console.log(`[Stremio] Marked as watched: ${context.name || context.libraryItemId} S${season}E${episode}`);
+        appendSyncLog({
+            step: "watched-marked",
+            libraryItemId: context.libraryItemId,
+            season,
+            episode,
+            videoId,
+            timestamp: nowTimestamp(),
+        });
+
+        return {
+            changed: true,
+            item: {
+                ...item,
+                _mtime: now.toISOString(),
+                state: nextState,
+            },
+        };
+    } catch (error) {
+        appendSyncLog({
+            step: "watched-error",
+            reason: error instanceof Error ? error.message : "unknown",
+            timestamp: nowTimestamp(),
+        });
+        return { changed: false, item };
+    }
 }
 
 function cloneLibraryItemWithProgress(
@@ -78,75 +192,23 @@ function cloneLibraryItemWithProgress(
         nextState.episode = episode;
     }
 
-    // Mark watched if conditions are met
-    const shouldMarkWatched =
-        context.type === "series" &&
-        season != null &&
-        episode != null &&
-        nextState.video_id &&
-        videoIds &&
-        videoIds.length > 0 &&
-        data.percent_pos >= syncThreshold;
-
-    if (shouldMarkWatched) {
-        try {
-            const existingWatched = existingState.watched;
-            const hasExistingWatched = typeof existingWatched === "string" && existingWatched.length > 0;
-            const confirmedVideoIds = videoIds as string[];
-            const confirmedVideoId = nextState.video_id as string;
-
-            // Only mark if not already watched
-            if (
-                !hasExistingWatched ||
-                !isEpisodeWatched(
-                    existingWatched as string,
-                    confirmedVideoIds.length,
-                    confirmedVideoId,
-                    confirmedVideoIds,
-                )
-            ) {
-                const result = markEpisodeWatched(
-                    hasExistingWatched ? (existingWatched as string) : null,
-                    confirmedVideoIds.length,
-                    confirmedVideoId,
-                    confirmedVideoIds,
-                );
-                if (result.changed) {
-                    nextState.watched = result.watched;
-                    if (typeof existingState.flagged_watched === "number") {
-                        nextState.flagged_watched = 1;
-                    }
-                    if (typeof existingState.times_watched === "number") {
-                        nextState.times_watched = existingState.times_watched + 1;
-                    }
-
-                    console.log(
-                        `[Stremio] Marked as watched: ${context.name || context.libraryItemId} S${season}E${episode}`,
-                    );
-                    appendSyncLog({
-                        step: "watched-marked",
-                        libraryItemId: context.libraryItemId,
-                        season,
-                        episode,
-                        videoId: nextState.video_id,
-                        timestamp: nowTimestamp(),
-                    });
-                }
-            }
-        } catch (error) {
-            appendSyncLog({
-                step: "watched-error",
-                reason: error instanceof Error ? error.message : "unknown",
-                timestamp: nowTimestamp(),
-            });
-        }
-    }
-
-    return {
+    const itemWithProgress: LibraryItem = {
         ...item,
         _mtime: now.toISOString(),
         state: nextState,
     };
+
+    return cloneLibraryItemWithWatchedMark(
+        itemWithProgress,
+        context,
+        season,
+        episode,
+        videoId,
+        videoIds,
+        now,
+        syncThreshold,
+        data.percent_pos,
+    ).item;
 }
 
 function hasValidPlaybackProgress(data: MpvData): boolean {
@@ -195,6 +257,58 @@ function getBoundedDryRunPercent(roundedPercent: number): number {
     return Math.min(100, Math.max(0, roundedPercent));
 }
 
+function getContextValueFingerprint(value: string | number | null | undefined): string {
+    if (value === null || value === undefined || value === "") {
+        return "-";
+    }
+
+    return String(value);
+}
+
+function getSyncedPlaybackIdentityKey(identity: CanonicalStremioIdentity, data: MpvData): string {
+    const { context } = identity;
+
+    return [
+        getContextValueFingerprint(data.filename),
+        getContextValueFingerprint(context.libraryItemId),
+        getContextValueFingerprint(context.seriesId),
+        getContextValueFingerprint(context.imdbId),
+        getContextValueFingerprint(context.type),
+        getContextValueFingerprint(context.name),
+        getContextValueFingerprint(context.season),
+        getContextValueFingerprint(context.episode),
+        getContextValueFingerprint(context.savedAtMs),
+        getContextValueFingerprint(identity.season),
+        getContextValueFingerprint(identity.episode),
+        getContextValueFingerprint(identity.videoId),
+    ].join("|");
+}
+
+function getSyncedProgressKey(data: MpvData): string {
+    const timeOffsetMs = Math.max(0, Math.floor(data.time_pos * 1000));
+    const durationMs = Math.max(0, Math.floor(data.duration * 1000));
+    const roundedPercent = Math.round(data.percent_pos);
+
+    return `${timeOffsetMs}:${durationMs}:${roundedPercent}`;
+}
+
+function hasAlreadySyncedProgress(playbackIdentityKey: string, progressKey: string): boolean {
+    return lastSyncedProgressByPlaybackIdentity.get(playbackIdentityKey) === progressKey;
+}
+
+function rememberSyncedProgress(playbackIdentityKey: string, progressKey: string): void {
+    lastSyncedProgressByPlaybackIdentity.set(playbackIdentityKey, progressKey);
+    lastProgressIntervalSkipByPlaybackIdentity.delete(playbackIdentityKey);
+}
+
+function hasAlreadySkippedProgressInterval(playbackIdentityKey: string, progressKey: string): boolean {
+    return lastProgressIntervalSkipByPlaybackIdentity.get(playbackIdentityKey) === progressKey;
+}
+
+function rememberProgressIntervalSkip(playbackIdentityKey: string, progressKey: string): void {
+    lastProgressIntervalSkipByPlaybackIdentity.set(playbackIdentityKey, progressKey);
+}
+
 function getReachedDryRunMilestone(roundedPercent: number): number | null {
     const boundedPercent = getBoundedDryRunPercent(roundedPercent);
     if (!Number.isFinite(boundedPercent)) {
@@ -222,6 +336,65 @@ function getReachedDryRunMilestones(roundedPercent: number): number[] {
     }
 
     return DRY_RUN_PROGRESS_MILESTONES.filter((milestone) => boundedPercent >= milestone);
+}
+
+async function tryMarkWatchedWithoutProgressWrite(
+    authoritativeContext: StremioPlaybackContext,
+    season: number | null,
+    episode: number | null,
+    videoId: string,
+    data: MpvData,
+    authKey: string,
+    now: Date,
+): Promise<StremioSyncResult | null> {
+    if (
+        authoritativeContext.type !== "series" ||
+        !authoritativeContext.imdbId ||
+        season === null ||
+        episode === null ||
+        data.percent_pos < config.stremio.syncThreshold
+    ) {
+        return null;
+    }
+
+    const videoIds = await fetchVideoIds(authoritativeContext.imdbId);
+    if (!videoIds || videoIds.length === 0) {
+        return null;
+    }
+
+    const libraryItem = await getLibraryItem(authoritativeContext.libraryItemId, authKey);
+    appendSyncLog({
+        step: "watched-library-item-fetch",
+        found: libraryItem !== null,
+        libraryItemId: authoritativeContext.libraryItemId,
+    });
+    if (!libraryItem) {
+        return null;
+    }
+
+    const marked = cloneLibraryItemWithWatchedMark(
+        libraryItem,
+        authoritativeContext,
+        season,
+        episode,
+        videoId,
+        videoIds,
+        now,
+        config.stremio.syncThreshold,
+        data.percent_pos,
+    );
+    if (!marked.changed) {
+        return null;
+    }
+
+    await putLibraryItem(marked.item, authKey);
+    appendSyncLog({
+        step: "watched-put",
+        result: "success",
+        libraryItemId: authoritativeContext.libraryItemId,
+    });
+
+    return { status: "synced", libraryItemId: authoritativeContext.libraryItemId };
 }
 
 type DryRunContinueWatchingLog = {
@@ -300,7 +473,7 @@ function rememberDryRunContinueWatchingLog(log: PendingDryRunContinueWatchingLog
 }
 
 export async function trySyncStremio(data: MpvData): Promise<StremioSyncResult> {
-    const context = readStremioPlaybackContext();
+    const context = readStremioPlaybackContext(data);
     const canonicalIdentity = getCanonicalStremioIdentity(context, data);
     const dryRunPosition = getCanonicalEpisodePosition(context, data);
 
@@ -379,11 +552,48 @@ export async function trySyncStremio(data: MpvData): Promise<StremioSyncResult> 
         return { status: "skipped", reason: "missing-video-id" };
     }
 
+    const playbackIdentityKey = getSyncedPlaybackIdentityKey(canonicalIdentity, data);
+    const progressKey = getSyncedProgressKey(data);
+    if (hasAlreadySyncedProgress(playbackIdentityKey, progressKey)) {
+        appendSyncLog({
+            step: "unchanged-progress",
+            result: "skipped",
+            libraryItemId: authoritativeContext.libraryItemId,
+            progressKey,
+        });
+        return { status: "skipped", reason: "unchanged-progress", silent: true };
+    }
+
     const now = new Date();
     const nowMs = now.getTime();
     const shouldSync = shouldSyncProgress(authoritativeContext.libraryItemId, nowMs);
     appendSyncLog({ step: "throttle", shouldSync, libraryItemId: authoritativeContext.libraryItemId });
     if (!shouldSync) {
+        try {
+            const watchedResult = await tryMarkWatchedWithoutProgressWrite(
+                authoritativeContext,
+                canonicalIdentity.season,
+                canonicalIdentity.episode,
+                videoId,
+                data,
+                authKey,
+                now,
+            );
+            if (watchedResult) {
+                rememberProgressIntervalSkip(playbackIdentityKey, progressKey);
+                return watchedResult;
+            }
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            appendSyncLog({ step: "watched-error", reason });
+            return { status: "error", reason };
+        }
+
+        if (hasAlreadySkippedProgressInterval(playbackIdentityKey, progressKey)) {
+            return { status: "skipped", reason: "progress-interval", silent: true };
+        }
+
+        rememberProgressIntervalSkip(playbackIdentityKey, progressKey);
         return { status: "skipped", reason: "progress-interval" };
     }
 
@@ -431,6 +641,7 @@ export async function trySyncStremio(data: MpvData): Promise<StremioSyncResult> 
 
         await putLibraryItem(updatedItem, authKey);
         lastProgressSyncByLibraryItem.set(authoritativeContext.libraryItemId, nowMs);
+        rememberSyncedProgress(playbackIdentityKey, progressKey);
 
         appendSyncLog({ step: "put", result: "success", libraryItemId: authoritativeContext.libraryItemId });
         return { status: "synced", libraryItemId: authoritativeContext.libraryItemId };
@@ -443,5 +654,8 @@ export async function trySyncStremio(data: MpvData): Promise<StremioSyncResult> 
 
 export function resetStremioSyncStateForTests(): void {
     lastProgressSyncByLibraryItem.clear();
+    lastSyncedProgressByPlaybackIdentity.clear();
+    lastProgressIntervalSkipByPlaybackIdentity.clear();
+    watchedMarkByLibraryVideoId.clear();
     dryRunContinueWatchingMilestonesByIdentity.clear();
 }
