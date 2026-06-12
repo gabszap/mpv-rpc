@@ -73,16 +73,23 @@ interface CacheEntry {
     data: AnimeInfo | null;
     timestamp: number;
     sourceProvider?: string;
+    cacheVersion?: number;
 }
 
 const cache: Map<string, CacheEntry> = new Map();
 const episodeCache: Map<string, string | null> = new Map();
 const overflowCache: Map<string, { result: OverflowResult; timestamp: number }> = new Map();
+const ANIME_INFO_CACHE_VERSION = 2;
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const NEGATIVE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for not-found results
 const OVERFLOW_CACHE_TTL = 30 * 60 * 1000; // 30 minutes for overflow resolution
+const DEFAULT_EPISODE_CACHE_SCOPE = "default";
 
 function isCacheEntryValid(entry: CacheEntry, now = Date.now()): boolean {
+    if (entry.cacheVersion !== ANIME_INFO_CACHE_VERSION) {
+        return false;
+    }
+
     const ttl = entry.data === null ? NEGATIVE_CACHE_TTL : CACHE_TTL;
     return now - entry.timestamp < ttl;
 }
@@ -114,6 +121,11 @@ function getProvidersInResolutionOrder(): AnimeProvider[] {
     return providersInOrder;
 }
 
+function getEpisodeCacheScope(currentProvider: AnimeProvider | null): string {
+    const providerScope = currentProvider?.getEpisodeCacheKeyScope?.().trim();
+    return providerScope || DEFAULT_EPISODE_CACHE_SCOPE;
+}
+
 async function resolveAnimeInfoWithProvider(
     currentProvider: AnimeProvider,
     title: string,
@@ -125,10 +137,16 @@ async function resolveAnimeInfoWithProvider(
         const seasonSearchTitle = `${title} Season ${season}`;
         const seasonSearchResult = await currentProvider.searchAnime(seasonSearchTitle, season);
         if (seasonSearchResult) {
-            const animeInfo = await currentProvider.getAnimeById(seasonSearchResult.id);
+            const animeInfo = await currentProvider.getAnimeById(seasonSearchResult.id, season);
             if (animeInfo) {
                 return normalizeProviderFields(animeInfo, currentProvider.name);
             }
+        }
+
+        if (config.debug) {
+            console.log(
+                `[Anime] ${currentProvider.name} season query "${seasonSearchTitle}" did not resolve; retrying base title "${title}"`,
+            );
         }
     }
 
@@ -488,6 +506,7 @@ export async function getAnimeInfoWithProvider(
                     data: normalizedCached,
                     timestamp: cached.timestamp,
                     sourceProvider,
+                    cacheVersion: ANIME_INFO_CACHE_VERSION,
                 });
                 saveCache();
             }
@@ -511,6 +530,7 @@ export async function getAnimeInfoWithProvider(
                 data: animeInfo,
                 timestamp: Date.now(),
                 sourceProvider: currentProvider.name,
+                cacheVersion: ANIME_INFO_CACHE_VERSION,
             });
             saveCache();
 
@@ -532,6 +552,7 @@ export async function getAnimeInfoWithProvider(
         data: null,
         timestamp: Date.now(),
         sourceProvider: lastNotFoundProvider || "resolution-exhausted",
+        cacheVersion: ANIME_INFO_CACHE_VERSION,
     });
     saveCache();
     return null;
@@ -570,11 +591,6 @@ export async function getEpisodeTitle(
             allowSeasonInference: season === null || season <= 1,
         };
 
-        const episodeCacheKey = `${sourceProvider || provider.name}:${animeInfo.id}:${season ?? 1}:${episode}`;
-        if (episodeCache.has(episodeCacheKey)) {
-            return episodeCache.get(episodeCacheKey) ?? null;
-        }
-
         // Only use the provider that owns the anime ID for direct lookups.
         // Other providers would need a title-based search first since IDs are provider-specific.
         let title: string | null = null;
@@ -582,6 +598,12 @@ export async function getEpisodeTitle(
         const sourceProviderObj = sourceProvider
             ? getProvidersInResolutionOrder().find((p) => p.name === sourceProvider)
             : null;
+
+        const directEpisodeProvider = sourceProviderObj ?? (sourceProvider ? null : provider);
+        const episodeCacheKey = `${sourceProvider || provider.name}:${getEpisodeCacheScope(directEpisodeProvider)}:${animeInfo.id}:${season ?? 1}:${episode}`;
+        if (episodeCache.has(episodeCacheKey)) {
+            return episodeCache.get(episodeCacheKey) ?? null;
+        }
 
         // Only use the provider that owns the anime ID for direct lookups.
         // Other providers would need a title-based search first since IDs are provider-specific.
@@ -725,7 +747,7 @@ export async function getEpisodeTitle(
                     }
 
                     if (title) {
-                        console.log(`[Anime] Found episode title via ${fallback.name}`);
+                        console.log(`[Anime] Found episode title via ${fallback.name}: "${title}"`);
                         break;
                     }
                 }

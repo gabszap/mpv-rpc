@@ -9,6 +9,7 @@ import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } fro
 import { config } from "./config";
 import { checkSeriesNameOverride } from "./console";
 import { parseFilename } from "./parser";
+import { normalizeTvdbLanguageCode } from "./providers/tvdb";
 
 export interface MpvData {
     media_title: string;
@@ -31,6 +32,56 @@ export interface MpvData {
     type?: string; // For Stremio sync
     playlistPos: number; // Current position in playlist (0-indexed)
     playlistCount: number; // Total number of items in playlist
+}
+
+export function selectCoverImage(
+    animeInfo: { cover_url: string | null; season_cover_url?: string | null },
+    existingCoverImage: string | null = null,
+): string | null {
+    return animeInfo.season_cover_url ?? animeInfo.cover_url ?? existingCoverImage;
+}
+
+interface RuntimeEpisodeTitleResolutionInput {
+    currentEpisodeTitle: string | null;
+    episode: number | null;
+    metadataSourceProvider: string | null;
+    tvdbLanguage: string;
+    fetchEpisodeTitle: () => Promise<string | null>;
+}
+
+export function shouldPreferTvdbLocalizedEpisodeTitle(
+    metadataSourceProvider: string | null,
+    tvdbLanguage: string,
+): boolean {
+    if (metadataSourceProvider !== "tvdb") {
+        return false;
+    }
+
+    return normalizeTvdbLanguageCode(tvdbLanguage) !== "eng";
+}
+
+export async function resolveRuntimeEpisodeTitle({
+    currentEpisodeTitle,
+    episode,
+    metadataSourceProvider,
+    tvdbLanguage,
+    fetchEpisodeTitle,
+}: RuntimeEpisodeTitleResolutionInput): Promise<string | null> {
+    if (episode === null || episode < 1) {
+        return currentEpisodeTitle;
+    }
+
+    const hasParsedEpisodeTitle = Boolean(currentEpisodeTitle?.trim());
+    const shouldFetchMissingTitle = !hasParsedEpisodeTitle;
+    const shouldRefreshLocalizedTvdbTitle =
+        hasParsedEpisodeTitle && shouldPreferTvdbLocalizedEpisodeTitle(metadataSourceProvider, tvdbLanguage);
+
+    if (!shouldFetchMissingTitle && !shouldRefreshLocalizedTvdbTitle) {
+        return currentEpisodeTitle;
+    }
+
+    const fetchedEpisodeTitle = await fetchEpisodeTitle();
+    return fetchedEpisodeTitle || currentEpisodeTitle;
 }
 
 let socket: net.Socket | null = null;
@@ -336,6 +387,7 @@ export async function getMpvData(): Promise<MpvData | null> {
         let malId: number | null = null;
         let totalEpisodes: number | null = null;
         let adjustedEpisode: number | null = null;
+        let metadataSourceProvider: string | null = null;
         const originalTitle = parsed.series_title; // Keep original for episode lookup
 
         // Check for manual series name override (rename command)
@@ -353,7 +405,8 @@ export async function getMpvData(): Promise<MpvData | null> {
                 if (animeResult) {
                     const animeInfo = animeResult.animeInfo;
                     const sourceProvider = animeResult.sourceProvider;
-                    coverImage = animeInfo.cover_url;
+                    metadataSourceProvider = sourceProvider;
+                    coverImage = selectCoverImage(animeInfo);
                     malId = animeInfo.mal_id || null;
                     totalEpisodes = animeInfo.total_episodes || null;
 
@@ -375,7 +428,7 @@ export async function getMpvData(): Promise<MpvData | null> {
                             totalEpisodes = overflowResult.animeInfo.total_episodes || null;
                             adjustedEpisode = overflowResult.adjustedEpisode;
                             // Update display info to show the correct cour
-                            coverImage = overflowResult.animeInfo.cover_url || coverImage;
+                            coverImage = selectCoverImage(overflowResult.animeInfo, coverImage);
                             // Update series title to reflect the resolved cour
                             if (titlePref === "english") {
                                 seriesTitle =
@@ -410,14 +463,19 @@ export async function getMpvData(): Promise<MpvData | null> {
                     // If "none" without rename, keep the original filename title
                 }
 
-                // Get episode title if not in filename
-                // Use override name when available, otherwise original title
-                if (!episodeTitle && parsed.episode) {
+                // Get episode title when it is missing, or refresh a parsed title
+                // when TVDB is the metadata source and a localized language is configured.
+                // Use override name when available, otherwise original title.
+                if (parsed.episode !== null) {
+                    const parsedEpisode = parsed.episode;
                     const episodeLookupTitle = renameOverride?.overrideName ?? originalTitle;
-                    const epTitle = await getEpisodeTitle(episodeLookupTitle, parsed.season, parsed.episode);
-                    if (epTitle) {
-                        episodeTitle = epTitle;
-                    }
+                    episodeTitle = await resolveRuntimeEpisodeTitle({
+                        currentEpisodeTitle: episodeTitle,
+                        episode: parsedEpisode,
+                        metadataSourceProvider,
+                        tvdbLanguage: config.tvdb.language,
+                        fetchEpisodeTitle: () => getEpisodeTitle(episodeLookupTitle, parsed.season, parsedEpisode),
+                    });
                 }
             } catch (e) {
                 console.error("[MPV] Error fetching anime metadata:", e);
