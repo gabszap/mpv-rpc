@@ -20,7 +20,9 @@ This feature allows you to automatically scrobble your anime watch progress to y
      - **Permissions**: select `scrobble`
    - Save and copy your **Client ID** and **Client Secret**.
 
-2. **Tor (optional)**: If your IP is blocked by Cloudflare, you can route requests through Tor. Requires Tor Browser or Tor service running.
+2. **TheTVDB API Key (recommended for anime)**: Needed to safely map aired/default season+episode numbers to absolute episode numbers for some anime syncs.
+
+3. **Tor (optional)**: If your IP is blocked by Cloudflare, you can route requests through Tor. Requires Tor Browser or Tor service running.
 
 ### Configuration
 
@@ -31,12 +33,14 @@ TRAKT_SYNC=true
 TRAKT_CLIENT_ID=your_client_id_here
 TRAKT_CLIENT_SECRET=your_client_secret_here
 TRAKT_SYNC_THRESHOLD=80
+TVDB_API_KEY=your_tvdb_key_here
 ```
 
 - `TRAKT_SYNC`: Set to `true` to enable the feature.
 - `TRAKT_CLIENT_ID`: The Client ID from your Trakt application.
 - `TRAKT_CLIENT_SECRET`: The Client Secret from your Trakt application.
 - `TRAKT_SYNC_THRESHOLD`: Percentage of the episode (0-100) that must be watched to trigger scrobble (default is 80).
+- `TVDB_API_KEY`: TheTVDB key used for safe anime episode order mapping when needed.
 
 #### Optional: Tor Proxy
 
@@ -66,6 +70,7 @@ After configuring the `.env` file, you need to authorize the application:
 ### How It Works
 
 - **Media Resolution**: IMDB ID (from Stremio bridge) → TVDB ID → Title search fallback
+- **Episode Order Mapping**: TheTVDB can map aired/default SxxEyy to absolute anime episodes; ambiguous syncs skip safely if mapping is unavailable.
 - **Anime-only**: Only scrobbles when anime metadata is resolved (mal_id detected)
 - **State Machine**: Tracks play/pause/stop transitions for accurate scrobbling
 - **Cooldown**: 60-second cooldown per episode to avoid duplicate scrobbles
@@ -88,7 +93,9 @@ Esta funcionalidade permite sincronizar automaticamente o seu progresso de epis�
      - - **Permissões**: selecione `scrobble`
    - Salve e copie seu **Client ID** e **Client Secret**.
 
-2. **Tor (opcional)**: Se seu IP estiver bloqueado pelo Cloudflare, você pode rotear as requisições pelo Tor. Requer Tor Browser ou serviço Tor rodando.
+2. **Chave da API TheTVDB (recomendada para anime)**: Necessária para mapear com segurança temporada+episódio em ordem aired/default para episódio absoluto em alguns syncs de anime.
+
+3. **Tor (opcional)**: Se seu IP estiver bloqueado pelo Cloudflare, você pode rotear as requisições pelo Tor. Requer Tor Browser ou serviço Tor rodando.
 
 ### Configuração
 
@@ -99,12 +106,14 @@ TRAKT_SYNC=true
 TRAKT_CLIENT_ID=seu_client_id_aqui
 TRAKT_CLIENT_SECRET=seu_client_secret_aqui
 TRAKT_SYNC_THRESHOLD=80
+TVDB_API_KEY=sua_chave_tvdb_aqui
 ```
 
 - `TRAKT_SYNC`: Defina como `true` para ativar a funcionalidade.
 - `TRAKT_CLIENT_ID`: O Client ID da sua aplicação Trakt.
 - `TRAKT_CLIENT_SECRET`: O Client Secret da sua aplicação Trakt.
 - `TRAKT_SYNC_THRESHOLD`: Porcentagem do episódio (0-100) que deve ser assistida para disparar o scrobble (padrão é 80).
+- `TVDB_API_KEY`: Chave TheTVDB usada para mapeamento seguro de ordem de episódios de anime quando necessário.
 
 #### Opcional: Proxy Tor
 
@@ -134,6 +143,7 @@ Após configurar o arquivo `.env`, você precisa autorizar a aplicação:
 ### Como Funciona
 
 - **Resolução de Mídia**: IMDB ID (da bridge Stremio) → TVDB ID → Busca por título como fallback
+- **Mapeamento de Ordem de Episódios**: TheTVDB pode mapear SxxEyy em ordem aired/default para episódios absolutos de anime; syncs ambíguos são pulados com segurança se o mapeamento estiver indisponível.
 - **Apenas Anime**: Só faz scrobble quando metadados de anime são resolvidos (mal_id detectado)
 - **State Machine**: Rastreia transições play/pause/stop para scrobble preciso
 - **Cooldown**: 60 segundos de cooldown por episódio para evitar duplicatas

@@ -6,7 +6,7 @@ Discord Rich Presence para o MPV Media Player com metadados de anime, sincroniza
   <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?style=for-the-badge&label=versão&color=22c55e" alt="Versão">
   <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?filename=stremio-mpv-bridge%2Fpackage.json&style=for-the-badge&label=bridge&color=8b5cf6" alt="Versão do bridge">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white&style=for-the-badge" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white&style=for-the-badge" alt="Windows">
+  <img src="https://custom-icon-badges.demolab.com/badge/Windows-0078D6?logo=windows11&logoColor=white&style=for-the-badge" alt="Windows">
   <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" alt="Linux">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="Licença">
 </p>
@@ -151,6 +151,8 @@ Guia completo: [Guia do Stremio MPV Bridge](docs/stremio-mpv-bridge.md)
 
 Tokens e contexto do Stremio ficam armazenados em `.config/`, pasta ignorada pelo git.
 
+Alguns mapeamentos de sincronização de anime usam o TheTVDB para converter com segurança temporada+episódio em ordem aired/default para episódio absoluto, mesmo quando `METADATA_PROVIDER` não é `tvdb`. Configure `TVDB_API_KEY` nesses casos; sem ela, sincronizações ambíguas são puladas em vez de estimadas.
+
 ## Parsing de nomes de arquivo
 
 O parser tenta o método mais seguro disponível nesta ordem:
@@ -225,7 +227,7 @@ Se você alterar `PORT`, também atualize `CONFIG.SERVER_URL` em `stremio-mpv-br
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
 | `METADATA_PROVIDER` | `jikan` | Provedor de metadados: `jikan`, `anilist`, `kitsu` ou `tvdb` |
-| `TVDB_API_KEY` | vazio | Chave da API TheTVDB, obrigatória quando `tvdb` é o provedor principal |
+| `TVDB_API_KEY` | vazio | Chave da API TheTVDB, obrigatória quando `tvdb` é o provedor principal e para mapeamento seguro de ordem de episódios em sync |
 | `TVDB_LANG` | `eng` | Código de idioma do TheTVDB para metadados de episódio |
 | `USE_GUESSIT_API` | `true` | Usa parsing HTTP do GuessIt antes do fallback por CLI local |
 | `GUESSIT_API_URL` | vazio no código, endpoint público no `.env.example` | Endpoint da API GuessIt |
@@ -262,6 +264,8 @@ O Auto-Fetch tem dois portões independentes:
 
 Ambos precisam estar `true` para o auto-fetch funcionar. O `.env` é o desligamento global; o toggle na bridge é o controle por instância.
 
+**Resumo:** Na prática, você normalmente só precisa desativar o Auto-Fetch nas configurações da bridge. Use `AUTO_FETCH=false` apenas quando quiser um desligamento global.
+
 ## Como funciona
 
 ```text
@@ -290,6 +294,23 @@ Userscript no Stremio Web
 | Título em romaji | Título em inglês | Fallback pelo nome do arquivo |
 | :---: | :---: | :---: |
 | ![Modo com título em romaji](assets/romaji.png) | ![Modo com título em inglês](assets/english.png) | ![Modo pelo nome do arquivo](assets/filename.png) |
+
+> Nome do arquivo (Filename) significa que o título do episódio é exibido com base no nome do arquivo (sem provedor de metadados).
+
+### Títulos de episódios localizados (TVDB)
+> Nota: titulos localizados são apenas disponíveis para o provedor de metadados TVDB.
+
+| Inglês | Português | Espanhol |
+| :---: | :---: | :---: |
+| ![Título de episódio em inglês](assets/english.png) | ![Título de episódio em português](assets/portuguese.png) | ![Título de episódio em espanhol](assets/spanish.png) |
+
+| Francês | Alemão | Italiano |
+| :---: | :---: | :---: |
+| ![Título de episódio em francês](assets/french.png) | ![Título de episódio em alemão](assets/german.png) | ![Título de episódio em italiano](assets/italian.png) |
+
+| Russo | Chinês | Japonês |
+| :---: | :---: | :---: |
+| ![Título de episódio em russo](assets/russian.png) | ![Título de episódio em chinês](assets/chinese.png) | ![Título de episódio em japonês](assets/japanese.png) |
 
 ### Modo de privacidade
 
