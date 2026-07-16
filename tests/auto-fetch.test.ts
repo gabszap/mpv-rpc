@@ -253,6 +253,77 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         consoleLogSpy.mockRestore();
     });
 
+    it("does not refire while playback stays above the threshold", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+
+        try {
+            const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+
+            fetchMock.mockClear();
+            vi.setSystemTime(new Date("2026-06-12T00:02:00.000Z"));
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 96 }));
+
+            expect(fetchMock).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("re-arms after playback drops below the threshold and crosses back above it", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+
+        try {
+            const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 50 }));
+            fetchMock.mockClear();
+
+            vi.setSystemTime(new Date("2026-06-12T00:01:01.000Z"));
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps a per-episode cooldown floor after bridge no-release responses", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input.toString();
+            if (url.endsWith("/health")) {
+                return mockJsonResponse({ status: "ok" });
+            }
+            if (url.endsWith("/auto-fetch")) {
+                return mockJsonResponse({ success: true, status: "no_released_episodes", newlyNotFound: 2 });
+            }
+            return mockJsonResponse({}, 404);
+        });
+
+        try {
+            const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 50 }));
+            fetchMock.mockClear();
+
+            vi.setSystemTime(new Date("2026-06-12T00:00:30.000Z"));
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+
+            expect(fetchMock).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("uses Stremio metadata season and episode for split-part playback", async () => {
         readFileSyncMock.mockReturnValue(
             JSON.stringify({
@@ -475,9 +546,10 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         expect(autoFetchCalls).toHaveLength(1);
     });
 
-    it("releases the in-flight slot on fetch failure so retries can proceed", async () => {
-        // Use fake timers to bypass the 30s cooldown between calls.
+    it("releases the in-flight slot on fetch failure so re-armed retries can proceed", async () => {
+        // Use fake timers to cross the re-arm and 60s cooldown gates deterministically.
         vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
         try {
             // First call: bridge health returns 500 → triggers nothing.
             fetchMock.mockImplementation(async () => mockJsonResponse({}, 500));
@@ -487,8 +559,9 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
             await checkAndTriggerAutoFetch(data);
             expect(fetchMock).toHaveBeenCalledTimes(1); // health only
 
-            // Advance past the 30s cooldown.
-            vi.advanceTimersByTime(31_000);
+            // Drop below the threshold to re-arm, then advance past the cooldown.
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 50 }));
+            vi.setSystemTime(new Date("2026-06-12T00:01:01.000Z"));
 
             // Now mock a healthy bridge + successful auto-fetch.
             fetchMock.mockClear();

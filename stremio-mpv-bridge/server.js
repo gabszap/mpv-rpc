@@ -73,11 +73,15 @@ const AUTO_FETCH_DEDUPE_TTL_MS = 10 * 60 * 1000;
 // latest released episode, but short enough for newly released episodes to be
 // retried later without a bridge restart.
 const AUTO_FETCH_NOT_FOUND_TTL_MS = 45 * 60 * 1000;
+// Release checks are cached separately from stream not-found results so future
+// episode metadata can be rechecked soon without hammering addon meta endpoints.
+const RELEASE_CHECK_TTL_MS = 10 * 60 * 1000;
 const AUTO_FETCH_DEDUPE_MAX_ENTRIES = 500;
 // Per-appended-item playback contexts expire sooner than the primary Stremio metadata.
 const AUTO_FETCH_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
 const AUTO_FETCH_CONTEXT_MAX_ENTRIES = 100;
 const autoFetchEpisodeDedupe = new Map();
+const releaseCheckCache = new Map();
 
 function normalizeAutoFetchIdentity(imdbId, name) {
     if (typeof imdbId === "string" && imdbId.trim().length > 0) {
@@ -170,6 +174,7 @@ function releaseAutoFetchEpisodeKey(key) {
 
 function resetAutoFetchDedupeForTests() {
     autoFetchEpisodeDedupe.clear();
+    releaseCheckCache.clear();
 }
 
 function isPlainObject(value) {
@@ -1286,32 +1291,251 @@ function findBestStream(streams, config) {
 }
 
 /**
- * Fetch series metadata (episode list) from a provider.
- * Returns array of { season, episode, title } or empty array.
+ * Read a release status directly stated by addon metadata.
+ * Unknown means the addon did not provide enough information; auto-fetch must
+ * keep the existing stream-lookup fallback in that case.
  */
-async function fetchSeriesMeta(baseUrl, imdbId) {
-    const url = `${baseUrl}/meta/series/${imdbId}.json`;
-    const data = await httpGetWithRetry(url, { maxRetries: 1, delayMs: 1000, timeoutMs: 15000 });
+function readExplicitReleaseStatus(video) {
+    if (!isPlainObject(video)) {
+        return "unknown";
+    }
 
-    if (!data?.meta?.videos) {
+    for (const field of ["released", "isReleased", "available", "isAvailable"]) {
+        if (typeof video[field] === "boolean") {
+            return video[field] ? "released" : "unreleased";
+        }
+    }
+
+    for (const field of ["upcoming", "future", "isUpcoming"]) {
+        if (video[field] === true) {
+            return "unreleased";
+        }
+    }
+
+    return "unknown";
+}
+
+function readReleaseTimestamp(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value > 10_000_000_000 ? value : value * 1000;
+    }
+
+    if (typeof value !== "string" || value.trim().length === 0) {
+        return null;
+    }
+
+    const parsedMs = Date.parse(value);
+    return Number.isNaN(parsedMs) ? null : parsedMs;
+}
+
+function readReleaseDateStatus(video, now = Date.now()) {
+    if (!isPlainObject(video)) {
+        return "unknown";
+    }
+
+    for (const field of [
+        "released",
+        "releaseDate",
+        "airDate",
+        "aired",
+        "firstAired",
+        "premiered",
+        "publishedAt",
+        "availableAt",
+    ]) {
+        const releaseTimestamp = readReleaseTimestamp(video[field]);
+        if (releaseTimestamp === null) {
+            continue;
+        }
+
+        return releaseTimestamp <= now ? "released" : "unreleased";
+    }
+
+    return "unknown";
+}
+
+function readVideoReleaseStatus(video, now = Date.now()) {
+    const explicitStatus = readExplicitReleaseStatus(video);
+    if (explicitStatus === "unreleased") {
+        return explicitStatus;
+    }
+
+    const dateStatus = readReleaseDateStatus(video, now);
+    if (dateStatus !== "unknown") {
+        return dateStatus;
+    }
+
+    return explicitStatus;
+}
+
+function readSeriesMetaEpisode(video, now = Date.now()) {
+    if (!isPlainObject(video) || typeof video.id !== "string") {
+        return null;
+    }
+
+    const match = video.id.match(/:(\d+):(\d+)$/);
+    if (!match) {
+        return null;
+    }
+
+    return {
+        season: Number.parseInt(match[1], 10),
+        episode: Number.parseInt(match[2], 10),
+        title: readNonEmptyString(video.title),
+        releaseStatus: readVideoReleaseStatus(video, now),
+    };
+}
+
+function buildSeriesMetaCacheKey(provider, seriesMetaId) {
+    return `${readNonEmptyString(provider.url) ?? "unknown"}|${readNonEmptyString(provider.id) ?? "unknown"}|${seriesMetaId}`;
+}
+
+function buildReleaseMetaCandidateIds(imdbId, sourceContext = {}) {
+    const context = isPlainObject(sourceContext) ? sourceContext : {};
+    const candidateIds = [];
+    const seenIds = new Set();
+    const addCandidateId = (value) => {
+        const candidateId = readNonEmptyString(value);
+        if (!candidateId || seenIds.has(candidateId)) {
+            return;
+        }
+
+        seenIds.add(candidateId);
+        candidateIds.push(candidateId);
+    };
+
+    addCandidateId(context.seriesId);
+    addCandidateId(context.libraryItemId);
+    addCandidateId(context.imdbId);
+    addCandidateId(imdbId);
+
+    return candidateIds;
+}
+
+function pruneReleaseCheckCache(now = Date.now()) {
+    for (const [key, entry] of releaseCheckCache) {
+        if (entry.expiresAt <= now) {
+            releaseCheckCache.delete(key);
+        }
+    }
+
+    while (releaseCheckCache.size > AUTO_FETCH_DEDUPE_MAX_ENTRIES) {
+        const oldestKey = releaseCheckCache.keys().next().value;
+        if (!oldestKey) {
+            return;
+        }
+        releaseCheckCache.delete(oldestKey);
+    }
+}
+
+/**
+ * Fetch series metadata (episode list) from a provider.
+ * Returns array of { season, episode, title, releaseStatus } or empty array.
+ */
+async function fetchSeriesMeta(provider, seriesMetaId, now = Date.now()) {
+    const baseUrl = readNonEmptyString(provider.url);
+    if (!baseUrl) {
         return [];
     }
 
-    const episodes = data.meta.videos
-        .map((v) => {
-            const match = v.id.match(/:(\d+):(\d+)$/);
-            if (match) {
-                return {
-                    season: parseInt(match[1], 10),
-                    episode: parseInt(match[2], 10),
-                    title: v.title || null,
-                };
-            }
-            return null;
-        })
-        .filter((ep) => ep !== null);
+    const cacheKey = buildSeriesMetaCacheKey(provider, seriesMetaId);
+    const cachedMeta = releaseCheckCache.get(cacheKey);
+    if (cachedMeta && cachedMeta.expiresAt > now) {
+        return cachedMeta.episodes;
+    }
 
+    const url = `${baseUrl}/meta/series/${seriesMetaId}.json`;
+    const data = await httpGetWithRetry(url, { maxRetries: 1, delayMs: 1000, timeoutMs: 15000 });
+
+    if (!Array.isArray(data?.meta?.videos)) {
+        releaseCheckCache.set(cacheKey, { episodes: [], expiresAt: now + RELEASE_CHECK_TTL_MS });
+        pruneReleaseCheckCache(now);
+        return [];
+    }
+
+    const episodes = data.meta.videos.map((video) => readSeriesMetaEpisode(video, now)).filter((ep) => ep !== null);
+
+    releaseCheckCache.set(cacheKey, { episodes, expiresAt: now + RELEASE_CHECK_TTL_MS });
+    pruneReleaseCheckCache(now);
     return episodes;
+}
+
+async function fetchSeriesMetaForCandidates(provider, candidateIds, now = Date.now()) {
+    for (const candidateId of candidateIds) {
+        const episodes = await fetchSeriesMeta(provider, candidateId, now);
+        if (episodes.length > 0) {
+            return { episodes, candidateId };
+        }
+    }
+
+    return { episodes: [], candidateId: null };
+}
+
+async function findConfirmedEpisodeReleaseStatus(provider, candidateIds, target, now = Date.now()) {
+    for (const candidateId of candidateIds) {
+        const episodes = await fetchSeriesMeta(provider, candidateId, now);
+        const matchingEpisode = episodes.find(
+            (episode) => episode.season === target.season && episode.episode === target.episode,
+        );
+        if (!matchingEpisode || matchingEpisode.releaseStatus === "unknown") {
+            continue;
+        }
+
+        return { status: matchingEpisode.releaseStatus, candidateId };
+    }
+
+    return { status: "unknown", candidateId: null };
+}
+
+function isAioStreamsProvider(provider) {
+    const haystack =
+        `${readNonEmptyString(provider.name) ?? ""} ${readNonEmptyString(provider.id) ?? ""}`.toLowerCase();
+    return haystack.includes("aiostreams") || haystack.includes("aio streams");
+}
+
+function getReleaseCheckProviderOrder(enabledProviders) {
+    const orderedProviders = [];
+    const seenProviders = new Set();
+    const addProvider = (provider) => {
+        const key = readNonEmptyString(provider.url) ?? readNonEmptyString(provider.id) ?? provider.name;
+        if (!key || seenProviders.has(key)) {
+            return;
+        }
+
+        seenProviders.add(key);
+        orderedProviders.push(provider);
+    };
+
+    if (enabledProviders[0]) {
+        addProvider(enabledProviders[0]);
+    }
+
+    for (const provider of enabledProviders.filter(isAioStreamsProvider)) {
+        addProvider(provider);
+    }
+
+    for (const provider of enabledProviders) {
+        addProvider(provider);
+    }
+
+    return orderedProviders;
+}
+
+async function checkEpisodeReleaseStatus(enabledProviders, imdbId, target, now = Date.now(), sourceContext = {}) {
+    const candidateIds = buildReleaseMetaCandidateIds(imdbId, sourceContext);
+    for (const provider of getReleaseCheckProviderOrder(enabledProviders)) {
+        const releaseCheck = await findConfirmedEpisodeReleaseStatus(provider, candidateIds, target, now);
+        if (releaseCheck.status === "unknown") {
+            continue;
+        }
+
+        return {
+            status: releaseCheck.status,
+            source: `${provider.name || provider.id || provider.url} meta ${releaseCheck.candidateId}`,
+        };
+    }
+
+    return { status: "unknown", source: null };
 }
 
 /**
@@ -1512,6 +1736,7 @@ async function collectNextEpisodes(
     episode,
     extraEpisodes,
     currentPlaylistOverride = undefined,
+    releaseMetaContext = {},
 ) {
     const providers = config.providers || [];
     const enabledProviders = providers.filter((p) => p.enabled && p.url);
@@ -1524,9 +1749,12 @@ async function collectNextEpisodes(
             skippedCompleted: 0,
             skippedNotFound: 0,
             skippedPlaylist: 0,
+            skippedUnreleased: 0,
             newlyNotFound: 0,
         };
     }
+
+    const releaseMetaCandidateIds = buildReleaseMetaCandidateIds(imdbId, releaseMetaContext);
 
     // Get current MPV playlist to skip already-present episodes
     const currentPlaylist = currentPlaylistOverride ?? (await getMpvPlaylist());
@@ -1554,10 +1782,12 @@ async function collectNextEpisodes(
     // Try to discover episodes from provider metadata
     let discoveredEpisodes = [];
     for (const p of enabledProviders) {
-        const episodes = await fetchSeriesMeta(p.url, imdbId);
+        const { episodes, candidateId } = await fetchSeriesMetaForCandidates(p, releaseMetaCandidateIds);
         if (episodes.length > 0) {
             discoveredEpisodes = episodes;
-            console.log(`[MPV Bridge] Discovered ${episodes.length} episodes from ${p.name || p.id} meta`);
+            console.log(
+                `[MPV Bridge] Discovered ${episodes.length} episodes from ${p.name || p.id} meta ${candidateId}`,
+            );
             break;
         }
     }
@@ -1595,6 +1825,7 @@ async function collectNextEpisodes(
     let skippedCompleted = 0;
     let skippedNotFound = 0;
     let skippedPlaylist = 0;
+    let skippedUnreleased = 0;
     let newlyNotFound = 0;
     // Target dedupe: track SxxExx keys we've already added in THIS request so
     // that two concurrent auto-fetch calls (or a single call whose response
@@ -1630,6 +1861,21 @@ async function collectNextEpisodes(
             } else if (status === "not-found") {
                 skippedNotFound++;
             }
+            continue;
+        }
+
+        const releaseCheck = await checkEpisodeReleaseStatus(
+            enabledProviders,
+            imdbId,
+            ep,
+            Date.now(),
+            releaseMetaContext,
+        );
+        if (releaseCheck.status === "unreleased") {
+            const sourceDetail = releaseCheck.source ? ` (${releaseCheck.source})` : "";
+            console.log(`[DETAIL] target not released, skipping auto-fetch: ${epKey}${sourceDetail}`);
+            seenEpisodeKeys.add(epKey);
+            skippedUnreleased++;
             continue;
         }
 
@@ -1693,7 +1939,15 @@ async function collectNextEpisodes(
         }
     }
 
-    return { items, skippedInFlight, skippedCompleted, skippedNotFound, skippedPlaylist, newlyNotFound };
+    return {
+        items,
+        skippedInFlight,
+        skippedCompleted,
+        skippedNotFound,
+        skippedPlaylist,
+        skippedUnreleased,
+        newlyNotFound,
+    };
 }
 
 /**
@@ -1765,7 +2019,16 @@ app.post("/auto-fetch", async (req, res) => {
     console.log(`[MPV Bridge] Auto-fetch: ${name} S${season}E${episode} (+${extraEpisodes} episodes)`);
 
     // Collect next episodes
-    const autoFetchResult = await collectNextEpisodes(config, imdbId, name, season, episode, extraEpisodes);
+    const autoFetchResult = await collectNextEpisodes(
+        config,
+        imdbId,
+        name,
+        season,
+        episode,
+        extraEpisodes,
+        undefined,
+        sourceStremioContext,
+    );
     const nextItems = autoFetchResult.items;
 
     if (nextItems.length === 0) {
@@ -1779,6 +2042,7 @@ app.post("/auto-fetch", async (req, res) => {
                 skippedCompleted: autoFetchResult.skippedCompleted,
                 skippedNotFound: autoFetchResult.skippedNotFound,
                 skippedPlaylist: autoFetchResult.skippedPlaylist,
+                skippedUnreleased: autoFetchResult.skippedUnreleased,
             });
         }
 
@@ -1793,7 +2057,24 @@ app.post("/auto-fetch", async (req, res) => {
                 skippedCompleted: autoFetchResult.skippedCompleted,
                 skippedNotFound: autoFetchResult.skippedNotFound,
                 skippedPlaylist: autoFetchResult.skippedPlaylist,
+                skippedUnreleased: autoFetchResult.skippedUnreleased,
                 retryAfterMs: AUTO_FETCH_NOT_FOUND_TTL_MS,
+            });
+        }
+
+        if (autoFetchResult.skippedUnreleased > 0 && autoFetchResult.newlyNotFound === 0) {
+            console.log("[MPV Bridge] Auto-fetch: Target episodes are not released yet");
+            return res.json({
+                success: true,
+                status: "no_released_episodes",
+                added: 0,
+                message: "Target episodes are not released yet; skipped auto-fetch until release-check cache expires",
+                skippedInFlight: 0,
+                skippedCompleted: autoFetchResult.skippedCompleted,
+                skippedNotFound: autoFetchResult.skippedNotFound,
+                skippedPlaylist: autoFetchResult.skippedPlaylist,
+                skippedUnreleased: autoFetchResult.skippedUnreleased,
+                retryAfterMs: RELEASE_CHECK_TTL_MS,
             });
         }
 
@@ -1808,6 +2089,7 @@ app.post("/auto-fetch", async (req, res) => {
                 skippedCompleted: autoFetchResult.skippedCompleted,
                 skippedNotFound: autoFetchResult.skippedNotFound,
                 skippedPlaylist: autoFetchResult.skippedPlaylist,
+                skippedUnreleased: autoFetchResult.skippedUnreleased,
                 newlyNotFound: autoFetchResult.newlyNotFound,
                 retryAfterMs: AUTO_FETCH_NOT_FOUND_TTL_MS,
             });
@@ -1822,6 +2104,7 @@ app.post("/auto-fetch", async (req, res) => {
             skippedCompleted: autoFetchResult.skippedCompleted,
             skippedNotFound: autoFetchResult.skippedNotFound,
             skippedPlaylist: autoFetchResult.skippedPlaylist,
+            skippedUnreleased: autoFetchResult.skippedUnreleased,
         });
     }
 
@@ -1863,9 +2146,13 @@ module.exports = {
     app,
     _autoFetchDedupeForTests: {
         AUTO_FETCH_NOT_FOUND_TTL_MS,
+        RELEASE_CHECK_TTL_MS,
         buildAutoFetchEpisodeKey,
+        buildReleaseMetaCandidateIds,
+        checkEpisodeReleaseStatus,
         collectNextEpisodes,
         completeAutoFetchEpisodeKey,
+        fetchSeriesMeta,
         getAutoFetchEpisodeStatus,
         isPlayableStremioStream,
         findBestStream,

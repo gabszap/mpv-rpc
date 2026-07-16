@@ -116,6 +116,16 @@ describe("bridge auto-fetch episode dedupe", () => {
         expect(_autoFetchDedupeForTests.reserveAutoFetchEpisodeKey(key)).toBe(false);
     });
 
+    it("builds deduped release meta identifiers from Stremio library context", () => {
+        expect(
+            _autoFetchDedupeForTests.buildReleaseMetaCandidateIds("tt9679542", {
+                seriesId: "mal:48549",
+                libraryItemId: "kitsu:12345",
+                imdbId: "tt9679542",
+            }),
+        ).toEqual(["mal:48549", "kitsu:12345", "tt9679542"]);
+    });
+
     it("caches completed not-found lookups so repeated requests skip stream provider calls", async () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
@@ -216,6 +226,299 @@ describe("bridge auto-fetch episode dedupe", () => {
 
         expect(result).toMatchObject({ items: [], newlyNotFound: 0, skippedNotFound: 0 });
         expect(_autoFetchDedupeForTests.getAutoFetchEpisodeStatus(key)).toBeNull();
+    });
+
+    it("skips future targets when active addon meta says they are unreleased", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T12:00:00.000Z"));
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/")) {
+                return Response.json({
+                    meta: {
+                        videos: [
+                            { id: "tt9679542:4:35", released: "2026-06-05T15:00:00.000Z" },
+                            { id: "tt9679542:4:36", released: "2026-06-19T15:00:00.000Z" },
+                            { id: "tt9679542:4:37", releaseDate: "2026-06-26T15:00:00.000Z" },
+                        ],
+                    },
+                });
+            }
+
+            return Response.json({ streams: [{ url: "https://streams.example.test/future.mkv" }] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "AIOStreams" }],
+        };
+
+        const result = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            35,
+            2,
+            [],
+        );
+
+        const streamCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+        expect(result).toMatchObject({ items: [], skippedUnreleased: 2, newlyNotFound: 0 });
+        expect(streamCalls).toHaveLength(0);
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("target not released, skipping auto-fetch"));
+    });
+
+    it("skips future targets when addon meta is keyed by Stremio library identifiers", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T12:00:00.000Z"));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/mal:48549.json")) {
+                return Response.json({
+                    meta: {
+                        videos: [{ id: "mal:48549:4:36", released: "2026-06-19T15:00:00.000Z" }],
+                    },
+                });
+            }
+
+            if (url.includes("/meta/series/")) {
+                return Response.json({ meta: { videos: [] } });
+            }
+
+            return Response.json({ streams: [{ url: "https://streams.example.test/future.mkv" }] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "Library Meta Addon" }],
+        };
+
+        const result = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            35,
+            1,
+            [],
+            { seriesId: "mal:48549", libraryItemId: "mal:48549" },
+        );
+
+        const metaCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/meta/series/"));
+        const streamCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+        expect(result).toMatchObject({ items: [], skippedUnreleased: 1, newlyNotFound: 0 });
+        expect(String(metaCalls[0][0])).toContain("/meta/series/mal:48549.json");
+        expect(streamCalls).toHaveLength(0);
+    });
+
+    it("fetches released targets while skipping future targets from mixed addon meta", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T12:00:00.000Z"));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/")) {
+                return Response.json({
+                    meta: {
+                        videos: [
+                            { id: "tt9679542:4:36", released: "2026-06-11T15:00:00.000Z" },
+                            { id: "tt9679542:4:37", released: "2026-06-19T15:00:00.000Z" },
+                        ],
+                    },
+                });
+            }
+
+            if (url.includes("tt9679542:4:36")) {
+                return Response.json({ streams: [{ url: "https://streams.example.test/dr-stone-s04e36.mkv" }] });
+            }
+
+            return Response.json({ streams: [{ url: "https://streams.example.test/dr-stone-s04e37.mkv" }] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "Any Meta Addon" }],
+        };
+
+        const result = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            35,
+            2,
+            [],
+        );
+
+        const streamCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+        expect(result).toMatchObject({ skippedUnreleased: 1, newlyNotFound: 0 });
+        expect(result.items).toHaveLength(1);
+        expect(result.items[0]).toMatchObject({ season: 4, episode: 36 });
+        expect(streamCalls).toHaveLength(1);
+        expect(String(streamCalls[0][0])).toContain("tt9679542:4:36");
+    });
+
+    it("keeps stream lookup fallback when addon meta does not confirm release state", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/")) {
+                return Response.json({ meta: { videos: [{ id: "tt9679542:4:36" }] } });
+            }
+
+            return Response.json({ streams: [] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "Generic Addon" }],
+        };
+
+        const result = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            35,
+            1,
+            [],
+        );
+
+        const streamCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+        expect(result).toMatchObject({ skippedUnreleased: 0, newlyNotFound: 1 });
+        expect(streamCalls).toHaveLength(1);
+    });
+
+    it("continues release checks when first candidate is unknown and second confirms unreleased", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T12:00:00.000Z"));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/mal:48549.json")) {
+                return Response.json({ meta: { videos: [{ id: "mal:48549:4:36" }] } });
+            }
+
+            if (url.includes("/meta/series/kitsu:12345.json")) {
+                return Response.json({
+                    meta: { videos: [{ id: "kitsu:12345:4:36", released: "2026-06-19T15:00:00.000Z" }] },
+                });
+            }
+
+            return Response.json({ meta: { videos: [] } });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const status = await _autoFetchDedupeForTests.checkEpisodeReleaseStatus(
+            [{ enabled: true, url: "https://provider.example", name: "Library Meta Addon" }],
+            "tt9679542",
+            { season: 4, episode: 36 },
+            Date.now(),
+            { seriesId: "mal:48549", libraryItemId: "kitsu:12345" },
+        );
+
+        const metaCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/meta/series/"));
+        expect(status).toMatchObject({ status: "unreleased", source: "Library Meta Addon meta kitsu:12345" });
+        expect(metaCalls).toHaveLength(2);
+    });
+
+    it("continues release checks when first candidate is unknown and second confirms released", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T12:00:00.000Z"));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/mal:48549.json")) {
+                return Response.json({ meta: { videos: [{ id: "mal:48549:4:36" }] } });
+            }
+
+            if (url.includes("/meta/series/kitsu:12345.json")) {
+                return Response.json({
+                    meta: { videos: [{ id: "kitsu:12345:4:36", released: "2026-06-05T15:00:00.000Z" }] },
+                });
+            }
+
+            return Response.json({ meta: { videos: [] } });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const status = await _autoFetchDedupeForTests.checkEpisodeReleaseStatus(
+            [{ enabled: true, url: "https://provider.example", name: "Library Meta Addon" }],
+            "tt9679542",
+            { season: 4, episode: 36 },
+            Date.now(),
+            { seriesId: "mal:48549", libraryItemId: "kitsu:12345" },
+        );
+
+        const metaCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/meta/series/"));
+        expect(status).toMatchObject({ status: "released", source: "Library Meta Addon meta kitsu:12345" });
+        expect(metaCalls).toHaveLength(2);
+    });
+
+    it("keeps stream lookup fallback after all release candidates are unknown", async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/mal:48549.json")) {
+                return Response.json({ meta: { videos: [{ id: "mal:48549:4:36" }] } });
+            }
+
+            if (url.includes("/meta/series/kitsu:12345.json")) {
+                return Response.json({ meta: { videos: [{ id: "kitsu:12345:4:36" }] } });
+            }
+
+            if (url.includes("/meta/series/tt9679542.json")) {
+                return Response.json({ meta: { videos: [{ id: "tt9679542:4:36" }] } });
+            }
+
+            return Response.json({ streams: [] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "Library Meta Addon" }],
+        };
+
+        const result = await _autoFetchDedupeForTests.collectNextEpisodes(
+            config,
+            "tt9679542",
+            "Dr. Stone",
+            4,
+            35,
+            1,
+            [],
+            { seriesId: "mal:48549", libraryItemId: "kitsu:12345" },
+        );
+
+        const streamCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/stream/"));
+        expect(result).toMatchObject({ skippedUnreleased: 0, newlyNotFound: 1 });
+        expect(streamCalls).toHaveLength(1);
+    });
+
+    it("caches addon meta release checks for roughly ten minutes", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T12:00:00.000Z"));
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/meta/series/")) {
+                return Response.json({
+                    meta: {
+                        videos: [{ id: "tt9679542:4:36", released: "2026-06-19T15:00:00.000Z" }],
+                    },
+                });
+            }
+
+            return Response.json({ streams: [] });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const config = {
+            providers: [{ enabled: true, url: "https://provider.example", name: "Generic Addon" }],
+        };
+
+        await _autoFetchDedupeForTests.collectNextEpisodes(config, "tt9679542", "Dr. Stone", 4, 35, 1, []);
+        await _autoFetchDedupeForTests.collectNextEpisodes(config, "tt9679542", "Dr. Stone", 4, 35, 1, []);
+
+        const metaCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/meta/series/"));
+        expect(metaCalls).toHaveLength(1);
+        expect(_autoFetchDedupeForTests.RELEASE_CHECK_TTL_MS).toBe(10 * 60 * 1000);
     });
 
     it("uses saved normalized providers for partial /auto-fetch playback context requests", async () => {
