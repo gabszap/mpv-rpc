@@ -8,10 +8,17 @@
 export interface EpisodeContext {
     /** Unique episode identifier (file path or normalized SxxExx) */
     id: string;
+    /**
+     * Parsed-source S/E identity, anchored to the filename before canonical
+     * remapping. The override auto-clear only fires when this changes,
+     * so overrides survive overflow/canonical resolution (e.g. S04E35 → S04E11).
+     * Falls back to the filename when no S/E was parsed.
+     */
+    parsedId: string;
     /** Parent series name for logging */
     seriesName: string;
     /** Episode number */
-    episodeNumber: number;
+    episodeNumber: number | null;
     /** Season number (if available) */
     seasonNumber: number | null;
 }
@@ -26,6 +33,8 @@ export interface ManualOverride {
     context: EpisodeContext;
     /** When the override was set */
     timestamp: Date;
+    /** Reason the override was cleared (populated only at clear time for logging) */
+    clearReason?: string;
 }
 
 /**
@@ -55,33 +64,51 @@ export function clearManualOverride(): void {
 }
 
 /**
- * Create an episode context from MPV data
+ * Create an episode context from MPV data.
+ *
+ * @param filename - The current filename (used as parsedId fallback when no S/E)
+ * @param seriesName - The series name for display
+ * @param season - The resolved/canonical season (may differ from parsed after overflow)
+ * @param episode - The resolved/canonical episode (may differ from parsed after overflow)
+ * @param parsedSeason - The season extracted from the filename before canonical remapping
+ * @param parsedEpisode - The episode extracted from the filename before canonical remapping
  */
 export function createEpisodeContext(
     filename: string,
     seriesName: string,
     season: number | null,
     episode: number | null,
+    parsedSeason?: number | null,
+    parsedEpisode?: number | null,
 ): EpisodeContext | null {
-    if (episode === null) {
-        return null;
-    }
+    const id = buildEpisodeIdentity(filename, season, episode);
 
-    // Create a unique ID from season/episode or filename
-    let id: string;
-    if (season !== null) {
-        id = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
-    } else {
-        // Use filename + episode as fallback
-        id = `${filename}:E${episode}`;
-    }
+    // Build the parsed-source identity: the S/E from the filename before
+    // canonical remapping. This is the anchor for override matching.
+    const effectiveParsedSeason = parsedSeason ?? season;
+    const effectiveParsedEpisode = parsedEpisode ?? episode;
+
+    const parsedId = buildEpisodeIdentity(filename, effectiveParsedSeason, effectiveParsedEpisode);
 
     return {
         id,
+        parsedId,
         seriesName,
         episodeNumber: episode,
         seasonNumber: season,
     };
+}
+
+function buildEpisodeIdentity(filename: string, season: number | null | undefined, episode: number | null): string {
+    if (episode === null) {
+        return filename;
+    }
+
+    if (season !== null && season !== undefined) {
+        return `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+    }
+
+    return `${filename}:E${episode}`;
 }
 
 /**

@@ -27,6 +27,7 @@ export class ConsoleRepl extends EventEmitter {
     private currentContext: EpisodeContext | null = null;
     private currentFilename: string = "";
     private isPromptActive = false;
+    private promptTimer: NodeJS.Timeout | null = null;
 
     constructor() {
         super();
@@ -39,6 +40,7 @@ export class ConsoleRepl extends EventEmitter {
 
         this.rl.on("line", this.handleCommand.bind(this));
         this.rl.on("close", () => {
+            this.clearPromptTimer();
             // Handle Ctrl+C gracefully
             this.emit("exit");
         });
@@ -57,12 +59,17 @@ export class ConsoleRepl extends EventEmitter {
             this.currentFilename = filename;
         }
 
-        // Auto-clear override if episode changed
-        if (previousContext && context && previousContext.id !== context.id) {
+        // Auto-clear override only when the parsed-source S/E changed.
+        // Canonical remapping (e.g. S04E35 → S04E11 after overflow resolution)
+        // changes context.id but NOT context.parsedId, so the override survives.
+        if (previousContext && context && previousContext.parsedId !== context.parsedId) {
             const override = getManualOverride();
             if (override) {
                 console.log(
-                    `\n[System] Episode changed (${previousContext.id} → ${context.id}). Override auto-cleared.`,
+                    `\n[System] Parsed episode changed (${previousContext.parsedId} → ${context.parsedId}). Override auto-cleared.`,
+                );
+                console.log(
+                    `[DETAIL] Override cleared: parsed-source identity changed from "${previousContext.parsedId}" to "${context.parsedId}" (resolved: ${previousContext.id} → ${context.id})`,
                 );
                 clearManualOverride();
                 this.emit("overrideCleared");
@@ -73,7 +80,10 @@ export class ConsoleRepl extends EventEmitter {
         if (!this.isPromptActive) {
             this.isPromptActive = true;
             // Small delay to let other logs finish
-            setTimeout(() => this.rl.prompt(), 100);
+            this.promptTimer = setTimeout(() => {
+                this.promptTimer = null;
+                this.rl.prompt();
+            }, 100);
         }
     }
 
@@ -155,6 +165,9 @@ export class ConsoleRepl extends EventEmitter {
         setManualOverride(override);
         console.log(`[Manual] Episode title set to: "${title}"`);
         console.log(`[Manual] Active for episode: ${this.currentContext.id}`);
+        console.log(
+            `[DETAIL] Override anchored to parsed S/E: ${this.currentContext.parsedId}, resolved S/E: ${this.currentContext.id}`,
+        );
         this.emit("overrideSet", override);
     }
 
@@ -191,8 +204,11 @@ export class ConsoleRepl extends EventEmitter {
         const override = getManualOverride();
 
         if (override) {
-            clearManualOverride();
             console.log("[Manual] Episode title override cleared");
+            console.log(
+                `[DETAIL] Override cleared: user clear-episode command (anchored to parsed S/E: ${override.context.parsedId}, resolved S/E: ${override.context.id})`,
+            );
+            clearManualOverride();
             this.emit("overrideCleared");
         } else {
             console.log("[Manual] No episode title override active");
@@ -222,8 +238,11 @@ export class ConsoleRepl extends EventEmitter {
         const rename = getSeriesNameOverride();
 
         if (override) {
-            clearManualOverride();
             console.log("[Manual] Episode title override cleared");
+            console.log(
+                `[DETAIL] Override cleared: user clear-all command (anchored to parsed S/E: ${override.context.parsedId}, resolved S/E: ${override.context.id})`,
+            );
+            clearManualOverride();
             this.emit("overrideCleared");
         }
         if (rename) {
@@ -244,7 +263,8 @@ export class ConsoleRepl extends EventEmitter {
 
         // Current episode
         if (this.currentContext) {
-            console.log(`Current Episode: ${this.currentContext.id}`);
+            console.log(`Parsed S/E: ${this.currentContext.parsedId}`);
+            console.log(`Resolved S/E: ${this.currentContext.id}`);
             console.log(`  Series: ${this.currentContext.seriesName}`);
             if (this.currentContext.seasonNumber !== null) {
                 console.log(`  Season: ${this.currentContext.seasonNumber}`);
@@ -259,7 +279,8 @@ export class ConsoleRepl extends EventEmitter {
         if (override) {
             console.log(`\nEpisode Title Override: ACTIVE`);
             console.log(`  Title: "${override.title}"`);
-            console.log(`  For Episode: ${override.context.id}`);
+            console.log(`  Anchored to Parsed S/E: ${override.context.parsedId}`);
+            console.log(`  Resolved S/E: ${override.context.id}`);
             console.log(`  Set At: ${override.timestamp.toLocaleTimeString()}`);
         } else {
             console.log("\nEpisode Title Override: None");
@@ -287,7 +308,10 @@ export class ConsoleRepl extends EventEmitter {
         console.log("\n--- Available Commands ---\n");
         console.log('  episode-title "<title>"    Override the episode title shown in Discord');
         console.log('                              Example: episode-title "The Battle Begins"');
-        console.log("                              Alias: et\n");
+        console.log("                              Alias: et");
+        console.log("                              Note: Override is anchored to the parsed S/E");
+        console.log("                              from the filename and survives canonical");
+        console.log("                              remapping (e.g. overflow resolution).\n");
         console.log('  series-name "<name>"       Override the series name for metadata search');
         console.log("                              Useful when the parser got the anime name wrong");
         console.log('                              Example: series-name "One Piece"');
@@ -315,12 +339,27 @@ export class ConsoleRepl extends EventEmitter {
      * Close the REPL interface
      */
     close(): void {
+        this.clearPromptTimer();
         this.rl.close();
+    }
+
+    private clearPromptTimer(): void {
+        if (!this.promptTimer) {
+            return;
+        }
+
+        clearTimeout(this.promptTimer);
+        this.promptTimer = null;
     }
 }
 
 /**
- * Resolve the display title, applying manual override if active
+ * Resolve the display title, applying manual override if active.
+ *
+ * The override is matched against the parsed-source S/E identity (parsedId),
+ * so it survives canonical remapping (e.g. overflow resolution changing
+ * S04E35 → S04E11). The auto-clear logic lives exclusively in
+ * ConsoleRepl.updateContext, which compares parsedId values.
  */
 export function resolveDisplayTitle(
     autoTitle: string,
@@ -329,19 +368,15 @@ export function resolveDisplayTitle(
     const override = getManualOverride();
 
     if (override && episodeContext) {
-        if (override.context.id === episodeContext.id) {
-            // Override is active for this episode
+        if (override.context.parsedId === episodeContext.parsedId) {
+            // Override is active for this parsed-source episode
             return {
                 title: override.title,
                 isOverride: true,
             };
-        } else {
-            // Episode changed - invalidate override
-            console.log(
-                `[System] Episode changed (${override.context.id} → ${episodeContext.id}). Override auto-cleared.`,
-            );
-            clearManualOverride();
         }
+        // If parsedId differs, updateContext already handled the auto-clear.
+        // Fall through to autoTitle.
     }
 
     return {

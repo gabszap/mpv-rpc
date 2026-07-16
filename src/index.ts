@@ -93,7 +93,17 @@ async function update(): Promise<void> {
 
         // Update episode context for the REPL (for manual override tracking)
         if (consoleRepl) {
-            const context = createEpisodeContext(data.filename, data.series_title, data.season, data.episode);
+            // Pass resolved S/E as the main id (for sync targets) and parsed S/E
+            // as the anchor (so overrides survive canonical remapping).
+            const resolvedEpisode = data.adjusted_episode ?? data.episode;
+            const context = createEpisodeContext(
+                data.filename,
+                data.series_title,
+                data.season,
+                resolvedEpisode,
+                data.season,
+                data.episode,
+            );
             consoleRepl.updateContext(context, data.filename);
         }
 
