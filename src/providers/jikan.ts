@@ -5,7 +5,7 @@
 import axios from "axios";
 import { config } from "../config";
 import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
-import { formatProviderErrorDetails, logApiCall } from "./types";
+import { formatProviderErrorDetails, logApiCall, markSeasonAnimeValidated } from "./types";
 
 // Rate limiting
 let lastRequestTime = 0;
@@ -296,12 +296,14 @@ export class JikanProvider implements AnimeProvider {
             // Score each candidate by title similarity
             const scoredCandidates = candidates.map((anime) => {
                 let score = calculateTitleScore(title, anime.title || "", anime.title_english || null);
+                let seasonValidation: AnimeSearchResult["seasonValidation"];
 
                 // 2FA: Check synonyms for season match when expectedSeason is provided
                 if (expectedSeason && expectedSeason > 1) {
                     const synonymSeason = extractSeasonFromTitles(anime.titles || []);
                     if (synonymSeason === expectedSeason) {
                         score += 2000;
+                        seasonValidation = { expectedSeason, method: "explicit-title" };
                         logApiCall(
                             "Jikan",
                             "/anime",
@@ -312,7 +314,7 @@ export class JikanProvider implements AnimeProvider {
                     }
                 }
 
-                return { anime, score };
+                return { anime, score, seasonValidation };
             });
 
             // Sort by score (descending), then prefer TV/ONA types
@@ -325,8 +327,9 @@ export class JikanProvider implements AnimeProvider {
                 return 0;
             });
 
-            const selected = scoredCandidates[0].anime;
-            const selectedScore = scoredCandidates[0].score;
+            const selectedCandidate = scoredCandidates[0];
+            const selected = selectedCandidate.anime;
+            const selectedScore = selectedCandidate.score;
             logApiCall(
                 "Jikan",
                 "/anime",
@@ -334,7 +337,10 @@ export class JikanProvider implements AnimeProvider {
                 "DETAIL",
                 `"${selected.title}" (MAL:${selected.mal_id}) [score:${selectedScore}]`,
             );
-            return this.mapSearchResult(selected);
+            return {
+                ...this.mapSearchResult(selected),
+                seasonValidation: selectedCandidate.seasonValidation,
+            };
         } catch (e) {
             console.error(`[Jikan] Search error: ${formatCompactJikanError(e)}`);
             return null;
@@ -412,7 +418,8 @@ export class JikanProvider implements AnimeProvider {
 
     async findSeasonAnime(baseId: number, targetSeason: number): Promise<AnimeInfo | null> {
         if (targetSeason <= 1) {
-            return this.getAnimeById(baseId);
+            const anime = await this.getAnimeById(baseId);
+            return anime ? markSeasonAnimeValidated(anime, targetSeason, "base-season") : null;
         }
 
         const visited = new Set<number>();
@@ -438,7 +445,7 @@ export class JikanProvider implements AnimeProvider {
             const seasonInTitle =
                 extractSeasonNumber(sequelAnime.title_romaji) || extractSeasonNumber(sequelAnime.title_english || "");
             if (seasonInTitle === targetSeason) {
-                return sequelAnime;
+                return markSeasonAnimeValidated(sequelAnime, targetSeason, "explicit-title");
             }
 
             // Check if this is a new season or just a "Part"
@@ -449,7 +456,12 @@ export class JikanProvider implements AnimeProvider {
             }
         }
 
-        return this.getAnimeById(lastValidId);
+        if (currentSeason < targetSeason) {
+            return null;
+        }
+
+        const anime = await this.getAnimeById(lastValidId);
+        return anime ? markSeasonAnimeValidated(anime, targetSeason, "relation-chain") : null;
     }
 
     private async getRelations(malId: number): Promise<JikanRelationData[]> {

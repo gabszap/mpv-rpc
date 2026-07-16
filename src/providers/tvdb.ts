@@ -8,7 +8,7 @@
 import axios from "axios";
 import { config } from "../config";
 import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
-import { formatProviderErrorDetails, logApiCall } from "./types";
+import { formatProviderErrorDetails, logApiCall, markSeasonAnimeValidated } from "./types";
 
 const TVDB_BASE = "https://api4.thetvdb.com/v4";
 const MAX_SEASON_LOOKUP_PAGES = 3;
@@ -521,6 +521,22 @@ function findExactEpisode(episodes: TvdbEpisodeRecord[], season: number, episode
                 normalizeEpisodeNumber(candidate.seasonNumber) === seasonNum &&
                 normalizeEpisodeNumber(candidate.number) === episodeNum,
         ) || null
+    );
+}
+
+function findEpisodeByAbsoluteNumber(episodes: TvdbEpisodeRecord[], absoluteEpisode: number): TvdbEpisodeRecord | null {
+    const absoluteEpisodeNumber = normalizeEpisodeNumber(absoluteEpisode);
+    if (absoluteEpisodeNumber === null || absoluteEpisodeNumber < 1) {
+        return null;
+    }
+
+    return (
+        episodes.find((candidate) => {
+            const absoluteNumber = getAbsoluteEpisodeNumber(candidate);
+            const episodeNumber = normalizeEpisodeNumber(candidate.number);
+
+            return absoluteNumber === absoluteEpisodeNumber || episodeNumber === absoluteEpisodeNumber;
+        }) || null
     );
 }
 
@@ -1155,11 +1171,19 @@ async function inferSeasonFromTitleHints(
     }
 }
 
+interface TvdbEpisodeLookupResult {
+    episode: TvdbEpisodeRecord;
+    seasonType: TvdbEpisodeOrderType;
+    sourceSeason?: number;
+    sourceEpisode?: number;
+    tvdbAbsoluteEpisode?: number;
+}
+
 async function lookupEpisodeForSeasonNumber(
     seriesId: number,
     seasonNum: number,
     episode: number,
-): Promise<{ episode: TvdbEpisodeRecord; seasonType: TvdbSeasonType } | null> {
+): Promise<TvdbEpisodeLookupResult | null> {
     for (const seasonType of ["official", "default"] as TvdbSeasonType[]) {
         try {
             logApiCall(
@@ -1256,6 +1280,129 @@ async function lookupEpisodeForSeasonNumber(
     }
 
     return null;
+}
+
+function readAbsoluteNumberFromAbsoluteOrderEpisode(episode: TvdbEpisodeRecord): number | null {
+    return getAbsoluteEpisodeNumber(episode) ?? normalizeEpisodeNumber(episode.number);
+}
+
+async function lookupEpisodeForMappedSourcePosition(
+    seriesId: number,
+    sourceSeason: number,
+    sourceEpisode: number,
+    effectiveSeason: number,
+    effectiveEpisode: number,
+): Promise<TvdbEpisodeLookupResult | null> {
+    logApiCall(
+        "TVDB",
+        "getEpisode",
+        { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+        "DETAIL",
+        "source S/E lookup before effective episode fallback",
+    );
+
+    const sourceSeasonMatch = await lookupEpisodeForSeasonNumber(seriesId, sourceSeason, sourceEpisode);
+    if (sourceSeasonMatch) {
+        logApiCall(
+            "TVDB",
+            "getEpisode",
+            { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+            "DETAIL",
+            `source S/E matched seasonType=${sourceSeasonMatch.seasonType}`,
+        );
+
+        return {
+            ...sourceSeasonMatch,
+            sourceSeason,
+            sourceEpisode,
+        };
+    }
+
+    try {
+        const absoluteEpisodes = await fetchEpisodeOrder(seriesId, "absolute");
+        const absoluteSourcePositionMatch = findExactEpisode(absoluteEpisodes, sourceSeason, sourceEpisode);
+        if (absoluteSourcePositionMatch) {
+            const tvdbAbsoluteEpisode = readAbsoluteNumberFromAbsoluteOrderEpisode(absoluteSourcePositionMatch);
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode, tvdbAbsoluteEpisode },
+                "DETAIL",
+                "order=absolute source S/E match in TVDB absolute order",
+            );
+
+            return {
+                episode: absoluteSourcePositionMatch,
+                seasonType: "absolute",
+                sourceSeason,
+                sourceEpisode,
+                tvdbAbsoluteEpisode: tvdbAbsoluteEpisode ?? undefined,
+            };
+        }
+
+        const mappedEpisode = await mapTvdbAiredEpisodeToAbsolute(seriesId, sourceSeason, sourceEpisode);
+        if (!mappedEpisode) {
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+                "DETAIL",
+                "order=absolute no proven source S/E mapping -> fallback official/default effective episode",
+            );
+            return null;
+        }
+
+        const absoluteEpisodeMatch = findEpisodeByAbsoluteNumber(absoluteEpisodes, mappedEpisode.absoluteEpisode);
+        if (!absoluteEpisodeMatch) {
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                {
+                    id: seriesId,
+                    sourceSeason,
+                    sourceEpisode,
+                    effectiveSeason,
+                    effectiveEpisode,
+                    tvdbAbsoluteEpisode: mappedEpisode.absoluteEpisode,
+                },
+                "DETAIL",
+                "order=absolute mapped number missing from absolute order -> fallback official/default effective episode",
+            );
+            return null;
+        }
+
+        logApiCall(
+            "TVDB",
+            "getEpisode",
+            {
+                id: seriesId,
+                sourceSeason,
+                sourceEpisode,
+                effectiveSeason,
+                effectiveEpisode,
+                tvdbAbsoluteEpisode: mappedEpisode.absoluteEpisode,
+            },
+            "DETAIL",
+            `order=absolute mapped source S/E via ${mappedEpisode.seasonType}`,
+        );
+
+        return {
+            episode: absoluteEpisodeMatch,
+            seasonType: "absolute",
+            sourceSeason,
+            sourceEpisode,
+            tvdbAbsoluteEpisode: mappedEpisode.absoluteEpisode,
+        };
+    } catch (error) {
+        logApiCall(
+            "TVDB",
+            "getEpisode",
+            { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+            "DETAIL",
+            `order=absolute unavailable: ${error instanceof Error ? error.message : "unknown"}`,
+        );
+        return null;
+    }
 }
 
 async function fetchSeriesTranslationName(
@@ -1550,7 +1697,23 @@ export class TvdbProvider implements AnimeProvider {
                 }
             }
 
-            const lookupResult = await lookupEpisodeForSeasonNumber(seriesId, resolvedSeason, episode);
+            const sourceEpisode = normalizeEpisodeNumber(context?.sourceEpisode);
+            const sourceSeason = normalizeEpisodeNumber(context?.sourceSeason);
+            const shouldTrySourcePosition =
+                sourceSeason !== null &&
+                sourceSeason > 0 &&
+                sourceEpisode !== null &&
+                sourceEpisode > 0 &&
+                (sourceSeason !== resolvedSeason || sourceEpisode !== episode);
+            const lookupResult = shouldTrySourcePosition
+                ? ((await lookupEpisodeForMappedSourcePosition(
+                      seriesId,
+                      sourceSeason,
+                      sourceEpisode,
+                      resolvedSeason,
+                      episode,
+                  )) ?? (await lookupEpisodeForSeasonNumber(seriesId, resolvedSeason, episode)))
+                : await lookupEpisodeForSeasonNumber(seriesId, resolvedSeason, episode);
 
             if (!lookupResult) {
                 logApiCall(
@@ -1576,10 +1739,20 @@ export class TvdbProvider implements AnimeProvider {
             epTitle = await fetchLocalizedEpisodeTitle(episodeId, translationPlan, epTitle);
 
             if (epTitle) {
+                const finalLogParams = {
+                    id: seriesId,
+                    season: resolvedSeason,
+                    ep: episode,
+                    ...(lookupResult.sourceSeason ? { sourceSeason: lookupResult.sourceSeason } : {}),
+                    ...(lookupResult.sourceEpisode ? { sourceEpisode: lookupResult.sourceEpisode } : {}),
+                    ...(lookupResult.tvdbAbsoluteEpisode
+                        ? { tvdbAbsoluteEpisode: lookupResult.tvdbAbsoluteEpisode }
+                        : {}),
+                };
                 logApiCall(
                     "TVDB",
                     "getEpisode",
-                    { id: seriesId, season: resolvedSeason, ep: episode },
+                    finalLogParams,
                     "DETAIL",
                     `seasonType=${selectedSeasonType || "unknown"} "${epTitle}"`,
                 );
@@ -1594,7 +1767,8 @@ export class TvdbProvider implements AnimeProvider {
     async findSeasonAnime(baseId: number, targetSeason: number): Promise<AnimeInfo | null> {
         // TVDB groups all seasons under one series, so we just return the base series
         // The season info is used when fetching episodes and season-specific artwork
-        return this.getAnimeById(baseId, targetSeason);
+        const anime = await this.getAnimeById(baseId, targetSeason);
+        return anime ? markSeasonAnimeValidated(anime, targetSeason, "provider-season") : null;
     }
 
     async getSequelInfo(_animeId: number): Promise<SequelInfo | null> {

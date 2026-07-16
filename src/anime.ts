@@ -85,6 +85,14 @@ const NEGATIVE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for not-found results
 const OVERFLOW_CACHE_TTL = 30 * 60 * 1000; // 30 minutes for overflow resolution
 const DEFAULT_EPISODE_CACHE_SCOPE = "default";
 
+function readPositiveEpisode(value: number | null | undefined): number | undefined {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        return undefined;
+    }
+
+    return value;
+}
+
 function isCacheEntryValid(entry: CacheEntry, now = Date.now()): boolean {
     if (entry.cacheVersion !== ANIME_INFO_CACHE_VERSION) {
         return false;
@@ -177,6 +185,7 @@ function buildAnimeInfoFromSearchResult(searchResult: AnimeSearchResult): AnimeI
         title_english: searchResult.title_english,
         title_romaji: searchResult.title,
         cover_url: searchResult.coverImage,
+        seasonValidation: searchResult.seasonValidation,
     };
 }
 
@@ -474,6 +483,104 @@ export async function resolveOverflowEpisode(
 }
 
 /**
+ * Validate that a fallback provider's search result matches the expected
+ * season/episode before accepting its episode title.
+ *
+ * Title-based fallback searches can return the wrong season's anime
+ * (e.g. season 1 when the user expects season 4). This helper inspects
+ * the resolved anime to confirm the expected S/E exists.
+ *
+ * @returns true if the result is valid, false if it should be rejected
+ */
+export function validateEpisodeSE(
+    animeInfo: Pick<AnimeInfo, "total_episodes" | "seasonValidation">,
+    expectedEpisode: number,
+    expectedSeason: number | null = null,
+): boolean {
+    if (expectedEpisode < 1) {
+        return false;
+    }
+
+    if (expectedSeason !== null && expectedSeason > 1) {
+        const validation = animeInfo.seasonValidation;
+        if (!validation || validation.expectedSeason !== expectedSeason) {
+            return false;
+        }
+    }
+
+    if (!animeInfo.total_episodes || animeInfo.total_episodes <= 0) {
+        return true;
+    }
+
+    return expectedEpisode <= animeInfo.total_episodes;
+}
+
+async function resolveValidatedFallbackAnime(
+    fallback: AnimeProvider,
+    searchResult: AnimeSearchResult,
+    expectedSeason: number | null,
+    expectedEpisode: number,
+): Promise<AnimeInfo | null> {
+    if (expectedSeason !== null && expectedSeason > 1) {
+        if (searchResult.seasonValidation?.expectedSeason === expectedSeason) {
+            const animeInfo = await fallback.getAnimeById(searchResult.id);
+            const validatedAnimeInfo = {
+                ...(animeInfo ?? buildAnimeInfoFromSearchResult(searchResult)),
+                seasonValidation: searchResult.seasonValidation,
+            };
+
+            if (!validateEpisodeSE(validatedAnimeInfo, expectedEpisode, expectedSeason)) {
+                if (config.debug) {
+                    console.log(
+                        `[DETAIL] ${fallback.name} fallback: search result "${validatedAnimeInfo.title_romaji}" (ID: ${validatedAnimeInfo.id}) does not contain expected S${expectedSeason}E${expectedEpisode}, skipping`,
+                    );
+                }
+                return null;
+            }
+
+            return validatedAnimeInfo;
+        }
+
+        const seasonAnime = await fallback.findSeasonAnime(searchResult.id, expectedSeason);
+        if (!seasonAnime) {
+            if (config.debug) {
+                console.log(
+                    `[DETAIL] ${fallback.name} fallback: could not validate expected S${expectedSeason}E${expectedEpisode} from search result ID ${searchResult.id}, skipping`,
+                );
+            }
+            return null;
+        }
+
+        if (!validateEpisodeSE(seasonAnime, expectedEpisode, expectedSeason)) {
+            if (config.debug) {
+                console.log(
+                    `[DETAIL] ${fallback.name} fallback: anime "${seasonAnime.title_romaji}" (ID: ${seasonAnime.id}) does not contain expected S${expectedSeason}E${expectedEpisode}, skipping`,
+                );
+            }
+            return null;
+        }
+
+        return seasonAnime;
+    }
+
+    const animeInfo = await fallback.getAnimeById(searchResult.id);
+    if (!animeInfo) {
+        return buildAnimeInfoFromSearchResult(searchResult);
+    }
+
+    if (!validateEpisodeSE(animeInfo, expectedEpisode, expectedSeason)) {
+        if (config.debug) {
+            console.log(
+                `[DETAIL] ${fallback.name} fallback: anime "${animeInfo.title_romaji}" (ID: ${animeInfo.id}) does not contain expected episode ${expectedEpisode}, skipping`,
+            );
+        }
+        return null;
+    }
+
+    return animeInfo;
+}
+
+/**
  * Get anime info including cover and titles, along with the provider that resolved it.
  *
  * This is the preferred way to get anime info when overflow resolution will be
@@ -589,6 +696,9 @@ export async function getEpisodeTitle(
                 Boolean(value),
             ),
             allowSeasonInference: season === null || season <= 1,
+            sourceEpisode: readPositiveEpisode(episode),
+            sourceSeason: season,
+            effectiveEpisode: readPositiveEpisode(episode),
         };
 
         // Only use the provider that owns the anime ID for direct lookups.
@@ -651,6 +761,11 @@ export async function getEpisodeTitle(
 
                 const overflowAnimeId = resolved.animeInfo.id;
                 const overflowEpisode = resolved.adjustedEpisode;
+                const overflowEpisodeLookupContext = {
+                    ...episodeLookupContext,
+                    sourceEpisode: resolved.originalEpisode,
+                    effectiveEpisode: overflowEpisode,
+                };
 
                 for (const overflowProvider of overflowProviders) {
                     try {
@@ -658,7 +773,7 @@ export async function getEpisodeTitle(
                             overflowAnimeId,
                             overflowEpisode,
                             season ?? undefined,
-                            episodeLookupContext,
+                            overflowEpisodeLookupContext,
                         );
                         if (title) break;
                     } catch {
@@ -683,6 +798,11 @@ export async function getEpisodeTitle(
         // Use overflow-adjusted info for fallback lookups if available
         const effectiveAnimeInfo = overflowResult?.animeInfo ?? animeInfo;
         const effectiveEpisode = overflowResult?.adjustedEpisode ?? episode;
+        const fallbackEpisodeLookupContext = {
+            ...episodeLookupContext,
+            sourceEpisode: overflowResult?.originalEpisode ?? episodeLookupContext.sourceEpisode,
+            effectiveEpisode,
+        };
 
         // Try fallback providers only if we don't know the source provider
         // (if source is known but unavailable, fallback IDs would be in the wrong namespace)
@@ -706,7 +826,7 @@ export async function getEpisodeTitle(
                                 effectiveAnimeInfo.mal_id,
                                 effectiveEpisode,
                                 season ?? undefined,
-                                episodeLookupContext,
+                                fallbackEpisodeLookupContext,
                             );
                         } else {
                             // Fallback: search by title if no MAL ID or not Jikan
@@ -721,17 +841,27 @@ export async function getEpisodeTitle(
                                     console.log(`[Anime] Trying ${fallback.name} fallback query: "${candidate}"`);
                                 }
 
-                                const searchResult = await fallback.searchAnime(candidate);
+                                const searchResult = await fallback.searchAnime(candidate, season ?? undefined);
                                 if (!searchResult) {
                                     continue;
                                 }
 
+                                const fallbackAnimeInfo = await resolveValidatedFallbackAnime(
+                                    fallback,
+                                    searchResult,
+                                    season,
+                                    effectiveEpisode,
+                                );
+                                if (!fallbackAnimeInfo) {
+                                    continue;
+                                }
+
                                 title = await fallback.getEpisodeTitle(
-                                    searchResult.id,
+                                    fallbackAnimeInfo.id,
                                     effectiveEpisode,
                                     season ?? undefined,
                                     {
-                                        ...episodeLookupContext,
+                                        ...fallbackEpisodeLookupContext,
                                         searchTitle: candidate,
                                     },
                                 );

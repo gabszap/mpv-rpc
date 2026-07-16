@@ -6,7 +6,7 @@
 import axios from "axios";
 import { config } from "../config";
 import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
-import { formatProviderErrorDetails, logApiCall } from "./types";
+import { formatProviderErrorDetails, logApiCall, markSeasonAnimeValidated } from "./types";
 
 // Extended AnimeInfo with type for internal use
 interface KitsuAnimeInfo extends AnimeInfo {
@@ -203,19 +203,19 @@ export class KitsuProvider implements AnimeProvider {
 
     async findSeasonAnime(baseId: number, targetSeason: number): Promise<AnimeInfo | null> {
         if (targetSeason <= 1) {
-            return this.getAnimeById(baseId);
+            const anime = await this.getAnimeById(baseId);
+            return anime ? markSeasonAnimeValidated(anime, targetSeason, "base-season") : null;
         }
 
         const visited = new Set<number>();
         let currentId = baseId;
         let currentSeason = 1;
-        let lastValidAnime: KitsuAnimeInfo | null = null;
         let lastTvAnime: KitsuAnimeInfo | null = null;
 
         // Get base anime first
-        lastValidAnime = await this.getAnimeById(baseId);
-        lastTvAnime = lastValidAnime;
-        if (!lastValidAnime) return null;
+        const baseAnime = await this.getAnimeById(baseId);
+        lastTvAnime = baseAnime;
+        if (!baseAnime) return null;
 
         while (currentSeason < targetSeason) {
             if (visited.has(currentId)) break;
@@ -226,7 +226,6 @@ export class KitsuProvider implements AnimeProvider {
             if (!sequel) break;
 
             currentId = sequel.id;
-            lastValidAnime = sequel;
 
             // Check if this is a TV/ONA series
             const isTvSeries = sequel.type === "TV" || sequel.type === "ONA";
@@ -245,7 +244,7 @@ export class KitsuProvider implements AnimeProvider {
                         "DETAIL",
                         `found: "${sequel.title_romaji}" (ID:${sequel.id})`,
                     );
-                    return sequel;
+                    return markSeasonAnimeValidated(sequel, targetSeason, "explicit-title");
                 }
 
                 // Skip "Part" entries that are same season
@@ -259,8 +258,11 @@ export class KitsuProvider implements AnimeProvider {
             // This allows us to skip movies in the middle of a franchise
         }
 
-        // Return the last TV series found
-        return lastTvAnime || lastValidAnime;
+        if (currentSeason < targetSeason) {
+            return null;
+        }
+
+        return lastTvAnime ? markSeasonAnimeValidated(lastTvAnime, targetSeason, "relation-chain") : null;
     }
 
     private async getSequel(animeId: number): Promise<KitsuAnimeInfo | null> {

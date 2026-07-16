@@ -246,6 +246,141 @@ describe("TvdbProvider.getEpisodeTitle", () => {
         expect(axiosGetMock.mock.calls.some(([url]) => String(url).includes("/episodes/default"))).toBe(true);
     });
 
+    it("does not treat source episode as a TVDB absolute episode directly", async () => {
+        axiosGetMock.mockImplementation(async (url: string, options?: { params?: Record<string, unknown> }) => {
+            const params = options?.params ?? {};
+
+            if (url.endsWith("/series/355774/episodes/official")) {
+                if (params.page === 0 && params.season === 4 && params.episodeNumber === 35) {
+                    return { data: { data: { episodes: [] } } };
+                }
+
+                if (params.page === 0 && params.season === 4 && !("episodeNumber" in params)) {
+                    return { data: { data: { episodes: [] } } };
+                }
+
+                if (params.page === 0 && params.season === 4 && params.episodeNumber === 11) {
+                    return {
+                        data: {
+                            data: {
+                                episodes: [{ id: 1100, seasonNumber: 4, number: 11, name: "Official Eleven" }],
+                            },
+                        },
+                    };
+                }
+            }
+
+            if (url.endsWith("/series/355774/episodes/default") && params.page === 0) {
+                return { data: { data: { episodes: [] } } };
+            }
+
+            if (url.endsWith("/series/355774/episodes/absolute") && params.page === 0) {
+                return {
+                    data: {
+                        data: {
+                            episodes: [
+                                {
+                                    id: 3500,
+                                    seasonNumber: 1,
+                                    number: 35,
+                                    absoluteNumber: 35,
+                                    name: "Wrong Absolute Thirty Five",
+                                },
+                            ],
+                        },
+                    },
+                };
+            }
+
+            throw new Error(`Unexpected URL/params: ${url} ${JSON.stringify(params)}`);
+        });
+
+        const { TvdbProvider } = await import("../src/providers/tvdb");
+        const provider = new TvdbProvider();
+
+        const title = await provider.getEpisodeTitle(355774, 11, 4, {
+            searchTitle: "Dr Stone Science Future Part 3",
+            sourceSeason: 4,
+            sourceEpisode: 35,
+            effectiveEpisode: 11,
+        });
+
+        expect(title).toBe("Official Eleven");
+        expect(axiosGetMock.mock.calls.some(([url]) => String(url).includes("/episodes/absolute"))).toBe(true);
+        expect(
+            axiosGetMock.mock.calls.some(
+                ([url, options]) =>
+                    String(url).includes("/episodes/official") &&
+                    (options?.params as Record<string, unknown> | undefined)?.episodeNumber === 11,
+            ),
+        ).toBe(true);
+    });
+
+    it("maps Dr. Stone source S04E35 to TVDB absolute/global 93 instead of absolute 35", async () => {
+        const testCwd = fs.mkdtempSync(path.join(os.tmpdir(), "mpv-rpc-tvdb-absolute-mapping-"));
+        const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(testCwd);
+
+        try {
+            axiosGetMock.mockImplementation(async (url: string, options?: { params?: Record<string, unknown> }) => {
+                const params = options?.params ?? {};
+
+                if (url.endsWith("/series/355774/episodes/official") && params.page === 0) {
+                    return { data: { data: { episodes: [] } } };
+                }
+
+                if (url.endsWith("/series/355774/episodes/default") && params.page === 0) {
+                    return { data: { data: { episodes: [] } } };
+                }
+
+                if (url.endsWith("/series/355774/episodes/absolute") && params.page === 0) {
+                    return {
+                        data: {
+                            data: {
+                                episodes: [
+                                    {
+                                        id: 8145695,
+                                        seasonNumber: 1,
+                                        number: 35,
+                                        absoluteNumber: 35,
+                                        name: "Prólogo de Dr. Stone",
+                                    },
+                                    {
+                                        id: 1200093,
+                                        seasonNumber: 4,
+                                        number: 35,
+                                        absoluteNumber: 93,
+                                        name: "Giant Step",
+                                    },
+                                ],
+                            },
+                        },
+                    };
+                }
+
+                throw new Error(`Unexpected URL/params: ${url} ${JSON.stringify(params)}`);
+            });
+
+            const { TvdbProvider } = await import("../src/providers/tvdb");
+            const provider = new TvdbProvider();
+
+            const title = await provider.getEpisodeTitle(355774, 11, 4, {
+                searchTitle: "Dr Stone Science Future Part 3",
+                sourceSeason: 4,
+                sourceEpisode: 35,
+                effectiveEpisode: 11,
+            });
+            const apiLog = readApiLog(testCwd);
+
+            expect(title).toBe("Giant Step");
+            expect(apiLog).toContain('"tvdbAbsoluteEpisode":93');
+            expect(apiLog).toContain("source S/E match in TVDB absolute order");
+            expect(apiLog).not.toContain("order=absolute sourceEpisode=35");
+        } finally {
+            cwdSpy.mockRestore();
+            fs.rmSync(testCwd, { recursive: true, force: true });
+        }
+    });
+
     it("infers season from title hints when season is missing", async () => {
         axiosGetMock.mockImplementation(async (url: string, options?: { params?: Record<string, unknown> }) => {
             const params = options?.params ?? {};

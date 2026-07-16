@@ -13,6 +13,26 @@ export interface AnimeInfo {
     cover_url: string | null;
     season_cover_url?: string | null;
     total_episodes?: number; // For MAL sync (mark as completed)
+    seasonValidation?: SeasonValidation; // Proof that this result matches a requested season
+}
+
+export interface SeasonValidation {
+    expectedSeason: number;
+    method: "base-season" | "explicit-title" | "relation-chain" | "provider-season";
+}
+
+export function markSeasonAnimeValidated(
+    animeInfo: AnimeInfo,
+    expectedSeason: number,
+    method: SeasonValidation["method"],
+): AnimeInfo {
+    return {
+        ...animeInfo,
+        seasonValidation: {
+            expectedSeason,
+            method,
+        },
+    };
 }
 
 export interface AnimeSearchResult {
@@ -22,12 +42,22 @@ export interface AnimeSearchResult {
     type: string; // TV, Movie, OVA, etc.
     coverImage: string | null;
     titles?: Array<{ type: string; title: string }>;
+    seasonValidation?: SeasonValidation;
 }
 
 export interface EpisodeLookupContext {
     searchTitle?: string;
     canonicalTitles?: string[];
     allowSeasonInference?: boolean;
+    /**
+     * Season-local episode number from the playback/source catalog before provider-specific remapping.
+     * Example: Stremio/Trakt source S04E35 while MAL overflow maps display/sync to a split cour's local E11.
+     * This is not guaranteed to be a provider's absolute/global episode number.
+     */
+    sourceEpisode?: number;
+    sourceSeason?: number | null;
+    /** Provider-local episode after overflow/default-order remapping. */
+    effectiveEpisode?: number;
 }
 
 export interface SequelInfo {
