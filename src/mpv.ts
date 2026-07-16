@@ -10,6 +10,76 @@ import { config } from "./config";
 import { checkSeriesNameOverride } from "./console";
 import { parseFilename } from "./parser";
 import { normalizeTvdbLanguageCode } from "./providers/tvdb";
+import { readStremioPlaybackContext, type StremioPlaybackContext } from "./stremio-sync/context";
+
+/**
+ * Normalize titles for a conservative bridge-context compatibility check.
+ */
+function normalizeStremioIdentityTitle(title: string | null | undefined): string[] {
+    if (!title) {
+        return [];
+    }
+
+    return title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter((token) => token.length > 0);
+}
+
+function titlesHaveSafeTokenOverlap(contextName: string | null, playbackTitle: string): boolean {
+    const contextTokens = normalizeStremioIdentityTitle(contextName);
+    const playbackTokens = normalizeStremioIdentityTitle(playbackTitle);
+    if (contextTokens.length === 0 || playbackTokens.length === 0) {
+        return false;
+    }
+
+    const shorterTokens = contextTokens.length <= playbackTokens.length ? contextTokens : playbackTokens;
+    const longerTokens = new Set(contextTokens.length <= playbackTokens.length ? playbackTokens : contextTokens);
+    const matchingTokens = shorterTokens.filter((token) => longerTokens.has(token)).length;
+
+    return matchingTokens / shorterTokens.length >= 0.8;
+}
+
+function isStremioIdentitySafeForPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+    if (!context.imdbId) {
+        return false;
+    }
+
+    if (context.type === "movie") {
+        return titlesHaveSafeTokenOverlap(context.name, data.series_title);
+    }
+
+    if (context.season === null || context.episode === null) {
+        return false;
+    }
+
+    const isExactPositionMatch = data.season === context.season && data.episode === context.episode;
+    const isEpisodeOnlyMatch = data.season === null && data.episode !== null && data.episode === context.episode;
+    if (!isExactPositionMatch && !isEpisodeOnlyMatch) {
+        return false;
+    }
+
+    return titlesHaveSafeTokenOverlap(context.name, data.series_title);
+}
+
+/**
+ * Read secure Stremio identity fields when the bridge has already captured them.
+ * The context must still be compatible with current playback before its IMDb ID
+ * is copied into MPV data; otherwise a stale bridge context could validate itself.
+ */
+function readStremioPlaybackIdentity(data: MpvData): { imdbId?: string; type?: "series" | "movie" } {
+    const context = readStremioPlaybackContext(Date.now());
+    if (!context || !isStremioIdentitySafeForPlayback(context, data)) {
+        return {};
+    }
+
+    return {
+        ...(context.imdbId ? { imdbId: context.imdbId } : {}),
+        ...(context.type ? { type: context.type } : {}),
+    };
+}
 
 export interface MpvData {
     media_title: string;
@@ -482,7 +552,7 @@ export async function getMpvData(): Promise<MpvData | null> {
             }
         }
 
-        return {
+        const mpvData: MpvData = {
             media_title: parsed.full_title,
             series_title: seriesTitle,
             season: parsed.season,
@@ -501,6 +571,13 @@ export async function getMpvData(): Promise<MpvData | null> {
             adjusted_episode: adjustedEpisode,
             playlistPos: typeof playlistPos === "number" ? playlistPos : 0,
             playlistCount: typeof playlistCount === "number" ? playlistCount : 0,
+        };
+        const stremioIdentity = readStremioPlaybackIdentity(mpvData);
+
+        return {
+            ...mpvData,
+            imdb_id: stremioIdentity.imdbId,
+            type: stremioIdentity.type,
         };
     } catch (e) {
         console.error("[MPV] Error getting data:", e);

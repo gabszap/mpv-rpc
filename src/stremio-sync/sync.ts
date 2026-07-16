@@ -11,6 +11,7 @@ import {
     type EpisodePosition,
     getCanonicalEpisodePosition,
     getCanonicalStremioIdentity,
+    resetPlaybackContextMismatchLogStateForTests,
 } from "./identity";
 import { fetchVideoIds } from "./meta";
 
@@ -658,4 +659,5 @@ export function resetStremioSyncStateForTests(): void {
     lastProgressIntervalSkipByPlaybackIdentity.clear();
     watchedMarkByLibraryVideoId.clear();
     dryRunContinueWatchingMilestonesByIdentity.clear();
+    resetPlaybackContextMismatchLogStateForTests();
 }

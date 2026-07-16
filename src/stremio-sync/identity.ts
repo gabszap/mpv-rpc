@@ -147,6 +147,10 @@ function doesKnownImdbIdConflict(context: StremioPlaybackContext, data: MpvData)
     return Boolean(context.imdbId && data.imdb_id && context.imdbId !== data.imdb_id);
 }
 
+function doKnownImdbIdsMatch(context: StremioPlaybackContext, data: MpvData): boolean {
+    return Boolean(context.imdbId && data.imdb_id && context.imdbId === data.imdb_id);
+}
+
 function doKnownProviderIdsConflict(context: StremioPlaybackContext, data: MpvData): boolean {
     const contextMalId = readContextProviderId(context, "mal");
     const dataMalId = readMpvNumericId(data, "mal_id");
@@ -187,6 +191,10 @@ function doesContextSecurelyMatchPlayback(context: StremioPlaybackContext, data:
     }
 
     if (doesContextCanonicalVideoIdMatchPlayback(context, data)) {
+        return true;
+    }
+
+    if (doKnownImdbIdsMatch(context, data)) {
         return true;
     }
 
@@ -236,6 +244,10 @@ function doesContextIdentityMatchPlayback(context: StremioPlaybackContext, data:
         return true;
     }
 
+    if (doKnownImdbIdsMatch(context, data)) {
+        return true;
+    }
+
     if (doKnownProviderIdsConflict(context, data)) {
         return false;
     }
@@ -260,10 +272,18 @@ function isSeriesPositionSafeForContext(context: StremioPlaybackContext, data: M
         return false;
     }
 
+    // When the filename provides a clear S/E, compare directly.
+    // Note: during overflow resolution, the parsed S/E from the filename
+    // (e.g. S04E35) may differ from the canonical S/E (e.g. S04E11).
+    // The Stremio context typically stores the original parsed S/E,
+    // so this direct comparison should match. If the context was
+    // updated to the canonical S/E, the split-part-rule check below
+    // handles the remapping.
     if (currentPosition.season !== null && currentPosition.episode !== null) {
         return currentPosition.season === context.season && currentPosition.episode === context.episode;
     }
 
+    // Check canonical split-part rules (e.g. Dr. STONE Science Future Part 3 EP 11 → S04E35)
     const canonicalSplitPartPosition = resolveCanonicalSplitPartEpisode(data);
 
     if (canonicalSplitPartPosition) {
@@ -280,13 +300,84 @@ function isSeriesPositionSafeForContext(context: StremioPlaybackContext, data: M
     return false;
 }
 
+const loggedPlaybackContextMismatchFingerprints = new Set<string>();
+
+function getMismatchValueFingerprint(value: string | number | null | undefined): string {
+    if (value === null || value === undefined || value === "") {
+        return "-";
+    }
+
+    return String(value);
+}
+
+function logPlaybackContextMismatchOnce(
+    reason: string,
+    context: StremioPlaybackContext,
+    data: MpvData,
+    detail: string,
+): void {
+    const currentPosition = getCurrentEpisodePosition(data);
+    const fingerprint = [
+        reason,
+        getMismatchValueFingerprint(context.name),
+        getMismatchValueFingerprint(data.series_title),
+        getMismatchValueFingerprint(context.imdbId),
+        getMismatchValueFingerprint(data.imdb_id),
+        getMismatchValueFingerprint(readContextProviderId(context, "mal")),
+        getMismatchValueFingerprint(data.mal_id),
+        getMismatchValueFingerprint(context.season),
+        getMismatchValueFingerprint(context.episode),
+        getMismatchValueFingerprint(data.season),
+        getMismatchValueFingerprint(data.episode),
+        getMismatchValueFingerprint(currentPosition.season),
+        getMismatchValueFingerprint(currentPosition.episode),
+    ].join("|");
+
+    if (loggedPlaybackContextMismatchFingerprints.has(fingerprint)) {
+        return;
+    }
+
+    loggedPlaybackContextMismatchFingerprints.add(fingerprint);
+    console.log(detail);
+}
+
+export function resetPlaybackContextMismatchLogStateForTests(): void {
+    loggedPlaybackContextMismatchFingerprints.clear();
+}
+
 export function isPlaybackContextMatchingData(context: StremioPlaybackContext, data: MpvData): boolean {
-    if (!doesContextIdentityMatchPlayback(context, data)) {
+    const identityMatch = doesContextIdentityMatchPlayback(context, data);
+
+    if (!identityMatch) {
+        logPlaybackContextMismatchOnce(
+            "identity",
+            context,
+            data,
+            `[DETAIL] playback-context-mismatch: identity check failed — ` +
+                `context.name="${context.name}", data.series_title="${data.series_title}", ` +
+                `context.imdb_id="${context.imdbId ?? ""}", data.imdb_id="${data.imdb_id ?? ""}", ` +
+                `context.mal_id=${readContextProviderId(context, "mal") ?? ""}, data.mal_id=${data.mal_id ?? ""}, ` +
+                `context.season=${context.season}, context.episode=${context.episode}, ` +
+                `data.season=${data.season}, data.episode=${data.episode}`,
+        );
         return false;
     }
 
     if (context.type === "series" || context.season !== null || context.episode !== null) {
-        return isSeriesPositionSafeForContext(context, data);
+        const positionSafe = isSeriesPositionSafeForContext(context, data);
+        if (!positionSafe) {
+            const currentPosition = getCurrentEpisodePosition(data);
+            logPlaybackContextMismatchOnce(
+                "position",
+                context,
+                data,
+                `[DETAIL] playback-context-mismatch: position check failed — ` +
+                    `context.season=${context.season}, context.episode=${context.episode}, ` +
+                    `playback.season=${currentPosition.season}, playback.episode=${currentPosition.episode}, ` +
+                    `data.season=${data.season}, data.episode=${data.episode}`,
+            );
+        }
+        return positionSafe;
     }
 
     return context.type === "movie" || doesContextNameExactlyMatchPlayback(context, data);

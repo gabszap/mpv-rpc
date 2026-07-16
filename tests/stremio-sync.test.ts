@@ -795,6 +795,187 @@ describe("Stremio sync MVP", () => {
         });
     });
 
+    it("matches overflow-resolved playback by secure IMDb identity even when titles differ", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:35",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 35,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E35.Giant.Step",
+                    series_title: "Dr. Stone: Science Future Part 3",
+                    season: 4,
+                    episode: 35,
+                    adjusted_episode: 11,
+                    filename: "Dr.STONE.S04E35.Giant.Step.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 80,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt9679542",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 4,
+            episode: 35,
+            video_id: "tt9679542:4:35",
+        });
+    });
+
+    it("accepts MAL root versus sequel mismatch when secure IMDb and source position match", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:48549",
+            seriesId: "mal:48549",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:35",
+            name: "Dr. STONE",
+            type: "series",
+            season: 4,
+            episode: 35,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E35.Giant.Step",
+                    series_title: "Dr. Stone: Science Future Part 3",
+                    season: 4,
+                    episode: 35,
+                    adjusted_episode: 11,
+                    filename: "Dr.STONE.S04E35.Giant.Step.mkv",
+                    imdb_id: "tt9679542",
+                    mal_id: 62568,
+                    percent_pos: 80,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "mal:48549",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 4,
+            episode: 35,
+            video_id: "tt9679542:4:35",
+        });
+    });
+
+    it("rejects different IMDb IDs even when names and source position match", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt0000001",
+            imdbId: "tt0000001",
+            videoId: "tt0000001:4:35",
+            name: "Dr. Stone: Science Future Part 3",
+            type: "series",
+            season: 4,
+            episode: 35,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E35.Giant.Step",
+                    series_title: "Dr. Stone: Science Future Part 3",
+                    season: 4,
+                    episode: 35,
+                    filename: "Dr.STONE.S04E35.Giant.Step.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 80,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("rejects provider ID conflict when no IMDb match is available", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:111",
+            seriesId: "mal:111",
+            imdbId: null,
+            videoId: "mal:111:4:35",
+            name: "Dr. Stone: Science Future Part 3",
+            type: "series",
+            season: 4,
+            episode: 35,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E35.Giant.Step",
+                    series_title: "Dr. Stone: Science Future Part 3",
+                    season: 4,
+                    episode: 35,
+                    filename: "Dr.STONE.S04E35.Giant.Step.mkv",
+                    imdb_id: undefined,
+                    mal_id: 222,
+                    percent_pos: 80,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("dedupes repeated playback-context-mismatch detail logs for the same fingerprint", async () => {
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt7654321",
+            imdbId: "tt7654321",
+            videoId: "tt7654321:1:2",
+            name: "Old Show",
+            type: "series",
+            season: 1,
+            episode: 2,
+            episodesInSeason: 12,
+        });
+
+        for (const _ of [1, 2, 3]) {
+            await expect(
+                trySyncStremio(
+                    createMpvData({
+                        media_title: "New Show",
+                        series_title: "New Show",
+                        filename: "New Show S01E02.mkv",
+                        imdb_id: "tt9999999",
+                    }),
+                ),
+            ).resolves.toEqual({
+                status: "skipped",
+                reason: "playback-context-mismatch",
+            });
+        }
+
+        expect(
+            consoleLogSpy.mock.calls.filter(([message]) => String(message).includes("playback-context-mismatch")),
+        ).toHaveLength(1);
+        consoleLogSpy.mockRestore();
+    });
+
     it("skips stale same-title split-part context when canonical episode differs", async () => {
         vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
             libraryItemId: "tt9679542",
