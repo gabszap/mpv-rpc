@@ -1061,6 +1061,8 @@ async function stopCurrentScrobbleOnce(): Promise<void> {
     syncInProgress.add(lockKey);
     try {
         const success = await scrobbleStop(episode, show, progress);
+        if (success) {
+            const threshold = config.trakt.syncThreshold;
             if (progress >= threshold) {
                 recordSyncSuccess(show.ids.trakt, episode.number, episode.season);
             } else {
