@@ -721,4 +721,41 @@ describe("bridge auto-fetch episode dedupe", () => {
             _autoFetchDedupeForTests.AUTO_FETCH_CONTEXT_MAX_ENTRIES,
         );
     });
+
+    it("resolves preferred quality using equivalent aliases", () => {
+        const streams = [
+            { url: "https://streams.example.test/1080p.mkv", title: "Show S01E01 1080p" },
+            { url: "https://streams.example.test/2160p.mkv", title: "Show S01E01 2160p" },
+        ];
+
+        // Searching 4k should pick 2160p
+        const stream4k = _autoFetchDedupeForTests.findBestStream(streams, { preferredQuality: "4k" });
+        expect(stream4k.url).toBe("https://streams.example.test/2160p.mkv");
+
+        // Searching 2160p should pick 2160p
+        const stream2160p = _autoFetchDedupeForTests.findBestStream(streams, { preferredQuality: "2160p" });
+        expect(stream2160p.url).toBe("https://streams.example.test/2160p.mkv");
+
+        const streams4kName = [
+            { url: "https://streams.example.test/1080p.mkv", title: "Show S01E01 1080p" },
+            { url: "https://streams.example.test/4k.mkv", title: "Show S01E01 4K HDR" },
+        ];
+
+        // Searching 2160p should pick 4K
+        const stream4kNameResolved = _autoFetchDedupeForTests.findBestStream(streams4kName, { preferredQuality: "2160p" });
+        expect(stream4kNameResolved.url).toBe("https://streams.example.test/4k.mkv");
+
+        // Searching 4k should pick 4K
+        const stream4kNameResolved2 = _autoFetchDedupeForTests.findBestStream(streams4kName, { preferredQuality: "4k" });
+        expect(stream4kNameResolved2.url).toBe("https://streams.example.test/4k.mkv");
+
+        const streams2k = [
+            { url: "https://streams.example.test/1080p.mkv", title: "Show S01E01 1080p" },
+            { url: "https://streams.example.test/2k.mkv", title: "Show S01E01 2K QHD" },
+        ];
+
+        // Searching 1440p should pick 2K
+        const stream2kResolved = _autoFetchDedupeForTests.findBestStream(streams2k, { preferredQuality: "1440p" });
+        expect(stream2kResolved.url).toBe("https://streams.example.test/2k.mkv");
+    });
 });
