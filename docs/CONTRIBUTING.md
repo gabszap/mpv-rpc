@@ -207,14 +207,25 @@ The repository is organized as an **npm workspace** with two main parts:
 mpv-rpc/
 ├── src/                  # Core mpv-rpc application
 │   ├── index.ts          # Main entry point & update loop
-│   ├── mpv.ts            # MPV IPC connection
-│   ├── parser.ts         # Filename parsing (GuessIt + regex)
-│   ├── anime.ts          # Metadata resolution & caching
-│   ├── discord.ts        # Discord Rich Presence
-│   ├── config.ts         # Configuration & env loading
-│   ├── providers/        # Anime metadata providers (Jikan, AniList, Kitsu, TVDB)
-│   ├── mal-sync/         # MyAnimeList synchronization
-│   └── console/          # Interactive REPL for overrides
+│   ├── core/             # Core intelligence & shared utilities
+│   │   ├── anime.ts          # Metadata resolution & caching
+│   │   ├── auto-fetch.ts     # Next-episode auto-fetch logic
+│   │   ├── config.ts         # Configuration & env loading
+│   │   ├── parser.ts         # Filename parsing (GuessIt + regex)
+│   │   ├── canonical-episode.ts
+│   │   ├── playbackIdentity.ts
+│   │   ├── bridge-config-migration.ts
+│   │   └── userscript-config-sync.ts
+│   ├── integrations/         # System socket integration
+│   │   ├── mpv.ts            # MPV IPC connection
+│   │   └── discord.ts       # Discord Rich Presence
+│   ├── console/              # Interactive REPL for overrides
+│   ├── functions/            # Global TypeScript type declarations
+│   ├── metadata/             # Fallback resolution
+│   ├── providers/            # Anime metadata providers (Jikan, AniList, Kitsu, TVDB)
+│   ├── mal-sync/             # MyAnimeList synchronization
+│   ├── stremio-sync/         # Stremio library sync
+│   └── trakt-sync/           # Trakt.tv sync
 ├── stremio-mpv-bridge/   # Separate workspace: Stremio → MPV bridge
 ├── tests/                # Vitest test suite
 ├── .anime_cache/         # Runtime cache (auto-generated)
@@ -223,9 +234,9 @@ mpv-rpc/
 
 ### Data Flow
 
-1. **MPV → IPC**: `src/mpv.ts` connects to MPV's IPC server and fetches playback state.
-2. **Parser → Context**: `src/parser.ts` extracts series title, season, and episode from filenames (GuessIt API → CLI → regex fallback).
-3. **Metadata Resolution**: `src/anime.ts` queries configured providers with caching (`.anime_cache/`).
+1. **MPV → IPC**: `src/integrations/mpv.ts` connects to MPV's IPC server and fetches playback state.
+2. **Parser → Context**: `src/core/parser.ts` extracts series title, season, and episode from filenames (GuessIt API → CLI → regex fallback).
+3. **Metadata Resolution**: `src/core/anime.ts` queries configured providers with caching (`.anime_cache/`).
 4. **Discord + MAL Sync**: `src/index.ts` orchestrates the update loop, updating Discord activity and optionally syncing to MAL.
 5. **Stremio Bridge**: `stremio-mpv-bridge/` provides a separate HTTP server (`/health`, `/play`) for Stremio integration.
 
