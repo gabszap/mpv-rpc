@@ -22,7 +22,7 @@ describe("config metadata provider parsing", () => {
         process.env.METADATA_PROVIDER = "  AniList  ";
 
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-        const { config } = await import("../src/config");
+        const { config } = await import("../src/core/config");
 
         expect(config.metadataProvider).toBe("anilist");
         expect(warnSpy).not.toHaveBeenCalled();
@@ -32,7 +32,7 @@ describe("config metadata provider parsing", () => {
         process.env.METADATA_PROVIDER = "mal";
 
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-        const { config } = await import("../src/config");
+        const { config } = await import("../src/core/config");
 
         expect(config.metadataProvider).toBe("jikan");
         expect(warnSpy).toHaveBeenCalledWith('[Config] Invalid METADATA_PROVIDER "mal". Falling back to "jikan".');

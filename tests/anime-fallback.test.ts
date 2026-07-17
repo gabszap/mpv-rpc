@@ -14,7 +14,7 @@ const fallbackKitsuGetAnimeByIdMock = vi.fn();
 const fallbackKitsuGetEpisodeTitleMock = vi.fn();
 const fallbackKitsuFindSeasonAnimeMock = vi.fn();
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         metadataProvider: "anilist",
         tvdb: {
@@ -110,7 +110,7 @@ describe("Anime fallback search", () => {
         });
         fallbackJikanGetEpisodeTitleMock.mockResolvedValue("A New World");
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
         const title = await getEpisodeTitle(parsedTitle, 2, 3);
 
         expect(title).toBe("A New World");
@@ -152,7 +152,7 @@ describe("Anime fallback search", () => {
         });
         fallbackKitsuGetEpisodeTitleMock.mockResolvedValue("Wrong Season Title");
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
 
         await expect(getEpisodeTitle("Dr Stone", 4, 11)).resolves.toBeNull();
         expect(fallbackKitsuGetEpisodeTitleMock).not.toHaveBeenCalled();
@@ -191,7 +191,7 @@ describe("Anime fallback search", () => {
         });
         fallbackKitsuGetEpisodeTitleMock.mockResolvedValue("Giant Step");
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
 
         await expect(getEpisodeTitle("Dr Stone", 4, 11)).resolves.toBe("Giant Step");
         expect(fallbackKitsuGetEpisodeTitleMock).toHaveBeenCalledWith(
@@ -234,7 +234,7 @@ describe("Anime fallback search", () => {
         });
         fallbackJikanGetEpisodeTitleMock.mockResolvedValue("Science Future");
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
 
         await expect(getEpisodeTitle("Dr Stone", 4, 11)).resolves.toBe("Science Future");
         expect(fallbackJikanFindSeasonAnimeMock).not.toHaveBeenCalled();
@@ -278,7 +278,7 @@ describe("Anime fallback search", () => {
         fallbackJikanGetEpisodeTitleMock.mockResolvedValue("Stone World");
         fallbackKitsuSearchAnimeMock.mockResolvedValue(null);
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
 
         await expect(getEpisodeTitle("Dr Stone", 4, 11)).resolves.toBeNull();
         expect(fallbackJikanFindSeasonAnimeMock).toHaveBeenCalledWith(38691, 4);
@@ -286,7 +286,7 @@ describe("Anime fallback search", () => {
     });
 
     it("builds fallback candidates with parsed title first and season variant", async () => {
-        const { buildFallbackSearchCandidates } = await import("../src/anime");
+        const { buildFallbackSearchCandidates } = await import("../src/core/anime");
 
         const candidates = buildFallbackSearchCandidates(
             "  Rascal Does Not Dream of Bunny Girl Senpai University Arc  ",
@@ -324,7 +324,7 @@ describe("Anime fallback search", () => {
             .mockResolvedValueOnce("Season 1 Episode 2")
             .mockResolvedValueOnce("Season 2 Episode 2");
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
 
         const season1Title = await getEpisodeTitle("Dr Stone", 1, 2);
         const season2Title = await getEpisodeTitle("Dr Stone", 2, 2);

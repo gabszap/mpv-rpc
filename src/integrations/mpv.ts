@@ -5,12 +5,12 @@
  */
 
 import * as net from "node:net";
-import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "./anime";
-import { config } from "./config";
-import { checkSeriesNameOverride } from "./console";
-import { parseFilename } from "./parser";
-import { normalizeTvdbLanguageCode } from "./providers/tvdb";
-import { readStremioPlaybackContext, type StremioPlaybackContext } from "./stremio-sync/context";
+import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "../core/anime";
+import { config } from "../core/config";
+import { checkSeriesNameOverride } from "../console";
+import { parseFilename } from "../core/parser";
+import { normalizeTvdbLanguageCode } from "../providers/tvdb";
+import { readStremioPlaybackContext, type StremioPlaybackContext } from "../stremio-sync/context";
 
 /**
  * Normalize titles for a conservative bridge-context compatibility check.

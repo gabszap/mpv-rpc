@@ -4,7 +4,7 @@
  */
 
 import axios from "axios";
-import { config } from "../config";
+import { config } from "../core/config";
 import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
 import { formatProviderErrorDetails, logApiCall, markSeasonAnimeValidated } from "./types";
 

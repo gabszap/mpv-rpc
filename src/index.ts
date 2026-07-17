@@ -4,14 +4,14 @@
  * Connects MPV Media Player directly to Discord Rich Presence
  */
 
-import { providerName } from "./anime";
-import { checkAndTriggerAutoFetch } from "./auto-fetch";
-import { config } from "./config";
+import { providerName } from "./core/anime";
+import { checkAndTriggerAutoFetch } from "./core/auto-fetch";
+import { config } from "./core/config";
 import { ConsoleRepl, createEpisodeContext } from "./console";
-import * as discord from "./discord";
+import * as discord from "./integrations/discord";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
-import * as mpv from "./mpv";
-import { checkAvailability, parseFilename } from "./parser";
+import * as mpv from "./integrations/mpv";
+import { checkAvailability, parseFilename } from "./core/parser";
 import { logStremioSkipDetail } from "./stremio-sync/logging";
 import { trySyncStremio } from "./stremio-sync/sync";
 import { getUser } from "./trakt-sync/api";

@@ -10,7 +10,7 @@ const primaryJikanGetEpisodeTitleMock = vi.fn();
 const fallbackKitsuSearchAnimeMock = vi.fn();
 const fallbackKitsuGetEpisodeTitleMock = vi.fn();
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         metadataProvider: "mal",
         tvdb: {
@@ -107,7 +107,7 @@ describe("Anime module with invalid metadata provider config", () => {
         });
         fallbackKitsuGetEpisodeTitleMock.mockResolvedValue("To You, in 2000 Years");
 
-        const { getEpisodeTitle, providerName } = await import("../src/anime");
+        const { getEpisodeTitle, providerName } = await import("../src/core/anime");
         const title = await getEpisodeTitle("Attack on Titan", 1, 1);
 
         expect(providerName).toBe("jikan");

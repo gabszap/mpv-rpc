@@ -5,7 +5,7 @@ import {
     mergePlaybackIdentity,
     normalizeTitle,
     type PlaybackEpisodeIdentity,
-} from "../src/playbackIdentity";
+} from "../src/core/playbackIdentity";
 
 describe("createPlaybackIdentity", () => {
     it("applies defaults and normalizes the title", () => {

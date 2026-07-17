@@ -6,7 +6,7 @@
 
 import { EventEmitter } from "node:events";
 import * as readline from "node:readline";
-import { providerName } from "../anime";
+import { providerName } from "../core/anime";
 import {
     clearManualOverride,
     clearSeriesNameOverride,

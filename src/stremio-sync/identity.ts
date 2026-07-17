@@ -1,5 +1,5 @@
-import { type CanonicalEpisodePosition, resolveCanonicalSplitPartEpisode } from "../canonical-episode";
-import type { MpvData } from "../mpv";
+import { type CanonicalEpisodePosition, resolveCanonicalSplitPartEpisode } from "../core/canonical-episode";
+import type { MpvData } from "../integrations/mpv";
 import type { StremioPlaybackContext } from "./context";
 
 export type EpisodePosition = {

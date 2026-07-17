@@ -3,9 +3,9 @@
  */
 
 import { Client } from "@xhayper/discord-rpc";
-import { config } from "./config";
-import { createEpisodeContext, resolveDisplayTitle } from "./console";
-import { ActivityType, Assets } from "./functions/types";
+import { config } from "../core/config";
+import { createEpisodeContext, resolveDisplayTitle } from "../console";
+import { ActivityType, Assets } from "../functions/types";
 import type { MpvData } from "./mpv";
 
 let client: Client | null = null;

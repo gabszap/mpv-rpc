@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isInternalNavigationTitle } from "../src/discord";
+import { isInternalNavigationTitle } from "../src/integrations/discord";
 
 describe("isInternalNavigationTitle", () => {
     it("treats a Stremio settings URL as internal navigation", () => {

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { config } from "../src/config";
-import type { MpvData } from "../src/mpv";
+import { config } from "../src/core/config";
+import type { MpvData } from "../src/integrations/mpv";
 
 // Mock config so autoFetch.enabled is predictable.
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         syncDryRun: false,
         autoFetch: {
@@ -78,9 +78,9 @@ function mockJsonResponse(body: unknown, status = 200): Response {
     });
 }
 
-async function importAutoFetchModule(): Promise<typeof import("../src/auto-fetch")> {
+async function importAutoFetchModule(): Promise<typeof import("../src/core/auto-fetch")> {
     vi.resetModules();
-    return import("../src/auto-fetch");
+    return import("../src/core/auto-fetch");
 }
 
 describe("buildCurrentEpisodeKey", () => {

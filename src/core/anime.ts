@@ -5,14 +5,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { config, type MetadataProvider } from "./config";
-import { AniListProvider } from "./providers/anilist";
-import { JikanProvider } from "./providers/jikan";
-import { KitsuProvider } from "./providers/kitsu";
-import { TvdbProvider } from "./providers/tvdb";
-import type { AnimeInfo, AnimeProvider, AnimeSearchResult, OverflowResult, SequelInfo } from "./providers/types";
+import { AniListProvider } from "../providers/anilist";
+import { JikanProvider } from "../providers/jikan";
+import { KitsuProvider } from "../providers/kitsu";
+import { TvdbProvider } from "../providers/tvdb";
+import type { AnimeInfo, AnimeProvider, AnimeSearchResult, OverflowResult, SequelInfo } from "../providers/types";
 
 // Re-export types for other modules
-export type { AnimeInfo, OverflowResult } from "./providers/types";
+export type { AnimeInfo, OverflowResult } from "../providers/types";
 
 /**
  * Result of anime info resolution that includes the source provider name.

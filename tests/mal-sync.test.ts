@@ -14,7 +14,7 @@ vi.mock("../src/mal-sync/auth", () => ({
 }));
 
 // Mock config
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         mal: {
             enabled: true,

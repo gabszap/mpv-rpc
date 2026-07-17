@@ -1,6 +1,6 @@
 import * as child_process from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { parseFilename } from "../src/parser";
+import { parseFilename } from "../src/core/parser";
 
 // The CLI subcommand (`npm start -- parse "<filename>"`) lives in
 // `src/index.ts` and is best exercised end-to-end. The pragmatic

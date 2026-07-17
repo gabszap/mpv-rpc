@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { config } from "../src/config";
-import type { MpvData } from "../src/mpv";
+import { config } from "../src/core/config";
+import type { MpvData } from "../src/integrations/mpv";
 import * as api from "../src/stremio-sync/api";
 import * as auth from "../src/stremio-sync/auth";
 import { encodeWatched } from "../src/stremio-sync/bitset";
@@ -9,7 +9,7 @@ import { logStremioSkipDetail } from "../src/stremio-sync/logging";
 import * as meta from "../src/stremio-sync/meta";
 import { resetStremioSyncStateForTests, trySyncStremio } from "../src/stremio-sync/sync";
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         debug: false,
         syncDryRun: false,

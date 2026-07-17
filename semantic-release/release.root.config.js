@@ -1,11 +1,11 @@
 module.exports = {
     branches: ["main"],
-    tagFormat: "bridge-v${version}",
+    tagFormat: "mpv-rpc-v${version}",
     plugins: [
         [
-            "./semantic-release/path-scoped-release.js",
+            "./path-scoped-release.js",
             {
-                releaseScope: "bridge",
+                releaseScope: "root",
                 bridgePath: "stremio-mpv-bridge",
                 commitAnalyzerConfig: {
                     preset: "conventionalcommits",
@@ -18,7 +18,7 @@ module.exports = {
         [
             "@semantic-release/changelog",
             {
-                changelogFile: "stremio-mpv-bridge/CHANGELOG.md",
+                changelogFile: "CHANGELOG.md",
                 changelogTitle:
                     "# Changelog\n\nThis file is managed by semantic-release.",
             },
@@ -27,22 +27,15 @@ module.exports = {
             "@semantic-release/npm",
             {
                 npmPublish: false,
-                pkgRoot: "stremio-mpv-bridge",
             },
         ],
-        "./semantic-release/sync-bridge-userscript-version.js",
         "@semantic-release/github",
         [
             "@semantic-release/git",
             {
-                assets: [
-                    "stremio-mpv-bridge/CHANGELOG.md",
-                    "stremio-mpv-bridge/package.json",
-                    "stremio-mpv-bridge/package-lock.json",
-                    "stremio-mpv-bridge/stremio-mpv.user.js",
-                ],
+                assets: ["CHANGELOG.md", "package.json", "package-lock.json"],
                 message:
-                    "chore(release): bridge ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}",
+                    "chore(release): mpv-rpc ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}",
             },
         ],
     ],

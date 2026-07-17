@@ -28,7 +28,7 @@ function normalizeTestTvdbLanguageCode(rawLanguage: string | null | undefined): 
     return mappedLanguages[normalizedInput] ?? normalizedInput;
 }
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: configMock,
 }));
 
@@ -115,7 +115,7 @@ describe("Anime TVDB episode cache", () => {
         });
         tvdbGetEpisodeTitleMock.mockResolvedValueOnce("Hidden Inventory").mockResolvedValueOnce("Inventário Oculto");
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
 
         await expect(getEpisodeTitle("Jujutsu Kaisen", 2, 1)).resolves.toBe("Hidden Inventory");
 

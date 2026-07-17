@@ -1,6 +1,6 @@
 import * as child_process from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as parser from "../src/parser";
+import * as parser from "../src/core/parser";
 
 // Mock execFile to simulate GuessIt responses
 vi.mock("node:child_process", async () => {
@@ -331,7 +331,7 @@ describe("Invalid Title Validation", () => {
 describe("Media Title Sanitization", () => {
     // Import directly from mpv module
     it("should strip Multi-Subs and tracker metadata from Torrentio title", async () => {
-        const { sanitizeMediaTitle } = await import("../src/mpv");
+        const { sanitizeMediaTitle } = await import("../src/integrations/mpv");
 
         const dirtyTitle =
             "OSHI NO KO S03E10 Private Audition 1080p CR WEB-DL AAC2.0 H 264-VARYG ([Oshi no Ko] Multi-Subs)\n👤 153 💾 1.39 GB ⚙️ NyaaSi\nMulti Subs / 🇬🇧 / 🇷🇺 / 🇮🇹 / 🇵🇹 / 🇪🇸 / 🇲🇽 / 🇨🇳 / 🇫🇷 / 🇩🇪 / 🇸🇦 / 🇮🇩 / 🇲🇾 / 🇹🇭";
@@ -341,21 +341,21 @@ describe("Media Title Sanitization", () => {
     });
 
     it("should not modify clean filenames", async () => {
-        const { sanitizeMediaTitle } = await import("../src/mpv");
+        const { sanitizeMediaTitle } = await import("../src/integrations/mpv");
 
         const clean = "Rascal.Does.Not.Dream.of.Bunny.Girl.Senpai.S02E07.1080p.CR.WEB-DL.mkv";
         expect(sanitizeMediaTitle(clean)).toBe(clean);
     });
 
     it("should handle N/A and empty strings", async () => {
-        const { sanitizeMediaTitle } = await import("../src/mpv");
+        const { sanitizeMediaTitle } = await import("../src/integrations/mpv");
 
         expect(sanitizeMediaTitle("N/A")).toBe("N/A");
         expect(sanitizeMediaTitle("")).toBe("");
     });
 
     it("should strip title with only Multi Subs parenthesis", async () => {
-        const { sanitizeMediaTitle } = await import("../src/mpv");
+        const { sanitizeMediaTitle } = await import("../src/integrations/mpv");
 
         const title = "Jujutsu Kaisen S03E03 1080p NF WEB-DL (Multi Subs)";
         expect(sanitizeMediaTitle(title)).toBe("Jujutsu Kaisen S03E03 1080p NF WEB-DL");

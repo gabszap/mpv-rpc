@@ -10,7 +10,7 @@ import * as https from "node:https";
 import * as path from "node:path";
 import type { AxiosRequestConfig } from "axios";
 import axios from "axios";
-import { config } from "../config";
+import { config } from "../core/config";
 import { getAccessToken } from "./auth";
 import type {
     TraktEpisode,

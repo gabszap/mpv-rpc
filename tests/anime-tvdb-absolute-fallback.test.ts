@@ -15,7 +15,7 @@ const fallbackTvdbSearchAnimeMock = vi.fn();
 const fallbackTvdbGetAnimeByIdMock = vi.fn();
 const fallbackTvdbGetEpisodeTitleMock = vi.fn();
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         metadataProvider: "anilist",
         tvdb: {
@@ -167,7 +167,7 @@ describe("Anime TVDB source-position fallback", () => {
         fallbackTvdbGetEpisodeTitleMock.mockResolvedValue("Mapped Source Episode Title");
 
         try {
-            const { getEpisodeTitle } = await import("../src/anime");
+            const { getEpisodeTitle } = await import("../src/core/anime");
 
             await expect(getEpisodeTitle("Dr Stone", 4, 35)).resolves.toBe("Mapped Source Episode Title");
             expect(fallbackTvdbGetEpisodeTitleMock).toHaveBeenCalledWith(

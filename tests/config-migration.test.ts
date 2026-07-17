@@ -4,7 +4,7 @@ import {
     inferIconMode,
     migrateBridgeConfig,
     migrateV1ToV2,
-} from "../src/bridge-config-migration";
+} from "../src/core/bridge-config-migration";
 
 describe("bridge-config-migration", () => {
     describe("CURRENT_CONFIG_VERSION", () => {

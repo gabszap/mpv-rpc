@@ -3,7 +3,7 @@
  * High-level sync logic with debouncing
  */
 
-import { config } from "../config";
+import { config } from "../core/config";
 import { getWatchStatus, updateWatchedEpisodes } from "./api";
 import { isAuthenticated } from "./auth";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveRuntimeEpisodeTitle, shouldPreferTvdbLocalizedEpisodeTitle } from "../src/mpv";
+import { resolveRuntimeEpisodeTitle, shouldPreferTvdbLocalizedEpisodeTitle } from "../src/integrations/mpv";
 
 describe("runtime episode title resolution", () => {
     it("prefers localized TVDB metadata over a parsed filename episode title", async () => {

@@ -13,7 +13,7 @@ vi.mock("axios", () => ({
     },
 }));
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         metadataProvider: "tvdb",
         tvdb: {
@@ -25,7 +25,7 @@ vi.mock("../src/config", () => ({
 }));
 
 async function setTvdbLanguage(language: string): Promise<void> {
-    const { config } = await import("../src/config");
+    const { config } = await import("../src/core/config");
     config.tvdb.language = language;
 }
 
@@ -813,7 +813,7 @@ describe("TvdbProvider season artwork", () => {
 
 describe("MPV cover image selection", () => {
     it("prefers season cover over series cover", async () => {
-        const { selectCoverImage } = await import("../src/mpv");
+        const { selectCoverImage } = await import("../src/integrations/mpv");
 
         expect(
             selectCoverImage({
@@ -824,7 +824,7 @@ describe("MPV cover image selection", () => {
     });
 
     it("falls back to existing cover when overflow info has no cover", async () => {
-        const { selectCoverImage } = await import("../src/mpv");
+        const { selectCoverImage } = await import("../src/integrations/mpv");
 
         expect(selectCoverImage({ cover_url: null, season_cover_url: null }, "https://example.test/existing.jpg")).toBe(
             "https://example.test/existing.jpg",

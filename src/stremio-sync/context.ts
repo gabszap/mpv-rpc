@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { MpvData } from "../mpv";
+import type { MpvData } from "../integrations/mpv";
 import { getCurrentEpisodePosition, isPlaybackContextMatchingData } from "./identity";
 
 export type StremioPlaybackContext = {

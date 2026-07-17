@@ -1,4 +1,4 @@
-import type { MpvData } from "./mpv";
+import type { MpvData } from "../integrations/mpv";
 
 export type CanonicalEpisodePosition = {
     season: number;

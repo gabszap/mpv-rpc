@@ -7,9 +7,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveCanonicalSplitPartEpisode } from "./canonical-episode";
 import { config } from "./config";
-import type { MpvData } from "./mpv";
-import { readStremioPlaybackContext } from "./stremio-sync/context";
-import { normalizeTitle } from "./trakt-sync/api";
+import type { MpvData } from "../integrations/mpv";
+import { readStremioPlaybackContext } from "../stremio-sync/context";
+import { normalizeTitle } from "../trakt-sync/api";
 
 // Shared config file path (same as bridge uses)
 const CONFIG_PATH = path.resolve(__dirname, "..", ".config", ".stremio-mpv-config.json");
