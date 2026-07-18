@@ -75,6 +75,16 @@ After configuring the `.env` file, you need to authorize the application:
 - **State Machine**: Tracks play/pause/stop transitions for accurate scrobbling
 - **Cooldown**: 60-second cooldown per episode to avoid duplicate scrobbles
 
+### Without TVDB_API_KEY
+
+TVDB is **not required** for Trakt sync to function. Without it:
+
+- **Regular anime** (season+episode numbering): Works perfectly — standard aired-season resolution handles these correctly.
+- **Absolute-numbered anime**: Falls back to cumulative episode matching across consecutive regular seasons. This is less accurate and may fail for shows with split-cour or non-standard season structures.
+- **No crashes or errors**: All TVDB-dependent code paths check for the API key first and return null immediately if it's missing, which triggers the next fallback strategy.
+
+TL;DR: Trakt sync works without TVDB, but some edge cases with unusual episode numbering may not scrobble. Setting `TVDB_API_KEY` improves accuracy for those cases.
+
 ---
 
 ## Português
@@ -147,3 +157,13 @@ Após configurar o arquivo `.env`, você precisa autorizar a aplicação:
 - **Apenas Anime**: Só faz scrobble quando metadados de anime são resolvidos (mal_id detectado)
 - **State Machine**: Rastreia transições play/pause/stop para scrobble preciso
 - **Cooldown**: 60 segundos de cooldown por episódio para evitar duplicatas
+
+### Sem TVDB_API_KEY
+
+O TVDB **não é obrigatório** para o Trakt sync funcionar. Sem ele:
+
+- **Animes comuns** (numeração temporada+episódio): Funcionam perfeitamente — a resolução padrão por temporada lida corretamente.
+- **Animes com numeração absoluta**: O sistema tenta correspondência cumulativa de episódios entre temporadas consecutivas. É menos preciso e pode falhar para séries com split-cour ou estruturas não-padrão.
+- **Sem crashes ou erros**: Todos os caminhos de código que dependem do TVDB verificam a chave primeiro e retornam null se estiver faltando, ativando a próxima estratégia de fallback.
+
+Resumo: Trakt sync funciona sem TVDB, mas alguns casos extremos de numeração incomum podem não registrar. Configurar `TVDB_API_KEY` melhora a precisão nesses casos.
