@@ -5,9 +5,9 @@
  */
 
 import * as net from "node:net";
+import { checkSeriesNameOverride } from "../console";
 import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "../core/anime";
 import { config } from "../core/config";
-import { checkSeriesNameOverride } from "../console";
 import { parseFilename } from "../core/parser";
 import { normalizeTvdbLanguageCode } from "../providers/tvdb";
 import { readStremioPlaybackContext, type StremioPlaybackContext } from "../stremio-sync/context";
@@ -69,15 +69,42 @@ function isStremioIdentitySafeForPlayback(context: StremioPlaybackContext, data:
  * The context must still be compatible with current playback before its IMDb ID
  * is copied into MPV data; otherwise a stale bridge context could validate itself.
  */
-function readStremioPlaybackIdentity(data: MpvData): { imdbId?: string; type?: "series" | "movie" } {
+function readProviderIdFromContext(context: StremioPlaybackContext, provider: "mal" | "tvdb" | "kitsu"): number | null {
+    const candidates = [context.libraryItemId, context.seriesId, context.videoId].filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+    for (const val of candidates) {
+        const match = val.match(new RegExp(`(?:^|:)${provider}:(\\d+)(?::|$)`, "i"));
+        if (match) {
+            const num = Number.parseInt(match[1], 10);
+            if (Number.isInteger(num) && num > 0) return num;
+        }
+    }
+    return null;
+}
+
+function readStremioPlaybackIdentity(data: MpvData): {
+    imdbId?: string;
+    type?: "series" | "movie";
+    malId?: number;
+    tvdbId?: number;
+    kitsuId?: number;
+} {
     const context = readStremioPlaybackContext(Date.now());
     if (!context || !isStremioIdentitySafeForPlayback(context, data)) {
         return {};
     }
 
+    const malId = readProviderIdFromContext(context, "mal");
+    const tvdbId = readProviderIdFromContext(context, "tvdb");
+    const kitsuId = readProviderIdFromContext(context, "kitsu");
+
     return {
         ...(context.imdbId ? { imdbId: context.imdbId } : {}),
         ...(context.type ? { type: context.type } : {}),
+        ...(malId ? { malId } : {}),
+        ...(tvdbId ? { tvdbId } : {}),
+        ...(kitsuId ? { kitsuId } : {}),
     };
 }
 
@@ -100,6 +127,8 @@ export interface MpvData {
     adjusted_episode: number | null; // Adjusted episode for split cour (null if no overflow)
     imdb_id?: string; // For Stremio sync
     type?: string; // For Stremio sync
+    tvdb_id?: number; // For Stremio fallback tracking
+    kitsu_id?: number; // For Stremio fallback tracking
     playlistPos: number; // Current position in playlist (0-indexed)
     playlistCount: number; // Total number of items in playlist
 }
@@ -578,6 +607,9 @@ export async function getMpvData(): Promise<MpvData | null> {
             ...mpvData,
             imdb_id: stremioIdentity.imdbId,
             type: stremioIdentity.type,
+            mal_id: mpvData.mal_id || stremioIdentity.malId || null,
+            tvdb_id: mpvData.tvdb_id || stremioIdentity.tvdbId,
+            kitsu_id: mpvData.kitsu_id || stremioIdentity.kitsuId,
         };
     } catch (e) {
         console.error("[MPV] Error getting data:", e);

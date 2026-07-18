@@ -6,7 +6,7 @@
 
 import { EventEmitter } from "node:events";
 import * as readline from "node:readline";
-import { providerName } from "../core/anime";
+import { getProviderName } from "../core/anime";
 import {
     clearManualOverride,
     clearSeriesNameOverride,
@@ -103,6 +103,7 @@ export class ConsoleRepl extends EventEmitter {
         const episodeTitleMatch = trimmed.match(/^(?:episode-title|et)(?:\s+["']?(.+?)["']?)?$/i);
         const seriesNameMatch = trimmed.match(/^(?:series-name|sn)(?:\s+["']?(.+?)["']?)?$/i);
         const command = trimmed.split(/\s+/)[0].toLowerCase();
+        const args = trimmed.split(/\s+/).slice(1).join(" ");
 
         if (episodeTitleMatch) {
             this.handleEpisodeTitle(episodeTitleMatch[1]);
@@ -133,6 +134,9 @@ export class ConsoleRepl extends EventEmitter {
                 case "exit":
                 case "quit":
                     this.handleExit();
+                    break;
+                case "reload":
+                    this.handleReload(args);
                     break;
                 default:
                     console.log(`[Error] Unknown command: ${command}. Type 'help' for available commands.`);
@@ -297,7 +301,7 @@ export class ConsoleRepl extends EventEmitter {
         }
 
         // Provider info
-        console.log(`\nMetadata Provider: ${providerName}`);
+        console.log(`\nMetadata Provider: ${getProviderName()}`);
         console.log("--------------\n");
     }
 
@@ -321,6 +325,9 @@ export class ConsoleRepl extends EventEmitter {
         console.log("  clear-all (ca)             Remove all overrides");
         console.log("  status (st)                Show current state and active overrides");
         console.log("  help (?)                   Show this message");
+        console.log("  reload                      Re-read .env and apply config changes live");
+        console.log("                              (reconnects services, restarts loop if needed)\n");
+        console.log("  reload all                  Also clear anime metadata cache for a fresh fetch\n");
         console.log("  exit (quit)                Quit the application\n");
         console.log("  All commands accept single or double quotes for arguments.");
         console.log("----------------------------\n");
@@ -333,6 +340,16 @@ export class ConsoleRepl extends EventEmitter {
         console.log("[System] Exiting...");
         this.rl.close();
         this.emit("exit");
+    }
+
+    /**
+     * Handle 'reload' command - re-read .env and apply config changes live.
+     * Accepts an optional "all" argument to also clear the anime metadata cache.
+     */
+    private handleReload(args: string): void {
+        const isAll = args.toLowerCase().trim() === "all";
+        console.log(isAll ? "[Reload] Reloading config and clearing cache..." : "[Reload] Reloading config...");
+        this.emit("reload", isAll ? "all" : "");
     }
 
     /**

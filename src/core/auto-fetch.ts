@@ -5,14 +5,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveCanonicalSplitPartEpisode } from "./canonical-episode";
-import { config } from "./config";
 import type { MpvData } from "../integrations/mpv";
 import { readStremioPlaybackContext } from "../stremio-sync/context";
 import { normalizeTitle } from "../trakt-sync/api";
+import { resolveCanonicalSplitPartEpisode } from "./canonical-episode";
+import { config } from "./config";
 
 // Shared config file path (same as bridge uses)
-const CONFIG_PATH = path.resolve(__dirname, "..", ".config", ".stremio-mpv-config.json");
+const CONFIG_PATH = path.join(process.cwd(), ".config", ".stremio-mpv-config.json");
 
 // Deduplication state
 let lastTriggerKey: string | null = null;

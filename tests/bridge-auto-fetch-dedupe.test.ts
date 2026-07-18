@@ -742,11 +742,15 @@ describe("bridge auto-fetch episode dedupe", () => {
         ];
 
         // Searching 2160p should pick 4K
-        const stream4kNameResolved = _autoFetchDedupeForTests.findBestStream(streams4kName, { preferredQuality: "2160p" });
+        const stream4kNameResolved = _autoFetchDedupeForTests.findBestStream(streams4kName, {
+            preferredQuality: "2160p",
+        });
         expect(stream4kNameResolved.url).toBe("https://streams.example.test/4k.mkv");
 
         // Searching 4k should pick 4K
-        const stream4kNameResolved2 = _autoFetchDedupeForTests.findBestStream(streams4kName, { preferredQuality: "4k" });
+        const stream4kNameResolved2 = _autoFetchDedupeForTests.findBestStream(streams4kName, {
+            preferredQuality: "4k",
+        });
         expect(stream4kNameResolved2.url).toBe("https://streams.example.test/4k.mkv");
 
         const streams2k = [

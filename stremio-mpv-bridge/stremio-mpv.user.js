@@ -1955,7 +1955,6 @@
         // accepts the /config POST and migrates it.
         GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
 
-
         // Phase 5B: read the iconMode from the modal's <select> (default
         // "default" if absent) and persist it. Unknown values are coerced
         // to "default" at read time by `applyIconMode`.

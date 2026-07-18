@@ -107,10 +107,10 @@ describe("Anime module with invalid metadata provider config", () => {
         });
         fallbackKitsuGetEpisodeTitleMock.mockResolvedValue("To You, in 2000 Years");
 
-        const { getEpisodeTitle, providerName } = await import("../src/core/anime");
+        const { getEpisodeTitle, getProviderName } = await import("../src/core/anime");
         const title = await getEpisodeTitle("Attack on Titan", 1, 1);
 
-        expect(providerName).toBe("jikan");
+        expect(getProviderName()).toBe("jikan");
         expect(title).toBe("To You, in 2000 Years");
         expect(primaryJikanSearchAnimeMock).toHaveBeenCalledTimes(1);
         expect(fallbackKitsuSearchAnimeMock).toHaveBeenCalledTimes(1);

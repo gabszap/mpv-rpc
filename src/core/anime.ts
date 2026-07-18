@@ -4,12 +4,12 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { config, type MetadataProvider } from "./config";
 import { AniListProvider } from "../providers/anilist";
 import { JikanProvider } from "../providers/jikan";
 import { KitsuProvider } from "../providers/kitsu";
 import { TvdbProvider } from "../providers/tvdb";
 import type { AnimeInfo, AnimeProvider, AnimeSearchResult, OverflowResult, SequelInfo } from "../providers/types";
+import { config, type MetadataProvider } from "./config";
 
 // Re-export types for other modules
 export type { AnimeInfo, OverflowResult } from "../providers/types";
@@ -38,7 +38,7 @@ function createProvider(metadataProvider: MetadataProvider): AnimeProvider {
     }
 }
 
-const provider = createProvider(config.metadataProvider);
+let provider = createProvider(config.metadataProvider);
 
 // Fallback providers for episode titles
 function createFallbackProviders(primaryProviderName: string): AnimeProvider[] {
@@ -63,10 +63,25 @@ function createFallbackProviders(primaryProviderName: string): AnimeProvider[] {
     return fallbackList;
 }
 
-const fallbackProviders = createFallbackProviders(provider.name);
+let fallbackProviders = createFallbackProviders(provider.name);
 
-// Export provider name for logging
-export const providerName = provider.name;
+/**
+ * Get the current provider name.
+ * Using a function instead of a const export so it stays in sync
+ * after reloadProvider() recreates the provider instance.
+ */
+export function getProviderName(): string {
+    return provider.name;
+}
+
+/**
+ * Re-create the provider and fallbacks based on the current config.
+ * Called by the reload system when METADATA_PROVIDER changes in .env.
+ */
+export function reloadProvider(): void {
+    provider = createProvider(config.metadataProvider);
+    fallbackProviders = createFallbackProviders(provider.name);
+}
 
 // Cache
 interface CacheEntry {
@@ -189,7 +204,7 @@ function buildAnimeInfoFromSearchResult(searchResult: AnimeSearchResult): AnimeI
     };
 }
 
-function getCachePath(): string {
+export function getAnimeCacheFilePath(): string {
     const cacheDir = path.join(process.cwd(), ".anime_cache");
     if (!fs.existsSync(cacheDir)) {
         fs.mkdirSync(cacheDir, { recursive: true });
@@ -199,7 +214,7 @@ function getCachePath(): string {
 
 function loadCache(): void {
     try {
-        const cachePath = getCachePath();
+        const cachePath = getAnimeCacheFilePath();
         if (fs.existsSync(cachePath)) {
             const data = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
             const now = Date.now();
@@ -226,7 +241,7 @@ function loadCache(): void {
 
 function saveCache(): void {
     try {
-        const cachePath = getCachePath();
+        const cachePath = getAnimeCacheFilePath();
         const data: Record<string, CacheEntry> = {};
         const now = Date.now();
         // Only save entries that are still valid
