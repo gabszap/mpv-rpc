@@ -198,10 +198,51 @@ function normalizeForComparison(title: string): string {
 }
 
 /**
+ * Calculate Levenshtein distance between two strings.
+ * Returns the minimum number of single-character edits required to change one into the other.
+ */
+export function levenshteinDistance(a: string, b: string): number {
+    const aLen = a.length;
+    const bLen = b.length;
+
+    // Early termination for empty strings
+    if (aLen === 0) return bLen;
+    if (bLen === 0) return aLen;
+
+    // Use two rows for O(n) memory
+    let prevRow = new Array(bLen + 1);
+    let currRow = new Array(bLen + 1);
+
+    for (let j = 0; j <= bLen; j++) {
+        prevRow[j] = j;
+    }
+
+    for (let i = 1; i <= aLen; i++) {
+        currRow[0] = i;
+        for (let j = 1; j <= bLen; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            currRow[j] = Math.min(
+                prevRow[j] + 1, // deletion
+                currRow[j - 1] + 1, // insertion
+                prevRow[j - 1] + cost, // substitution
+            );
+        }
+        [prevRow, currRow] = [currRow, prevRow];
+    }
+
+    return prevRow[bLen];
+}
+
+/**
  * Calculate a similarity score between search query and anime title
  * Higher score = better match
  */
-function calculateTitleScore(query: string, animeTitle: string, englishTitle: string | null): number {
+export function calculateTitleScore(
+    query: string,
+    animeTitle: string,
+    englishTitle: string | null,
+    titles?: Array<{ type: string; title: string }>,
+): number {
     const normalizedQuery = normalizeForComparison(query);
     const normalizedRomaji = normalizeForComparison(animeTitle);
     const normalizedEnglish = englishTitle ? normalizeForComparison(englishTitle) : "";
@@ -240,7 +281,81 @@ function calculateTitleScore(query: string, animeTitle: string, englishTitle: st
         score -= 100;
     }
 
+    // Levenshtein fuzzy fallback: boost candidates that are close typo-wise
+    // but would otherwise score low due to minor spelling differences
+    const maxLen = Math.max(normalizedQuery.length, normalizedRomaji.length, normalizedEnglish.length || 1);
+    const romajiDist = levenshteinDistance(normalizedQuery, normalizedRomaji);
+    const englishDist = normalizedEnglish ? levenshteinDistance(normalizedQuery, normalizedEnglish) : Infinity;
+    const bestDist = Math.min(romajiDist, englishDist);
+    const similarity = 1 - bestDist / maxLen;
+
+    // Boost only if the candidate is reasonably close but didn't match via other methods
+    if (similarity >= 0.7 && score < 200) {
+        const fuzzyBoost = Math.round(similarity * 200);
+        score += fuzzyBoost;
+    }
+
+    // Score against alternative titles (synonyms, Japanese, etc.) at 50% weight
+    if (titles && titles.length > 0) {
+        const alternativeScore = computeAlternativeTitleScore(normalizedQuery, titles);
+        if (alternativeScore > score) {
+            score = alternativeScore + 50; // Bonus for matching an alternative title
+        }
+    }
+
     return score;
+}
+
+/**
+ * Score the query against alternative titles (excluding "Default" and "English")
+ * at 50% weight, returning the best alternative score (or 0 if none).
+ */
+export function computeAlternativeTitleScore(normalizedQuery: string, titles: Array<{ type: string; title: string }>): number {
+    let bestScore = 0;
+
+    for (const entry of titles) {
+        // Skip "Default" (same as animeTitle) and "English" (same as englishTitle)
+        if (entry.type === "Default" || entry.type === "English") continue;
+        if (!entry.title || typeof entry.title !== "string") continue;
+
+        const normalizedAlt = normalizeForComparison(entry.title);
+        if (!normalizedAlt) continue;
+
+        let altScore = 0;
+
+        // Exact match
+        if (normalizedAlt === normalizedQuery) {
+            altScore += 1000;
+        }
+
+        // Starts with query
+        if (normalizedAlt.startsWith(normalizedQuery)) {
+            altScore += 500;
+        }
+
+        // Contains all words from query
+        const queryWords = normalizedQuery.split(" ").filter((w) => w.length > 1);
+        const matchedWords = queryWords.filter((w) => normalizedAlt.includes(w));
+        if (matchedWords.length === queryWords.length) {
+            altScore += 300 + matchedWords.length * 50;
+        } else {
+            altScore += matchedWords.length * 30;
+        }
+
+        // Contains query as substring
+        if (normalizedAlt.includes(normalizedQuery)) {
+            altScore += 200;
+        }
+
+        // Apply 50% weight for alternative titles
+        altScore = Math.round(altScore * 0.5);
+
+        if (altScore > bestScore) {
+            bestScore = altScore;
+        }
+    }
+
+    return bestScore;
 }
 
 function formatCompactJikanError(error: unknown): string {
@@ -278,7 +393,7 @@ export class JikanProvider implements AnimeProvider {
         try {
             const response = await jikanRequest<JikanAnimeData[]>("/anime", {
                 q: title,
-                limit: 10,
+                limit: 20,
                 sfw: true,
             });
 
@@ -295,7 +410,7 @@ export class JikanProvider implements AnimeProvider {
 
             // Score each candidate by title similarity
             const scoredCandidates = candidates.map((anime) => {
-                let score = calculateTitleScore(title, anime.title || "", anime.title_english || null);
+                let score = calculateTitleScore(title, anime.title || "", anime.title_english || null, anime.titles);
                 let seasonValidation: AnimeSearchResult["seasonValidation"];
 
                 // 2FA: Check synonyms for season match when expectedSeason is provided

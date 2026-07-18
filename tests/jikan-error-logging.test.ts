@@ -63,7 +63,7 @@ describe("JikanProvider error logging", () => {
             "/anime",
             {
                 q: "Attack on Titan",
-                limit: 10,
+                limit: 20,
                 sfw: true,
             },
             "ERROR",
@@ -75,7 +75,7 @@ describe("JikanProvider error logging", () => {
             "/anime",
             {
                 q: "Attack on Titan",
-                limit: 10,
+                limit: 20,
                 sfw: true,
             },
             "ERROR_DETAIL",
