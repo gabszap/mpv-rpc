@@ -91,9 +91,9 @@ export const config = {
     // Metadata provider (jikan, anilist, kitsu, or tvdb)
     metadataProvider: selectedMetadataProvider,
 
-    // Jikan API settings
+    // Jikan API settings (jikan-edge)
     jikan: {
-        baseUrl: "https://api.jikan.moe/v4",
+        baseUrl: "https://jikan.lucashdo.com/v1",
         minRequestInterval: 500,
     },
 

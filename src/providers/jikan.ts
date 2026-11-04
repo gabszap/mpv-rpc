@@ -46,54 +46,172 @@ const circuitBreaker = {
 };
 
 /**
- * Make a request to Jikan API with rate limiting
+ * Make a request to Jikan API (jikan-edge) with rate limiting
  */
 type JikanEpisodeData = {
+    malId?: unknown;
     mal_id?: unknown;
     episode?: unknown;
     number?: unknown;
     title?: unknown;
+    titleAlternative?: unknown;
+    titleJapanese?: unknown;
     title_romanji?: unknown;
     title_romaji?: unknown;
 };
 
-type JikanAnimeData = {
-    mal_id: number;
-    title?: string;
-    title_english?: string | null;
-    type?: string;
-    episodes?: number | null;
-    images?: {
-        jpg?: {
-            large_image_url?: string | null;
-            image_url?: string | null;
-        };
+type JikanImages = {
+    small?: string | null;
+    medium?: string | null;
+    large?: string | null;
+    jpg?: {
+        large_image_url?: string | null;
+        image_url?: string | null;
     };
+};
+
+type JikanAnimeData = {
+    malId?: number;
+    mal_id?: number;
+    url?: string | null;
+    title?: string;
+    titleEnglish?: string | null;
+    title_english?: string | null;
+    titleJapanese?: string | null;
+    titleSynonyms?: string[];
+    type?: string | null;
+    episodes?: number | null;
+    imageUrl?: string | null;
+    images?: JikanImages;
     titles?: Array<{ type: string; title: string }>;
+    relations?: JikanRelationData[];
 };
 
 type JikanRelationEntry = {
-    mal_id: number;
+    malId?: number;
+    mal_id?: number;
     type: string;
+    title?: string;
 };
 
 type JikanRelationData = {
     relation?: string;
+    malId?: number;
+    mal_id?: number;
+    type?: string;
+    title?: string;
     entry?: JikanRelationEntry[];
+};
+
+type JikanPagination = {
+    page: number;
+    limit: number;
+    count: number;
+    total: number | null;
+    hasNextPage: boolean;
+};
+
+type JikanMeta = {
+    cached?: boolean;
+    stale?: boolean;
+    refreshFailed?: boolean;
+    fetchedAt?: string;
+    pagination?: JikanPagination;
 };
 
 type JikanResponse<T> = {
     data?: T;
+    meta?: JikanMeta;
 };
 
+function readJikanMalId(entity: { malId?: unknown; mal_id?: unknown }): number | null {
+    const candidate = entity.malId ?? entity.mal_id;
+    return typeof candidate === "number" && Number.isInteger(candidate) && candidate > 0 ? candidate : null;
+}
+
+function readJikanCoverUrl(anime: JikanAnimeData): string | null {
+    return (
+        anime.images?.large ||
+        anime.images?.medium ||
+        anime.imageUrl ||
+        anime.images?.small ||
+        anime.images?.jpg?.large_image_url ||
+        anime.images?.jpg?.image_url ||
+        null
+    );
+}
+
+function buildJikanTitles(anime: JikanAnimeData): Array<{ type: string; title: string }> {
+    const entries: Array<{ type: string; title: string }> = [];
+    const seen = new Set<string>();
+
+    const addTitle = (type: string, value: string | null | undefined) => {
+        if (!value || typeof value !== "string") return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        const key = `${type}:${trimmed.toLowerCase()}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        entries.push({ type, title: trimmed });
+    };
+
+    if (Array.isArray(anime.titles)) {
+        for (const item of anime.titles) {
+            if (item && typeof item.type === "string" && typeof item.title === "string") {
+                addTitle(item.type, item.title);
+            }
+        }
+    }
+
+    addTitle("Default", anime.title);
+    addTitle("English", anime.titleEnglish ?? anime.title_english);
+    addTitle("Japanese", anime.titleJapanese);
+
+    if (Array.isArray(anime.titleSynonyms)) {
+        for (const synonym of anime.titleSynonyms) {
+            addTitle("Synonym", synonym);
+        }
+    }
+
+    return entries;
+}
+
 function readJikanEpisodeNumber(episodeData: JikanEpisodeData): number | null {
-    const candidate = episodeData.mal_id ?? episodeData.episode ?? episodeData.number;
+    const candidate = episodeData.number ?? episodeData.episode ?? episodeData.mal_id;
     return typeof candidate === "number" && Number.isInteger(candidate) ? candidate : null;
 }
 
 function readJikanEpisodeTitle(episodeData: JikanEpisodeData): string | null {
-    const candidate = episodeData.title ?? episodeData.title_romanji ?? episodeData.title_romaji;
+    const candidate =
+        episodeData.title ??
+        episodeData.titleAlternative ??
+        episodeData.titleJapanese ??
+        episodeData.title_romanji ??
+        episodeData.title_romaji;
     return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : null;
+}
+
+function parseRetryAfterMs(headers: Record<string, unknown> | undefined): number {
+    if (!headers) return 1000;
+    const rawHeader = headers["retry-after"] ?? headers["Retry-After"];
+    const headerValue = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+    if (typeof headerValue === "number" && Number.isFinite(headerValue) && headerValue > 0) {
+        return Math.ceil(headerValue * 1000);
+    }
+    if (typeof headerValue === "string") {
+        const seconds = Number(headerValue.trim());
+        if (Number.isFinite(seconds) && seconds > 0) {
+            return Math.ceil(seconds * 1000);
+        }
+        const retryDateMs = Date.parse(headerValue);
+        if (!Number.isNaN(retryDateMs)) {
+            const deltaMs = retryDateMs - Date.now();
+            if (deltaMs > 0) {
+                return deltaMs;
+            }
+        }
+    }
+    return 1000;
 }
 
 async function jikanRequest<T = unknown>(
@@ -122,12 +240,28 @@ async function jikanRequest<T = unknown>(
         logApiCall("Jikan", endpoint, params, `${response.status} OK`, "");
         return response.data;
     } catch (e: unknown) {
-        const error = e as { code?: unknown; message?: unknown; response?: { status?: unknown } };
+        const error = e as {
+            code?: unknown;
+            message?: unknown;
+            response?: {
+                status?: unknown;
+                headers?: Record<string, unknown>;
+                data?: {
+                    error?: {
+                        code?: unknown;
+                        message?: unknown;
+                        requestId?: unknown;
+                    };
+                };
+            };
+        };
         if (error.response?.status === 429) {
-            logApiCall("Jikan", endpoint, params, "429 RATE_LIMITED", "retrying in 1s");
-            console.log("[Jikan] Rate limited, waiting 1s...");
+            const retryDelayMs = parseRetryAfterMs(error.response.headers);
+            const retrySeconds = Math.max(1, Math.round(retryDelayMs / 1000));
+            logApiCall("Jikan", endpoint, params, "429 RATE_LIMITED", `retrying in ${retrySeconds}s`);
+            console.log(`[Jikan] Rate limited, waiting ${retrySeconds}s...`);
             circuitBreaker.recordFailure();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
             return jikanRequest(endpoint, params, retryCount);
         }
 
@@ -137,7 +271,14 @@ async function jikanRequest<T = unknown>(
             return jikanRequest(endpoint, params, retryCount + 1);
         }
 
-        logApiCall("Jikan", endpoint, params, "ERROR", typeof error.message === "string" ? error.message : "unknown");
+        const apiErrorMessage = error.response?.data?.error?.message;
+        const errorMessage =
+            typeof error.message === "string"
+                ? error.message
+                : typeof apiErrorMessage === "string"
+                  ? apiErrorMessage
+                  : "unknown";
+        logApiCall("Jikan", endpoint, params, "ERROR", errorMessage);
         if (config.debug) {
             logApiCall("Jikan", endpoint, params, "ERROR_DETAIL", formatProviderErrorDetails("Jikan", endpoint, e));
         }
@@ -152,12 +293,60 @@ function extractSeasonNumber(title: string): number | null {
         const match = title.match(pattern);
         if (match) return parseInt(match[1], 10);
     }
+    const romanMap: Record<string, number> = { ii: 2, iii: 3, iv: 4, v: 5, vi: 6 };
+    const romanMatch = title.match(/\b(II|III|IV|V|VI)(?:\s+(?:part|cour)\s*\d+)?$/i);
+    if (romanMatch) {
+        return romanMap[romanMatch[1].toLowerCase()] ?? null;
+    }
     return null;
 }
 
 function isPartOfSameSeason(title: string): boolean {
-    const partPatterns = [/\bpart\s*\d+/i, /\bcour\s*\d+/i];
+    const partPatterns = [/\bpart\s*\d+\b(?!\s*:)/i, /\bcour\s*\d+\b(?!\s*:)/i];
     return partPatterns.some((p) => p.test(title));
+}
+
+function isSameSeasonContinuation(
+    currentTitle: string | null | undefined,
+    previousTitle: string | null | undefined,
+    currentSeason: number,
+): boolean {
+    if (!currentTitle) return false;
+    if (isPartOfSameSeason(currentTitle)) return true;
+
+    const seasonInTitle = extractSeasonNumber(currentTitle);
+    if (seasonInTitle !== null && seasonInTitle > 1 && seasonInTitle <= currentSeason) {
+        return true;
+    }
+
+    if (previousTitle) {
+        const currentPartPrefix = currentTitle.match(/\bpart\s*(\d+)\s*:/i)?.[1];
+        const previousPartPrefix = previousTitle.match(/\bpart\s*(\d+)\s*:/i)?.[1];
+        if (currentPartPrefix && previousPartPrefix && currentPartPrefix === previousPartPrefix) {
+            return true;
+        }
+
+        const colonIndex = previousTitle.indexOf(":");
+        if (colonIndex > 0) {
+            const prevSubtitledBase = previousTitle
+                .replace(/\s+(?:part|cour)\s*\d+.*$/i, "")
+                .trim()
+                .toLowerCase();
+            const prevSubtitle = prevSubtitledBase.slice(colonIndex + 1).trim();
+            const currNormalized = currentTitle.trim().toLowerCase();
+            if (
+                prevSubtitle.length >= 4 &&
+                !/^(?:season\s*\d+|\d+(?:st|nd|rd|th)\s*season)$/i.test(prevSubtitle) &&
+                currNormalized.length > prevSubtitledBase.length &&
+                currNormalized.startsWith(prevSubtitledBase) &&
+                /^[\s\-:]/i.test(currNormalized.slice(prevSubtitledBase.length))
+            ) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 /**
@@ -170,6 +359,7 @@ function extractSeasonFromTitles(titles: any[]): number | null {
     if (!titles || !Array.isArray(titles)) return null;
 
     const seasonPatterns = [/(\d+)(?:st|nd|rd|th)\s*season/i, /season\s*(\d+)/i];
+    const romanMap: Record<string, number> = { ii: 2, iii: 3, iv: 4, v: 5, vi: 6 };
 
     for (const entry of titles) {
         const title = entry?.title || entry;
@@ -178,6 +368,11 @@ function extractSeasonFromTitles(titles: any[]): number | null {
         for (const pattern of seasonPatterns) {
             const match = title.match(pattern);
             if (match) return parseInt(match[1], 10);
+        }
+
+        const romanMatch = title.match(/\b(II|III|IV|V|VI)(?:\s+(?:part|cour)\s*\d+)?$/i);
+        if (romanMatch) {
+            return romanMap[romanMatch[1].toLowerCase()] ?? null;
         }
     }
 
@@ -262,7 +457,8 @@ export function calculateTitleScore(
     // Contains all words from query (medium priority)
     const queryWords = normalizedQuery.split(" ").filter((w) => w.length > 1);
     const titleWords = `${normalizedRomaji} ${normalizedEnglish}`;
-    const matchedWords = queryWords.filter((w) => titleWords.includes(w));
+    const titleTokenSet = new Set(titleWords.split(" ").filter(Boolean));
+    const matchedWords = queryWords.filter((w) => (w.length <= 2 ? titleTokenSet.has(w) : titleWords.includes(w)));
     if (matchedWords.length === queryWords.length) {
         score += 300 + matchedWords.length * 50;
     } else {
@@ -298,7 +494,7 @@ export function calculateTitleScore(
     // Score against alternative titles (synonyms, Japanese, etc.) at 50% weight
     if (titles && titles.length > 0) {
         const alternativeScore = computeAlternativeTitleScore(normalizedQuery, titles);
-        if (alternativeScore > score) {
+        if (alternativeScore > 0 && alternativeScore > score) {
             score = alternativeScore + 50; // Bonus for matching an alternative title
         }
     }
@@ -364,12 +560,29 @@ function formatCompactJikanError(error: unknown): string {
         code?: unknown;
         response?: {
             status?: unknown;
+            data?: {
+                error?: {
+                    code?: unknown;
+                    message?: unknown;
+                };
+            };
         };
     };
 
     const status = typeof err.response?.status === "number" ? err.response.status : null;
-    const code = typeof err.code === "string" ? err.code : null;
-    const message = typeof err.message === "string" ? err.message : "unknown error";
+    const apiError = err.response?.data?.error;
+    const code =
+        typeof err.code === "string"
+            ? err.code
+            : typeof apiError?.code === "string"
+              ? apiError.code
+              : null;
+    const message =
+        typeof apiError?.message === "string" && apiError.message.trim().length > 0
+            ? apiError.message
+            : typeof err.message === "string"
+              ? err.message
+              : "unknown error";
 
     if (status !== null && code) {
         return `status ${status} (${code}): ${message}`;
@@ -393,8 +606,6 @@ export class JikanProvider implements AnimeProvider {
         try {
             const response = await jikanRequest<JikanAnimeData[]>("/anime", {
                 q: title,
-                limit: 20,
-                sfw: true,
             });
 
             const results = Array.isArray(response.data) ? response.data : [];
@@ -407,15 +618,22 @@ export class JikanProvider implements AnimeProvider {
             const spinoffPatterns = /chibi|theatre|theater|special|tebie|caidan|petit|mini/i;
             const mainResults = results.filter((anime) => !spinoffPatterns.test(anime.title || ""));
             const candidates = mainResults.length > 0 ? mainResults : results;
+            const queryHasSeason = extractSeasonNumber(title) !== null || /\bfinal\s+season\b/i.test(title);
 
             // Score each candidate by title similarity
             const scoredCandidates = candidates.map((anime) => {
-                let score = calculateTitleScore(title, anime.title || "", anime.title_english || null, anime.titles);
+                const englishTitle = anime.titleEnglish ?? anime.title_english ?? null;
+                const synthesizedTitles = buildJikanTitles(anime);
+                let score = calculateTitleScore(title, anime.title || "", englishTitle, synthesizedTitles);
                 let seasonValidation: AnimeSearchResult["seasonValidation"];
+                const synonymSeason = extractSeasonFromTitles(synthesizedTitles);
 
-                // 2FA: Check synonyms for season match when expectedSeason is provided
+                const isExplicitSequelSeason =
+                    (synonymSeason !== null && synonymSeason > 1) ||
+                    /\b(?:final\s+season|part\s+[2-9]|cour\s+[2-9])\b/i.test(anime.title || "");
+
+                // 2FA: Check titles/synonyms for season match when expectedSeason is provided
                 if (expectedSeason && expectedSeason > 1) {
-                    const synonymSeason = extractSeasonFromTitles(anime.titles || []);
                     if (synonymSeason === expectedSeason) {
                         score += 2000;
                         seasonValidation = { expectedSeason, method: "explicit-title" };
@@ -426,7 +644,21 @@ export class JikanProvider implements AnimeProvider {
                             "DETAIL",
                             `Synonym match: "${anime.title}" has season ${synonymSeason} in titles`,
                         );
+                    } else if ((synonymSeason && synonymSeason !== expectedSeason) || isExplicitSequelSeason) {
+                        score -= 500;
                     }
+                } else if (!queryHasSeason) {
+                    // Penalize sequel seasons when searching for the base title (season 1)
+                    if (isExplicitSequelSeason) {
+                        score -= 500;
+                    }
+                }
+
+                if (
+                    !/\b(?:ova|movie|special)\b/i.test(title) &&
+                    (anime.type === "OVA" || anime.type === "Movie" || anime.type === "Special")
+                ) {
+                    score -= 100;
                 }
 
                 return { anime, score, seasonValidation };
@@ -444,13 +676,14 @@ export class JikanProvider implements AnimeProvider {
 
             const selectedCandidate = scoredCandidates[0];
             const selected = selectedCandidate.anime;
+            const selectedMalId = readJikanMalId(selected) ?? 0;
             const selectedScore = selectedCandidate.score;
             logApiCall(
                 "Jikan",
                 "/anime",
                 { q: title },
                 "DETAIL",
-                `"${selected.title}" (MAL:${selected.mal_id}) [score:${selectedScore}]`,
+                `"${selected.title}" (MAL:${selectedMalId}) [score:${selectedScore}]`,
             );
             return {
                 ...this.mapSearchResult(selected),
@@ -468,20 +701,23 @@ export class JikanProvider implements AnimeProvider {
             const anime = response.data;
             if (!anime) return null;
 
+            const malId = readJikanMalId(anime) ?? id;
+            const englishTitle = anime.titleEnglish ?? anime.title_english ?? null;
+
             logApiCall(
                 "Jikan",
                 `/anime/${id}`,
                 {},
                 "DETAIL",
-                `"${anime.title_english || anime.title}" (${anime.type})`,
+                `"${englishTitle || anime.title}" (${anime.type})`,
             );
 
             return {
-                id: anime.mal_id,
-                mal_id: anime.mal_id,
-                title_english: anime.title_english || null,
+                id: malId,
+                mal_id: malId,
+                title_english: englishTitle,
                 title_romaji: anime.title || "",
-                cover_url: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
+                cover_url: readJikanCoverUrl(anime),
                 total_episodes: anime.episodes || undefined,
             };
         } catch {
@@ -511,20 +747,29 @@ export class JikanProvider implements AnimeProvider {
 
         const listEndpoint = `/anime/${animeId}/episodes`;
         try {
-            const response = await jikanRequest<JikanEpisodeData[]>(listEndpoint);
-            const matchingEpisode = response.data?.find((entry) => readJikanEpisodeNumber(entry) === episode);
+            const targetPage = Math.max(1, Math.ceil(episode / 100));
+            const listParams = targetPage > 1 ? { page: targetPage } : undefined;
+            const response = await jikanRequest<JikanEpisodeData[]>(listEndpoint, listParams);
+            let matchingEpisode = response.data?.find((entry) => readJikanEpisodeNumber(entry) === episode);
+
+            if (!matchingEpisode && response.meta?.pagination?.hasNextPage) {
+                const nextPage = (response.meta.pagination.page || targetPage) + 1;
+                const nextResponse = await jikanRequest<JikanEpisodeData[]>(listEndpoint, { page: nextPage });
+                matchingEpisode = nextResponse.data?.find((entry) => readJikanEpisodeNumber(entry) === episode);
+            }
+
             if (!matchingEpisode) {
-                logApiCall("Jikan", listEndpoint, {}, "DETAIL", `episode ${episode} not found in list`);
+                logApiCall("Jikan", listEndpoint, listParams ?? {}, "DETAIL", `episode ${episode} not found in list`);
                 return null;
             }
 
             const title = readJikanEpisodeTitle(matchingEpisode);
             if (title) {
-                logApiCall("Jikan", listEndpoint, {}, "DETAIL", `episode ${episode}: "${title}"`);
+                logApiCall("Jikan", listEndpoint, listParams ?? {}, "DETAIL", `episode ${episode}: "${title}"`);
                 return title;
             }
 
-            logApiCall("Jikan", listEndpoint, {}, "DETAIL", `episode ${episode} has no title in list`);
+            logApiCall("Jikan", listEndpoint, listParams ?? {}, "DETAIL", `episode ${episode} has no title in list`);
             return null;
         } catch {
             return null;
@@ -541,6 +786,7 @@ export class JikanProvider implements AnimeProvider {
         let currentId = baseId;
         let currentSeason = 1;
         let lastValidId = baseId;
+        let previousAnime: AnimeInfo | null = null;
 
         while (currentSeason < targetSeason) {
             if (visited.has(currentId)) break;
@@ -551,7 +797,7 @@ export class JikanProvider implements AnimeProvider {
 
             if (!sequel) break;
 
-            const sequelAnime = await this.getAnimeById(sequel.mal_id);
+            const sequelAnime = await this.getAnimeById(sequel.malId);
             if (!sequelAnime) break;
 
             currentId = sequelAnime.id;
@@ -559,16 +805,19 @@ export class JikanProvider implements AnimeProvider {
 
             const seasonInTitle =
                 extractSeasonNumber(sequelAnime.title_romaji) || extractSeasonNumber(sequelAnime.title_english || "");
-            if (seasonInTitle === targetSeason) {
+            const isPart =
+                isSameSeasonContinuation(sequelAnime.title_romaji, previousAnime?.title_romaji, currentSeason) ||
+                isSameSeasonContinuation(sequelAnime.title_english, previousAnime?.title_english, currentSeason);
+
+            if (!isPart && seasonInTitle === targetSeason) {
                 return markSeasonAnimeValidated(sequelAnime, targetSeason, "explicit-title");
             }
 
-            // Check if this is a new season or just a "Part"
-            const isPart =
-                isPartOfSameSeason(sequelAnime.title_romaji) || isPartOfSameSeason(sequelAnime.title_english || "");
+            // Check if this is a new season or just a "Part" / cour continuation
             if (!isPart) {
                 currentSeason++;
             }
+            previousAnime = sequelAnime;
         }
 
         if (currentSeason < targetSeason) {
@@ -588,21 +837,54 @@ export class JikanProvider implements AnimeProvider {
         }
     }
 
-    private findSequel(relations: JikanRelationData[]): { mal_id: number; type: string } | null {
-        for (const relation of relations) {
-            if (relation.relation === "Sequel") {
-                // Prefer TV sequels
-                const tvEntry = relation.entry?.find((entry) => entry.type === "TV");
-                if (tvEntry) return tvEntry;
+    private findSequel(relations: JikanRelationData[]): { malId: number; type: string; title?: string } | null {
+        const sequelEntries: Array<{ malId: number; type: string; title?: string }> = [];
 
-                // Fallback to any anime
-                const anyEntry = relation.entry?.find(
-                    (entry) => entry.type === "Movie" || entry.type === "OVA" || entry.type === "anime",
-                );
-                if (anyEntry) return anyEntry;
+        for (const relation of relations) {
+            if (relation.relation !== "Sequel") continue;
+
+            const flatId = readJikanMalId(relation);
+            if (flatId !== null && typeof relation.type === "string") {
+                sequelEntries.push({
+                    malId: flatId,
+                    type: relation.type,
+                    title: relation.title,
+                });
+            }
+
+            if (Array.isArray(relation.entry)) {
+                for (const entry of relation.entry) {
+                    const entryId = readJikanMalId(entry);
+                    if (entryId !== null && typeof entry.type === "string") {
+                        sequelEntries.push({
+                            malId: entryId,
+                            type: entry.type,
+                            title: entry.title,
+                        });
+                    }
+                }
             }
         }
-        return null;
+
+        if (sequelEntries.length === 0) return null;
+
+        // Prefer TV sequels
+        const tvEntry = sequelEntries.find((entry) => entry.type === "TV");
+        if (tvEntry) return tvEntry;
+
+        // Prefer non-movie/special anime entries in jikan-edge flat relations
+        const nonMovieAnimeEntry = sequelEntries.find(
+            (entry) =>
+                entry.type === "anime" &&
+                (!entry.title || !/\b(?:movie|ova|special|recap)\b/i.test(entry.title)),
+        );
+        if (nonMovieAnimeEntry) return nonMovieAnimeEntry;
+
+        // Fallback to any anime
+        const anyEntry = sequelEntries.find(
+            (entry) => entry.type === "Movie" || entry.type === "OVA" || entry.type === "ONA" || entry.type === "anime",
+        );
+        return anyEntry ?? null;
     }
 
     async getSequelInfo(animeId: number): Promise<SequelInfo | null> {
@@ -611,7 +893,7 @@ export class JikanProvider implements AnimeProvider {
             const sequel = this.findSequel(relations);
             if (!sequel) return null;
 
-            const sequelAnime = await this.getAnimeById(sequel.mal_id);
+            const sequelAnime = await this.getAnimeById(sequel.malId);
             if (!sequelAnime) return null;
 
             const isSplitCour =
@@ -632,12 +914,12 @@ export class JikanProvider implements AnimeProvider {
 
     private mapSearchResult(anime: JikanAnimeData): AnimeSearchResult {
         return {
-            id: anime.mal_id,
+            id: readJikanMalId(anime) ?? 0,
             title: anime.title || "",
-            title_english: anime.title_english || null,
+            title_english: anime.titleEnglish ?? anime.title_english ?? null,
             type: anime.type || "Unknown",
-            coverImage: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
-            titles: anime.titles || [],
+            coverImage: readJikanCoverUrl(anime),
+            titles: buildJikanTitles(anime),
         };
     }
 }
