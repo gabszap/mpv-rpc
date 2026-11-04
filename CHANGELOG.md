@@ -2,6 +2,19 @@
 
 This file is managed by semantic-release.
 
+## [2.5.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.4.0...mpv-rpc-v2.5.0) (2026-11-04)
+
+### Features
+
+* **auto-fetch:** validate Stremio config matches current anime ([40ec132](https://github.com/gabszap/mpv-rpc/commit/40ec1321511d3a6dcc49d35864bb326df8359ac2))
+* **stremio-sync:** add Continue Watching sync with Stremio API ([2d1804a](https://github.com/gabszap/mpv-rpc/commit/2d1804a23b582c05eb5bcfd31964152a4e3752a7))
+* **stremio-sync:** add watched bitset marking with Cinemeta video IDs ([28c140d](https://github.com/gabszap/mpv-rpc/commit/28c140d5de21128c8ea172ea1fe554e8c7ae238a))
+
+### Bug Fixes
+
+* add auto-fetch deduplication and unify config defaults ([a2affbd](https://github.com/gabszap/mpv-rpc/commit/a2affbdb25d37a0d381a25d5f2a0720b29a30c7c))
+* harden parser fallbacks and trakt absolute mapping ([5d7c470](https://github.com/gabszap/mpv-rpc/commit/5d7c4709fca8af436a64a3df0af6f102025b4947))
+
 ## [2.4.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.3.0...mpv-rpc-v2.4.0) (2026-11-04)
 
 ### Features
