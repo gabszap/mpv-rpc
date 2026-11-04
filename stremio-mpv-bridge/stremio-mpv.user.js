@@ -20,10 +20,1549 @@
 // ==/UserScript==
 
 (() => {
-  // stremio-mpv-bridge/userscript/src/main.js
+  // stremio-mpv-bridge/userscript/src/constants.js
   var CONFIG = {
     SERVER_URL: "http://localhost:9632"
   };
+
+  // stremio-mpv-bridge/userscript/src/logging.js
+  function log(...args) {
+    if (GM_getValue("debug", false)) {
+      console.log("%c[Stremio-MPV]", "color: #8b5cf6; font-weight: bold;", ...args);
+    }
+  }
+  function info(...args) {
+    console.log("%c[Stremio-MPV]", "color: #22c55e; font-weight: bold;", ...args);
+  }
+
+  // stremio-mpv-bridge/userscript/src/icon-mode.js
+  function inferIconMode(legacy) {
+    if (!legacy || typeof legacy !== "object") {
+      return "default";
+    }
+    const showMpvIcon = legacy.showMpvIcon;
+    const showConfigIcon = legacy.showConfigIcon;
+    const compactMode = legacy.compactMode;
+    if (showMpvIcon === false && showConfigIcon === true && compactMode === true) {
+      return "compact";
+    }
+    if (showMpvIcon === false && showConfigIcon === true) {
+      return "config-only";
+    }
+    if (compactMode === true) {
+      return "compact";
+    }
+    if (showMpvIcon === false && showConfigIcon === false) {
+      return "disabled";
+    }
+    return "default";
+  }
+  function applyIconMode(iconMode) {
+    const mode = iconMode || "default";
+    switch (mode) {
+      case "config-only":
+        return {
+          containerVisible: true,
+          mpvButtonVisible: false,
+          configButtonVisible: true,
+          configButtonEnlarged: true,
+          configButtonSize: "large",
+          containerPosition: "bottom-right"
+        };
+      case "compact":
+        return {
+          containerVisible: true,
+          mpvButtonVisible: false,
+          configButtonVisible: true,
+          configButtonEnlarged: false,
+          configButtonSize: "small",
+          containerPosition: "top-right"
+        };
+      case "disabled":
+        return {
+          containerVisible: false,
+          mpvButtonVisible: false,
+          configButtonVisible: false,
+          configButtonEnlarged: false,
+          configButtonSize: "small",
+          containerPosition: "bottom-right"
+        };
+      default:
+        return {
+          containerVisible: true,
+          mpvButtonVisible: true,
+          configButtonVisible: true,
+          configButtonEnlarged: false,
+          configButtonSize: "small",
+          containerPosition: "bottom-right"
+        };
+    }
+  }
+
+  // stremio-mpv-bridge/userscript/src/settings.js
+  var DEFAULT_ACTIVE = [
+    { id: "torrentio", name: "Torrentio", url: "", enabled: true },
+    { id: "custom", name: "Custom", url: "", enabled: true }
+  ];
+  var CURRENT_CONFIG_VERSION = 2;
+  function migrateLocalConfigToV2() {
+    const storedVersion = GM_getValue("configVersion", null);
+    if (storedVersion === CURRENT_CONFIG_VERSION) {
+      return;
+    }
+    const legacy = {
+      autoFetch: GM_getValue("autoFetchEnabled", void 0),
+      extraEpisodes: GM_getValue("extraEpisodes", void 0),
+      showMpvIcon: GM_getValue("showMpvIcon", void 0),
+      showConfigIcon: GM_getValue("showConfigIcon", void 0),
+      compactMode: GM_getValue("compactMode", void 0)
+    };
+    const hasLegacyValue = Object.values(legacy).some((v) => v !== void 0);
+    if (hasLegacyValue) {
+      const autoFetch = legacy.autoFetch !== false;
+      const extraEpisodes = typeof legacy.extraEpisodes === "number" ? legacy.extraEpisodes : 2;
+      const iconMode = inferIconMode(legacy);
+      GM_setValue("autofetch", autoFetch);
+      GM_setValue("extraEpisodes", extraEpisodes);
+      GM_setValue("iconMode", iconMode);
+    }
+    GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+  }
+  migrateLocalConfigToV2();
+  function loadProviders() {
+    const storedProviders = GM_getValue("providers", []);
+    if (storedProviders.length > 0) {
+      const providers = storedProviders.filter((p) => p.id !== "torbox");
+      if (providers.length !== storedProviders.length) {
+        GM_setValue("providers", providers);
+      }
+      return providers;
+    }
+    return [...DEFAULT_ACTIVE];
+  }
+  var settings = {
+    // Default to 2 episodes (unified with bridge + RPC); user can override 1..25
+    autoFetch: GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true)),
+    extraEpisodes: GM_getValue("extraEpisodes", 2),
+    playlistMode: GM_getValue("playlistMode", "batch"),
+    mpvShortcut: GM_getValue("mpvShortcut", "v"),
+    preferredGroup: GM_getValue("preferredGroup", ""),
+    preferredQuality: GM_getValue("preferredQuality", ""),
+    mpvArgsStr: GM_getValue("mpvArgsStr", ""),
+    providers: loadProviders()
+  };
+
+  // stremio-mpv-bridge/userscript/src/page-scraper.js
+  function scrapeMetadata() {
+    const metadata = {
+      seriesName: null,
+      episodeTitle: null,
+      season: null,
+      episode: null
+    };
+    try {
+      const cachedSeriesId = window.location.hash.match(/series\/([^/?#]+)/i);
+      if (cachedSeriesId?.[1] && seriesNameCache.has(cachedSeriesId[1])) {
+        metadata.seriesName = seriesNameCache.get(cachedSeriesId[1]);
+      }
+      const headerEl = document.querySelector('div[class*="episode-title"]');
+      if (headerEl?.innerText) {
+        const seMatch = headerEl.innerText.match(/S(\d+)E(\d+)/i);
+        if (seMatch) {
+          metadata.season = parseInt(seMatch[1], 10);
+          metadata.episode = parseInt(seMatch[2], 10);
+          log(`Scraped from header: S${metadata.season}E${metadata.episode}`);
+        }
+        const titlePart = headerEl.innerText.replace(/S\d+E\d+/i, "").trim();
+        if (titlePart.length > 2) {
+          metadata.episodeTitle = titlePart;
+        }
+      }
+      const nameCandidates = [];
+      const metaLogoEl = document.querySelector('[class*="meta-info-container"] img[class*="logo"]');
+      if (metaLogoEl?.title) {
+        nameCandidates.push(metaLogoEl.title.trim());
+      } else if (metaLogoEl?.alt) {
+        nameCandidates.push(metaLogoEl.alt.trim());
+      }
+      const titleEl = document.querySelector('[class*="title-label"]');
+      if (titleEl?.innerText) {
+        nameCandidates.push(titleEl.innerText.trim());
+      }
+      if (document.title) {
+        const titleMatch = document.title.replace(/\s*[-\u2013\u2014]\s*Stremio\s*$/i, "").trim();
+        if (titleMatch && titleMatch.length > 1) {
+          nameCandidates.push(titleMatch);
+        }
+      }
+      const metaTitle = document.querySelector('meta[property="og:title"]');
+      if (metaTitle?.content) {
+        nameCandidates.push(metaTitle.content.trim());
+      }
+      const invalidPatterns = [
+        /you might also like/i,
+        /similar to/i,
+        /more like/i,
+        /recommended/i,
+        /trending/i,
+        /popular/i,
+        /^watch$/i,
+        /^stream$/i
+      ];
+      for (const candidate of nameCandidates) {
+        if (!candidate || candidate.length < 2) continue;
+        if (invalidPatterns.some((p) => p.test(candidate))) continue;
+        metadata.seriesName = candidate;
+        break;
+      }
+      const urlSeriesId = window.location.hash.match(/series\/([^/?#]+)/i);
+      if (urlSeriesId?.[1] && metadata.seriesName) {
+        seriesNameCache.set(urlSeriesId[1], metadata.seriesName);
+      }
+      if (!metadata.season) {
+        const allMultiselects = document.querySelectorAll('[class*="multiselect-button"]');
+        for (const el of allMultiselects) {
+          if (el.innerText?.includes("Season")) {
+            const match = el.innerText.match(/Season\s*(\d+)/i);
+            if (match) {
+              metadata.season = parseInt(match[1], 10);
+              break;
+            }
+          }
+        }
+      }
+      if (!metadata.season) {
+        const urlMatch = window.location.hash.match(/season=(\d+)/i);
+        if (urlMatch) metadata.season = parseInt(urlMatch[1], 10);
+      }
+    } catch (e) {
+      console.warn("Scraper error:", e);
+    }
+    return metadata;
+  }
+  var seriesNameCache = /* @__PURE__ */ new Map();
+
+  // stremio-mpv-bridge/userscript/src/url-parser.js
+  function isRealImdbId(id) {
+    return typeof id === "string" && /^tt\d+$/.test(id);
+  }
+  function getRouteText() {
+    return `${window.location.pathname || ""}${window.location.hash || ""}`.toLowerCase();
+  }
+  function isPlayerRoute() {
+    const route = getRouteText();
+    return /(?:^|[#/])player(?:$|[/?#])/.test(route);
+  }
+  function isDetailRoute() {
+    return getRouteText().includes("/detail/");
+  }
+  function parseCurrentURL() {
+    const hash = window.location.hash;
+    log("Parsing URL:", `${hash.substring(0, 80)}...`);
+    if (hash.includes("/player/") && lastValidContent?.episode) {
+      log("Using saved content (player mode):", lastValidContent);
+      return lastValidContent;
+    }
+    const uiMeta = scrapeMetadata();
+    const decodedHash = decodeURIComponent(hash);
+    let seriesId = null;
+    const seriesMatch = decodedHash.match(/\/detail\/(?:series|movie)\/([^/]+)/);
+    if (seriesMatch) {
+      seriesId = seriesMatch[1];
+      log("Extracted seriesId:", seriesId);
+    }
+    const imdbMatch = decodedHash.match(/(tt\d+):(\d+):(\d+)/);
+    if (imdbMatch) {
+      const videoId = imdbMatch[0];
+      const result = {
+        type: "series",
+        libraryItemId: seriesId || imdbMatch[1],
+        imdbId: imdbMatch[1],
+        seriesId: seriesId || imdbMatch[1],
+        streamId: imdbMatch[1],
+        videoId,
+        name: uiMeta.seriesName,
+        season: parseInt(imdbMatch[2], 10),
+        episode: parseInt(imdbMatch[3], 10)
+      };
+      log("IMDb content found:", result);
+      lastValidContent = result;
+      return result;
+    }
+    const kitsuMatch = decodedHash.match(/kitsu[:%]3A(\d+)[:%]3A(\d+)/i) || decodedHash.match(/kitsu:(\d+):(\d+)/i);
+    if (kitsuMatch) {
+      const streamId = `kitsu:${kitsuMatch[1]}`;
+      const result = {
+        type: "series",
+        libraryItemId: seriesId || streamId,
+        imdbId: null,
+        seriesId: seriesId || streamId,
+        streamId,
+        videoId: `${streamId}:${kitsuMatch[2]}`,
+        name: uiMeta.seriesName,
+        episodeTitle: uiMeta.episodeTitle,
+        season: uiMeta.season || 1,
+        episode: uiMeta.episode || parseInt(kitsuMatch[2], 10)
+      };
+      log("Kitsu content found:", result);
+      lastValidContent = result;
+      return result;
+    }
+    const genericMatch = decodedHash.match(/(\w+)[:%]3A(\d+)[:%]3A(\d+)[:%]3A(\d+)/i) || decodedHash.match(/(\w+):(\d+):(\d+):(\d+)/i);
+    if (genericMatch) {
+      const streamId = `${genericMatch[1]}:${genericMatch[2]}`;
+      const videoId = `${streamId}:${genericMatch[3]}:${genericMatch[4]}`;
+      const result = {
+        type: "series",
+        libraryItemId: seriesId || streamId,
+        imdbId: isRealImdbId(streamId) ? streamId : null,
+        seriesId: seriesId || streamId,
+        streamId,
+        videoId,
+        name: uiMeta.seriesName,
+        season: parseInt(genericMatch[3], 10),
+        episode: parseInt(genericMatch[4], 10)
+      };
+      log("Generic content found:", result);
+      lastValidContent = result;
+      return result;
+    }
+    const imdbIdMatch = decodedHash.match(/(tt\d+)/);
+    if (imdbIdMatch) {
+      return {
+        type: "series",
+        libraryItemId: seriesId || imdbIdMatch[1],
+        imdbId: imdbIdMatch[1],
+        seriesId: seriesId || imdbIdMatch[1],
+        streamId: imdbIdMatch[1],
+        videoId: null,
+        name: uiMeta.seriesName,
+        season: parseInt(decodedHash.match(/season=(\d+)/)?.[1], 10) || uiMeta.season || null,
+        episode: null
+      };
+    }
+    return lastValidContent || null;
+  }
+  var lastValidContent = null;
+
+  // stremio-mpv-bridge/userscript/src/bridge-api.js
+  var bridgeState = { pendingConfig: null };
+  function postBridgeConfig(config) {
+    return new Promise((resolve, reject) => {
+      try {
+        GM_xmlhttpRequest({
+          method: "POST",
+          url: "http://localhost:9632/config",
+          headers: { "Content-Type": "application/json" },
+          data: JSON.stringify(config),
+          onload: (r) => {
+            if (r.status >= 200 && r.status < 300) {
+              resolve();
+              return;
+            }
+            const responseBody = (r.responseText || "").trim();
+            const detail = responseBody ? `: ${responseBody}` : "";
+            reject(new Error(`Config sync failed (HTTP ${r.status})${detail}`));
+          },
+          onerror: () => reject(new Error("Config sync failed: connection failed")),
+          ontimeout: () => reject(new Error("Config sync failed: request timed out"))
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+  async function flushPendingBridgeConfig() {
+    const configToFlush = bridgeState.pendingConfig;
+    if (!configToFlush) {
+      return true;
+    }
+    try {
+      await postBridgeConfig(configToFlush);
+    } catch (_) {
+      return false;
+    }
+    if (bridgeState.pendingConfig === configToFlush) {
+      bridgeState.pendingConfig = null;
+    }
+    return true;
+  }
+  function getNonEmptyString(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const trimmedValue = value.trim();
+    return trimmedValue.length > 0 ? trimmedValue : null;
+  }
+  function getPositiveInteger(value) {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+  function buildBridgeStremioMeta(content) {
+    if (!content || typeof content !== "object") {
+      return null;
+    }
+    const meta = {};
+    const stringFields = ["seriesId", "libraryItemId", "videoId", "name", "episodeTitle", "type"];
+    const numberFields = ["season", "episode", "episodesInSeason"];
+    for (const field of stringFields) {
+      const value = getNonEmptyString(content[field]);
+      if (value) {
+        meta[field] = value;
+      }
+    }
+    const imdbId = getNonEmptyString(content.imdbId);
+    if (imdbId && isRealImdbId(imdbId)) {
+      meta.imdbId = imdbId;
+    } else if (content.imdbId === null) {
+      meta.imdbId = null;
+    }
+    for (const field of numberFields) {
+      const value = getPositiveInteger(content[field]);
+      if (value) {
+        meta[field] = value;
+      }
+    }
+    const hasIdentity = Boolean(meta.seriesId || meta.libraryItemId || meta.videoId || meta.imdbId || meta.name);
+    return hasIdentity ? meta : null;
+  }
+  async function checkServer() {
+    return new Promise(
+      (r) => GM_xmlhttpRequest({
+        method: "GET",
+        url: `${CONFIG.SERVER_URL}/health`,
+        timeout: 5e3,
+        onload: (res) => r(res.status === 200),
+        onerror: () => r(false),
+        ontimeout: () => r(false)
+      })
+    );
+  }
+  function sendToMPV(playlist, title) {
+    if (bridgeState.pendingConfig) {
+      return flushPendingBridgeConfig().then((flushed) => {
+        if (!flushed) {
+          log("[Bridge] Pending config sync failed; aborting /play");
+          return Promise.reject(new Error("Pending config sync failed"));
+        }
+        return sendToMPVInner(playlist, title);
+      });
+    }
+    return sendToMPVInner(playlist, title);
+  }
+  function sendToMPVInner(playlist, title) {
+    return new Promise((resolve, reject) => {
+      const profile = JSON.parse(localStorage.getItem("profile") || "{}");
+      const authKey = profile.auth?.key;
+      const realImdbId = isRealImdbId(title.imdbId) ? title.imdbId : null;
+      log(
+        `Bridge: Sending payload with authKey: ${authKey ? "Found" : "MISSING"} | libraryItemId: ${title.libraryItemId || title.seriesId} | imdbId: ${realImdbId || "none"}`
+      );
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: `${CONFIG.SERVER_URL}/play`,
+        headers: { "Content-Type": "application/json" },
+        data: JSON.stringify({
+          playlist,
+          contentTitle: title.videoId || title.streamId || realImdbId || title.seriesId,
+          args: settings.mpvArgsStr,
+          stremioAuth: authKey,
+          stremioContext: {
+            libraryItemId: title.libraryItemId || title.seriesId,
+            seriesId: title.seriesId,
+            imdbId: realImdbId,
+            videoId: title.videoId || null,
+            name: title.name,
+            episodeTitle: title.episodeTitle,
+            season: title.season,
+            episode: title.episode,
+            episodesInSeason: title.episodesInSeason || null,
+            type: title.type
+          }
+        }),
+        onload: (r) => r.status === 200 ? resolve() : reject(new Error("Server error")),
+        onerror: () => reject(new Error("Connection failed"))
+      });
+    });
+  }
+
+  // stremio-mpv-bridge/userscript/src/toasts.js
+  function notify(msg, type = "info") {
+    info(msg);
+    showToast(msg, type);
+  }
+  var toastCounter = 0;
+  var MAX_TOASTS = 5;
+  var TOAST_DURATION = 3e3;
+  function getToastContainer() {
+    let container = document.getElementById("stremio-mpv-toast-container");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "stremio-mpv-toast-container";
+      container.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column-reverse;
+            align-items: center;
+            gap: 8px;
+            z-index: 999999;
+            pointer-events: none;
+        `;
+      document.body.appendChild(container);
+    }
+    return container;
+  }
+  function showToast(message, type = "info") {
+    const container = getToastContainer();
+    const color = type === "error" ? "#ef4444" : type === "success" ? "#22c55e" : "#3b82f6";
+    const toasts = container.querySelectorAll(".stremio-mpv-toast");
+    if (toasts.length >= MAX_TOASTS) {
+      toasts[toasts.length - 1].remove();
+    }
+    const id = `stremio-mpv-toast-${++toastCounter}`;
+    const toast = document.createElement("div");
+    toast.id = id;
+    toast.className = "stremio-mpv-toast";
+    toast.style.cssText = `
+        background: ${color};
+        color: white;
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: 'Roboto', sans-serif;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        pointer-events: auto;
+        cursor: pointer;
+        animation: mpv-toast-in 0.25s ease-out;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+    `;
+    toast.textContent = message;
+    toast.addEventListener("click", () => dismissToast(toast));
+    if (!document.getElementById("mpv-toast-styles")) {
+      const style = document.createElement("style");
+      style.id = "mpv-toast-styles";
+      style.textContent = `
+            @keyframes mpv-toast-in {
+                from { opacity: 0; transform: translateY(12px); }
+                to   { opacity: 1; transform: translateY(0); }
+            }
+            @keyframes mpv-toast-out {
+                from { opacity: 1; transform: scale(1); }
+                to   { opacity: 0; transform: scale(0.95); }
+            }
+        `;
+      document.head.appendChild(style);
+    }
+    container.prepend(toast);
+    const timer = setTimeout(() => dismissToast(toast), TOAST_DURATION);
+    toast._dismissTimer = timer;
+  }
+  function dismissToast(toast) {
+    if (toast._dismissed) return;
+    toast._dismissed = true;
+    clearTimeout(toast._dismissTimer);
+    toast.style.animation = "mpv-toast-out 0.2s ease forwards";
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  }
+  function showNowPlayingWidget(title) {
+    const existing = document.getElementById("mpv-now-playing");
+    if (existing) existing.remove();
+    const widget = document.createElement("div");
+    widget.id = "mpv-now-playing";
+    widget.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 40px; height: 40px; background: rgba(139, 92, 246, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #a78bfa;">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+            <div style="display: flex; flex-direction: column; overflow: hidden;">
+                <span style="font-size: 11px; text-transform: uppercase; color: #a78bfa; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px;">Now Playing</span>
+                <span style="font-size: 14px; color: white; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;" title="${title}">${title}</span>
+            </div>
+        </div>
+    `;
+    widget.style.cssText = `
+        position: fixed; bottom: 30px; right: 30px;
+        background: rgba(15, 15, 20, 0.95);
+        backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+        border: 1px solid rgba(139, 92, 246, 0.4);
+        border-radius: 16px; padding: 16px 20px; z-index: 999999;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
+        transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.5s ease;
+        transform: translateY(100px); opacity: 0;
+        font-family: 'Roboto', sans-serif;
+    `;
+    document.body.appendChild(widget);
+    void widget.offsetWidth;
+    widget.classList.add("show");
+    widget.style.transform = "translateY(0)";
+    widget.style.opacity = "1";
+    setTimeout(() => {
+      widget.classList.remove("show");
+      widget.style.transform = "translateY(100px)";
+      widget.style.opacity = "0";
+      setTimeout(() => widget.remove(), 500);
+    }, 6e3);
+  }
+  function showBridgeConnectedToast() {
+    const existing = document.getElementById("mpv-bridge-connected");
+    if (existing) existing.remove();
+    const widget = document.createElement("div");
+    widget.id = "mpv-bridge-connected";
+    widget.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 40px; height: 40px; background: rgba(139, 92, 246, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #a78bfa;">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+            </div>
+            <div style="display: flex; flex-direction: column; overflow: hidden;">
+                <span style="font-size: 11px; text-transform: uppercase; color: #a78bfa; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px;">MPV Bridge</span>
+                <span style="font-size: 14px; color: white; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;">Bridge Connected</span>
+            </div>
+        </div>
+    `;
+    widget.style.cssText = `
+        position: fixed; bottom: 30px; right: 30px;
+        background: rgba(15, 15, 20, 0.95);
+        backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+        border: 1px solid rgba(139, 92, 246, 0.4);
+        border-radius: 16px; padding: 16px 20px; z-index: 999999;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
+        transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.5s ease;
+        transform: translateY(100px); opacity: 0;
+        font-family: 'Roboto', sans-serif;
+    `;
+    document.body.appendChild(widget);
+    void widget.offsetWidth;
+    widget.style.transform = "translateY(0)";
+    widget.style.opacity = "1";
+    setTimeout(() => {
+      widget.style.transform = "translateY(100px)";
+      widget.style.opacity = "0";
+      setTimeout(() => widget.remove(), 500);
+    }, 4e3);
+  }
+
+  // stremio-mpv-bridge/userscript/src/bridge-polling.js
+  var bridgePollInterval = null;
+  var wasBridgeOnline = false;
+  function startBridgePolling() {
+    if (bridgePollInterval) return;
+    checkServer().then((isOnline) => {
+      wasBridgeOnline = isOnline;
+      log(`[BridgePoll] Initial seed: isOnline=${isOnline}, wasBridgeOnline=${wasBridgeOnline}`);
+      bridgePollInterval = setInterval(async () => {
+        const isOnline2 = await checkServer();
+        log(`[BridgePoll] Tick: isOnline=${isOnline2}, wasBridgeOnline=${wasBridgeOnline}`);
+        if (isOnline2 && !wasBridgeOnline) {
+          log("[BridgePoll] Detected offline -> online transition, showing toast");
+          showBridgeConnectedToast();
+        }
+        wasBridgeOnline = isOnline2;
+      }, 1e4);
+    });
+  }
+  function stopBridgePolling() {
+    if (bridgePollInterval) {
+      clearInterval(bridgePollInterval);
+      bridgePollInterval = null;
+    }
+  }
+
+  // stremio-mpv-bridge/userscript/src/confirm-modal.js
+  function showConfirmModal(title, message, onConfirm, confirmText = "Yes", cancelText = "Cancel") {
+    if (document.getElementById("stremio-mpv-confirm")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "stremio-mpv-confirm";
+    overlay.innerHTML = `
+        <style>
+            #stremio-mpv-confirm {
+                position: fixed; inset: 0; z-index: 100005;
+                background: rgba(0, 0, 0, 0.4);
+                backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+                display: flex; align-items: center; justify-content: center;
+                font-family: 'Roboto', sans-serif;
+                opacity: 0; transition: opacity 0.2s ease;
+                color-scheme: dark;
+            }
+            .mpv-confirm-content {
+                background: rgba(15, 15, 15, 0.85);
+                color: #eee;
+                padding: 24px;
+                border-radius: 20px;
+                width: 320px; max-width: 90vw;
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                box-shadow: 0 25px 50px rgba(0,0,0,0.6), 0 0 40px rgba(239, 68, 68, 0.15);
+                display: flex; flex-direction: column; align-items: center; text-align: center;
+                transform: scale(0.9); transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+            }
+            #stremio-mpv-confirm.active { opacity: 1; }
+            #stremio-mpv-confirm.active .mpv-confirm-content { transform: scale(1); }
+
+            .mpv-confirm-icon { font-size: 32px; margin-bottom: 12px; }
+            .mpv-confirm-title { font-size: 18px; font-weight: bold; margin-bottom: 8px; color: #fff; }
+            .mpv-confirm-message { font-size: 14px; opacity: 0.8; margin-bottom: 24px; line-height: 1.4; }
+            .mpv-confirm-actions { display: flex; gap: 12px; width: 100%; }
+
+            .mpv-confirm-btn {
+                flex: 1; padding: 10px; border-radius: 8px; cursor: pointer;
+                border: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease;
+            }
+            .mpv-confirm-cancel {
+                background: rgba(255, 255, 255, 0.05); color: #aaa; border: 1px solid rgba(255,255,255,0.1);
+            }
+            .mpv-confirm-cancel:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+            .mpv-confirm-cancel:focus { outline: none; border-color: #8b5cf6; box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3); }
+
+            .mpv-confirm-yes {
+                background: #ef4444; color: white; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+            }
+            .mpv-confirm-yes:hover {
+                background: #dc2626; transform: translateY(-1px); box-shadow: 0 6px 15px rgba(239, 68, 68, 0.4);
+            }
+            .mpv-confirm-yes:focus { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #ef4444; }
+        </style>
+        <div class="mpv-confirm-content">
+            <div class="mpv-confirm-icon">⚠️</div>
+            <div class="mpv-confirm-title">${title}</div>
+            <div class="mpv-confirm-message">${message}</div>
+            <div class="mpv-confirm-actions">
+                <button class="mpv-confirm-btn mpv-confirm-cancel">${cancelText}</button>
+                <button class="mpv-confirm-btn mpv-confirm-yes">${confirmText}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    const cancelBtn = overlay.querySelector(".mpv-confirm-cancel");
+    const yesBtn = overlay.querySelector(".mpv-confirm-yes");
+    requestAnimationFrame(() => {
+      overlay.classList.add("active");
+      cancelBtn.focus();
+    });
+    const close = () => {
+      overlay.classList.remove("active");
+      document.removeEventListener("keydown", handleEscape);
+      setTimeout(() => overlay.remove(), 200);
+    };
+    const handleEscape = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    cancelBtn.addEventListener("click", close);
+    yesBtn.addEventListener("click", () => {
+      onConfirm();
+      close();
+    });
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close();
+    });
+  }
+
+  // stremio-mpv-bridge/userscript/src/stream-selection.js
+  function extractStreamLeafFilename(stream) {
+    if (typeof stream?.behaviorHints?.filename === "string" && stream.behaviorHints.filename.trim().length > 0) {
+      const parts = stream.behaviorHints.filename.trim().split(/[\\/]/);
+      return parts[parts.length - 1].trim();
+    }
+    const text = [stream?.title, stream?.description].filter((v) => typeof v === "string" && v.trim().length > 0).join("\n");
+    if (!text) {
+      return "";
+    }
+    const lines = text.split(/\r?\n|\\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const cleanedLine = lines[i].replace(/^📁\s*/u, "").trim();
+      if (/\.(?:mkv|mp4|avi|webm|m4v|ts)$/i.test(cleanedLine) || lines[i].includes("📁")) {
+        const parts = cleanedLine.split(/[\\/]/);
+        return parts[parts.length - 1].trim();
+      }
+    }
+    const firstLineParts = lines[0].split(/[\\/]/);
+    return firstLineParts[firstLineParts.length - 1].trim();
+  }
+  function parseSingleStream(stream) {
+    let url = stream.url || stream.externalUrl;
+    if (!url && stream.infoHash) {
+      url = `magnet:?xt=urn:btih:${stream.infoHash}`;
+      if (stream.sources)
+        stream.sources.forEach((s) => {
+          url += `&tr=${encodeURIComponent(s)}`;
+        });
+    }
+    const leafFilename = extractStreamLeafFilename(stream);
+    let title = stream.behaviorHints?.filename || (leafFilename ? leafFilename : null) || (stream.title ? stream.title.split("\n")[0].split("\\n")[0] : null) || (stream.description ? stream.description.split("\n")[0].split("\\n")[0] : null) || stream.name || "Video";
+    if (title.length > 200) title = `${title.substring(0, 200)}...`;
+    return { url, title };
+  }
+  function getQualityAliases(quality) {
+    const q = quality.toLowerCase();
+    if (q === "4k" || q === "2160p") return ["4k", "2160p"];
+    if (q === "2k" || q === "1440p") return ["2k", "1440p"];
+    if (q === "fhd" || q === "1080p") return ["fhd", "1080p"];
+    if (q === "hd" || q === "720p") return ["hd", "720p"];
+    return [q];
+  }
+  var TECHNICAL_BRACKET_TAGS = /* @__PURE__ */ new Set([
+    "1080p",
+    "720p",
+    "2160p",
+    "1440p",
+    "480p",
+    "4k",
+    "2k",
+    "fhd",
+    "hd",
+    "hevc",
+    "avc",
+    "x264",
+    "x265",
+    "h264",
+    "h265",
+    "10bit",
+    "8bit",
+    "hdr",
+    "dv",
+    "web-dl",
+    "webrip",
+    "bluray",
+    "bdrip",
+    "aac",
+    "eac3",
+    "ac3",
+    "flac",
+    "multisub",
+    "dual-audio",
+    "dual audio",
+    "dublado",
+    "legendado",
+    "tb+",
+    "rd+",
+    "ad+",
+    "pm+",
+    "dl"
+  ]);
+  var ROMAN_SEASON_MAP = {
+    ii: 2,
+    iii: 3,
+    iv: 4,
+    v: 5,
+    vi: 6
+  };
+  function extractReleaseGroup(text) {
+    if (typeof text !== "string" || text.trim().length === 0) {
+      return null;
+    }
+    const tagIconMatch = text.match(/(?:🏷️?|🏷)\s*([A-Za-z0-9._-]{2,25})/u);
+    if (tagIconMatch) {
+      const candidate = tagIconMatch[1].trim().toLowerCase();
+      if (candidate && !TECHNICAL_BRACKET_TAGS.has(candidate)) {
+        return candidate;
+      }
+    }
+    const lines = text.split(/\r?\n|\\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+    const orderedLines = [
+      ...lines.filter((line) => line.includes("📁") || /\.(?:mkv|mp4|avi|webm|m4v|ts)$/i.test(line)),
+      ...lines
+    ];
+    for (const rawLine of orderedLines) {
+      const lineParts = rawLine.replace(/^📁\s*/u, "").split(/[\\/]/);
+      const leafLine = lineParts[lineParts.length - 1].trim();
+      const bracketMatches = leafLine.matchAll(/\[([^[\]]{2,30})\]/g);
+      for (const match of bracketMatches) {
+        const candidate = match[1].trim().toLowerCase();
+        if (!candidate || TECHNICAL_BRACKET_TAGS.has(candidate) || /^[0-9a-f]{8}$/i.test(candidate)) {
+          continue;
+        }
+        if (/^\d{3,4}p$/i.test(candidate) || /season/i.test(candidate) || /audio/i.test(candidate)) {
+          continue;
+        }
+        return candidate;
+      }
+      const withoutExtension = leafLine.replace(/\.(?:mkv|mp4|avi|webm|m4v|ts)$/i, "");
+      const suffixMatch = withoutExtension.match(/(?:^|[\s._])-([A-Za-z0-9]{2,20})$/);
+      if (suffixMatch) {
+        const candidate = suffixMatch[1].trim().toLowerCase();
+        if (!TECHNICAL_BRACKET_TAGS.has(candidate) && !/^\d+$/i.test(candidate)) {
+          return candidate;
+        }
+      }
+    }
+    return null;
+  }
+  function inferSeasonFromTitlePrefix(titlePrefix) {
+    if (!titlePrefix) {
+      return null;
+    }
+    const cleaned = titlePrefix.replace(/^\[[^[\]]+\]\s*/g, "").replace(/[._]+/g, " ").trim();
+    if (/\b(?:bridon\s+arc|yingdu\s+pian)\b/i.test(cleaned)) {
+      return 3;
+    }
+    const explicitSeasonMatch = cleaned.match(/\bseason\s*0*(\d{1,2})\b/i) || cleaned.match(/\b(\d{1,2})(?:nd|rd|th)\s+season\b/i) || cleaned.match(/\bs0*(\d{1,2})\b/i);
+    if (explicitSeasonMatch) {
+      return Number.parseInt(explicitSeasonMatch[1], 10);
+    }
+    const romanMatch = cleaned.match(/\b(ii|iii|iv|v|vi)\s*$/i);
+    if (romanMatch) {
+      return ROMAN_SEASON_MAP[romanMatch[1].toLowerCase()] ?? null;
+    }
+    return null;
+  }
+  function evaluateStreamEpisodeMatch(stream, targetSeason, targetEpisode, seriesName = null) {
+    if (!Number.isInteger(targetSeason) || targetSeason < 1 || !Number.isInteger(targetEpisode) || targetEpisode < 1) {
+      return "neutral";
+    }
+    const leafFilename = extractStreamLeafFilename(stream);
+    const candidateText = leafFilename || [stream?.behaviorHints?.filename, stream?.title, stream?.description, stream?.name].filter((v) => typeof v === "string" && v.trim().length > 0).join("\n");
+    if (!candidateText) {
+      return "neutral";
+    }
+    const explicitPairs = [];
+    for (const match of candidateText.matchAll(/\bS0*(\d{1,2})[\s._-]*E0*(\d{1,3})\b/gi)) {
+      const prefixBeforeMatch = candidateText.slice(0, match.index ?? 0);
+      const prefixSeason = inferSeasonFromTitlePrefix(prefixBeforeMatch);
+      let effectiveSeason = Number.parseInt(match[1], 10);
+      if (effectiveSeason === 1 && prefixSeason !== null && prefixSeason !== 1) {
+        effectiveSeason = prefixSeason;
+      } else if (effectiveSeason === 1 && targetSeason === 1 && typeof seriesName === "string" && seriesName.trim()) {
+        const normSeries = seriesName.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const normPrefix = prefixBeforeMatch.replace(/^\[[^[\]]+\]\s*/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        if (normSeries && normPrefix.startsWith(`${normSeries} `) && normPrefix.length > normSeries.length + 2) {
+          const extraWords = normPrefix.slice(normSeries.length).trim();
+          if (/\b(?:arc|pian|part|cour|chapter|hen)\b/i.test(extraWords)) {
+            effectiveSeason = -1;
+          }
+        }
+      }
+      explicitPairs.push({
+        season: effectiveSeason,
+        episode: Number.parseInt(match[2], 10)
+      });
+    }
+    for (const match of candidateText.matchAll(/(?<!\d)0*(\d{1,2})x0*(\d{1,3})(?!\d)/gi)) {
+      explicitPairs.push({
+        season: Number.parseInt(match[1], 10),
+        episode: Number.parseInt(match[2], 10)
+      });
+    }
+    if (explicitPairs.length > 0) {
+      const hasExactMatch = explicitPairs.some(
+        (pair) => pair.season === targetSeason && pair.episode === targetEpisode
+      );
+      return hasExactMatch ? "exact" : "mismatch";
+    }
+    if (leafFilename) {
+      const normalizedLeaf = leafFilename.replace(/\.(?:mkv|mp4|avi|webm|m4v|ts)$/i, "").replace(/^\[[^[\]]+\]\s*/g, "").replace(/_/g, " ");
+      const dashEpMatch = normalizedLeaf.match(/^(.*?)\s*-\s*0*(\d{1,3})(?:v\d+)?(?:\s|\(|\[|$)/i);
+      if (dashEpMatch) {
+        const titlePart = dashEpMatch[1].trim();
+        const parsedEp = Number.parseInt(dashEpMatch[2], 10);
+        if (parsedEp !== targetEpisode) {
+          return "mismatch";
+        }
+        const inferredSeason = inferSeasonFromTitlePrefix(titlePart);
+        if (inferredSeason !== null) {
+          return inferredSeason === targetSeason ? "exact" : "mismatch";
+        }
+        if (targetSeason === 1) {
+          return "exact";
+        }
+        if (typeof seriesName === "string" && seriesName.trim()) {
+          const normSeries = seriesName.toLowerCase().replace(/['’`´]+/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+          const normTitlePart = titlePart.toLowerCase().replace(/['’`´]+/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+          if (normSeries && normTitlePart === normSeries) {
+            return "mismatch";
+          }
+        }
+        return "exact";
+      }
+    }
+    const hasSeasonRange = /\b(?:season\s*|s)0*\d{1,2}\s*-\s*(?:season\s*|s)?0*\d{1,2}\b/i.test(candidateText);
+    if (!hasSeasonRange) {
+      const explicitSeasons = [];
+      for (const match of candidateText.matchAll(/\b(?:season\s+|s0*)(\d{1,2})\b/gi)) {
+        explicitSeasons.push(Number.parseInt(match[1], 10));
+      }
+      if (explicitSeasons.length > 0 && !explicitSeasons.includes(targetSeason)) {
+        return "mismatch";
+      }
+    }
+    return "neutral";
+  }
+  function findBestStream(streams, targetSeason = null, targetEpisode = null, fallbackGroup = null, seriesName = null) {
+    if (!streams?.length) return null;
+    const validStreams = streams.filter((s) => (s.url || s.externalUrl || "").startsWith("http") || s.infoHash);
+    if (!validStreams.length) return null;
+    const episodeMatchByStream = /* @__PURE__ */ new Map();
+    for (const s of validStreams) {
+      episodeMatchByStream.set(s, evaluateStreamEpisodeMatch(s, targetSeason, targetEpisode, seriesName));
+    }
+    const candidateStreams = validStreams.filter((s) => episodeMatchByStream.get(s) !== "mismatch");
+    if (!candidateStreams.length) return null;
+    const preferredGroups = (settings.preferredGroup || "").split(",").map((g) => g.trim().toLowerCase()).filter((g) => g.length > 0);
+    const inferredGroup = preferredGroups.length === 0 && typeof fallbackGroup === "string" ? fallbackGroup.trim().toLowerCase() : "";
+    const selectedQualities = (settings.preferredQuality || "").split(",").map((q) => q.trim().toLowerCase()).filter((q) => q.length > 0);
+    const hasEpisodeMatchSignal = candidateStreams.some((s) => episodeMatchByStream.get(s) === "exact");
+    if (preferredGroups.length > 0 || inferredGroup.length > 0 || selectedQualities.length > 0 || hasEpisodeMatchSignal) {
+      let bestStream = candidateStreams[0];
+      let bestScore = -1;
+      for (const s of candidateStreams) {
+        const t = [s.behaviorHints?.filename, s.title, s.description, s.name, s.id].filter((v) => typeof v === "string").join(" ").toLowerCase();
+        const normalizedTitle = t.replace(/[[\]]/g, "");
+        let score = 0;
+        if (episodeMatchByStream.get(s) === "exact") {
+          score += 3;
+        }
+        if (preferredGroups.length > 0) {
+          if (preferredGroups.some((g) => normalizedTitle.includes(g.replace(/[[\]]/g, "")))) {
+            score += 4;
+          }
+        } else if (inferredGroup.length > 0) {
+          const streamGroup = extractReleaseGroup(
+            s.behaviorHints?.filename || s.title || s.description || s.name || ""
+          );
+          if (streamGroup === inferredGroup || normalizedTitle.includes(inferredGroup.replace(/[[\]]/g, ""))) {
+            score += 2;
+          }
+        }
+        if (selectedQualities.length > 0) {
+          const matched = selectedQualities.some((q) => {
+            const aliases = getQualityAliases(q);
+            return aliases.some((alias) => t.includes(alias));
+          });
+          if (matched) {
+            score += 1;
+          }
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          bestStream = s;
+        }
+      }
+      if (bestStream) {
+        log(`Found preferred stream matching criteria (Score: ${bestScore > -1 ? bestScore : 0})`);
+        return parseSingleStream(bestStream);
+      }
+    }
+    return parseSingleStream(candidateStreams[0]);
+  }
+
+  // stremio-mpv-bridge/userscript/src/playback.js
+  async function handleMPVClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const activeProviders = settings.providers.filter((p) => p.enabled && p.url);
+    if (activeProviders.length === 0) {
+      createConfigModal();
+      return;
+    }
+    const btn = document.getElementById("stremio-mpv-btn");
+    btn.classList.add("loading");
+    try {
+      if (!await checkServer()) {
+        showToast("Server offline! (npm start)", "error");
+        return;
+      }
+      const content = parseCurrentURL();
+      if (!content?.episode) {
+        showToast("Please select an episode", "error");
+        return;
+      }
+      const limit = settings.playlistMode === "all" ? 50 : settings.playlistMode === "single" ? 0 : settings.extraEpisodes;
+      const modeText = settings.playlistMode === "all" ? "Load All" : settings.playlistMode === "single" ? "Single" : `Batch | Extra: ${settings.extraEpisodes}`;
+      notify(`Mode: ${modeText}`, "info");
+      const playlist = await collectStreams(content, limit);
+      if (playlist.length === 0) {
+        showToast("No streams found", "error");
+        return;
+      }
+      await sendToMPV(playlist, content);
+      showToast(`Opening ${playlist.length} item(s) in MPV`, "success");
+      showNowPlayingWidget(playlist[0].title || content.name || "Unknown Video");
+    } catch (error) {
+      log("Error:", error);
+      showToast(error.message, "error");
+    } finally {
+      btn.classList.remove("loading");
+    }
+  }
+  async function fetchSeriesMeta(baseUrl, imdbId) {
+    return new Promise((resolve) => {
+      const url = `${baseUrl}/meta/series/${imdbId}.json`;
+      log(`Fetching series meta from: ${url}`);
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        timeout: 15e3,
+        headers: { Accept: "application/json" },
+        onload: (response) => {
+          try {
+            if (response.status !== 200) {
+              log(`Series meta fetch returned status ${response.status}`);
+              resolve([]);
+              return;
+            }
+            const data = JSON.parse(response.responseText);
+            const meta = data.meta;
+            if (meta?.videos) {
+              const episodes = meta.videos.map((v) => {
+                const match = v.id.match(/:(\d+):(\d+)$/);
+                if (match) {
+                  return {
+                    season: parseInt(match[1], 10),
+                    episode: parseInt(match[2], 10),
+                    title: v.title || null
+                  };
+                }
+                log("Skipping video entry with unrecognized ID format:", v.id);
+                return null;
+              }).filter((ep) => ep !== null);
+              log(`Series meta returned ${episodes.length} episodes`);
+              resolve(episodes);
+              return;
+            }
+            resolve([]);
+          } catch (e) {
+            log("Failed to parse series meta:", e.message);
+            resolve([]);
+          }
+        },
+        onerror: () => {
+          log("Series meta request error");
+          resolve([]);
+        },
+        ontimeout: () => {
+          log("Series meta request timeout");
+          resolve([]);
+        }
+      });
+    });
+  }
+  async function collectStreams(content, limit) {
+    const items = [];
+    const seenKeys = /* @__PURE__ */ new Set();
+    const addItem = (item) => {
+      const key = `${item.season}:${item.episode}`;
+      if (seenKeys.has(key)) {
+        log(`Skipping duplicate episode ${key}`);
+        return false;
+      }
+      seenKeys.add(key);
+      items.push(item);
+      return true;
+    };
+    let inferredGroup = null;
+    const fetchWithProviders = async (season, ep) => {
+      for (const p of settings.providers) {
+        if (!p.enabled || !p.url) continue;
+        log(`Trying ${p.name || p.id} for S${season}E${ep}...`);
+        const providerSeriesId = content.streamId || content.imdbId || content.seriesId;
+        if (!providerSeriesId) continue;
+        const streams = await fetchStreams(p.url, providerSeriesId, season, ep);
+        const streamItem = findBestStream(streams, season, ep, inferredGroup, content.name);
+        if (streamItem) {
+          if (!inferredGroup && streamItem.title) {
+            inferredGroup = extractReleaseGroup(streamItem.title);
+          }
+          log(`Found on ${p.name || p.id}`);
+          return {
+            ...streamItem,
+            imdbId: content.imdbId,
+            streamId: providerSeriesId,
+            season,
+            episode: ep,
+            type: content.type
+          };
+        }
+      }
+      return null;
+    };
+    notify(`Fetching S${content.season}E${content.episode}...`);
+    const firstItem = await fetchWithProviders(content.season, content.episode);
+    if (firstItem) addItem(firstItem);
+    if (content.type === "series" && limit > 0) {
+      let discoveredEpisodes = [];
+      for (const p of settings.providers) {
+        if (!p.enabled || !p.url) continue;
+        const providerSeriesId = content.streamId || content.imdbId || content.seriesId;
+        if (!providerSeriesId) continue;
+        const episodes = await fetchSeriesMeta(p.url, providerSeriesId);
+        if (episodes.length > 0) {
+          discoveredEpisodes = episodes;
+          log(`Discovered ${episodes.length} episodes from ${p.name || p.id} meta`);
+          break;
+        }
+      }
+      if (discoveredEpisodes.length > 0) {
+        const sameSeasonEpisodes = discoveredEpisodes.filter((ep) => ep.season === content.season);
+        if (sameSeasonEpisodes.length > 0) {
+          content.episodesInSeason = sameSeasonEpisodes.length;
+        }
+        const nextEpisodes = discoveredEpisodes.filter((ep) => {
+          if (ep.season == null || ep.episode == null) return false;
+          if (ep.season > content.season) return true;
+          if (ep.season === content.season && ep.episode > content.episode) return true;
+          return false;
+        }).sort((a, b) => {
+          if (a.season !== b.season) return a.season - b.season;
+          return a.episode - b.episode;
+        }).slice(0, limit);
+        for (const ep of nextEpisodes) {
+          notify(`Fetching S${ep.season}E${ep.episode}${ep.title ? ` - ${ep.title}` : ""}...`);
+          const nextItem = await fetchWithProviders(ep.season, ep.episode);
+          if (nextItem) {
+            addItem(nextItem);
+          } else {
+            log(`Episode S${ep.season}E${ep.episode} not found on any provider.`);
+          }
+        }
+      } else {
+        log("No series meta available, falling back to sequential episode increment");
+        let failures = 0;
+        for (let i = 1; i <= limit; i++) {
+          const nextEp = content.episode + i;
+          notify(`Fetching S${content.season}E${nextEp}...`);
+          const nextItem = await fetchWithProviders(content.season, nextEp);
+          if (nextItem) {
+            const added = addItem(nextItem);
+            if (added) failures = 0;
+          } else {
+            log(`Episode ${nextEp} not found on any provider.`);
+            failures++;
+            if (settings.playlistMode === "all" && failures >= 3) {
+              log("Too many consecutive failures, stopping search.");
+              break;
+            }
+          }
+        }
+      }
+    }
+    return items;
+  }
+  async function fetchStreams(baseUrl, id, season, episode) {
+    const isKitsu = id.startsWith("kitsu:");
+    const url = isKitsu ? `${baseUrl}/stream/series/${id}:${episode}.json` : `${baseUrl}/stream/series/${id}:${season}:${episode}.json`;
+    const MAX_RETRIES = 2;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        notify(`Retrying stream fetch for S${season}E${episode} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`);
+        await new Promise((r) => setTimeout(r, 1e3));
+      }
+      const result = await new Promise((resolve) => {
+        log(`Fetching streams from: ${url}`);
+        GM_xmlhttpRequest({
+          method: "GET",
+          url,
+          timeout: 1e4,
+          onload: (r) => {
+            if (r.status !== 200) {
+              log(`Stream fetch returned status ${r.status} for S${season}E${episode}`);
+              resolve({ retry: true, data: [] });
+              return;
+            }
+            try {
+              const data = JSON.parse(r.responseText);
+              resolve({ retry: false, data: data.streams || [] });
+            } catch (e) {
+              log(`Failed to parse stream response for S${season}E${episode}:`, e.message);
+              resolve({ retry: false, data: [] });
+            }
+          },
+          onerror: () => {
+            log(`Stream fetch error for S${season}E${episode}`);
+            resolve({ retry: true, data: [] });
+          },
+          ontimeout: () => {
+            log(`Stream fetch timeout for S${season}E${episode}`);
+            resolve({ retry: true, data: [] });
+          }
+        });
+      });
+      if (!result.retry || attempt === MAX_RETRIES) {
+        return result.data;
+      }
+    }
+    return [];
+  }
+
+  // stremio-mpv-bridge/userscript/src/floating-ui.js
+  var MPV_ICON = `<svg viewBox="0 0 64 64" width="48" height="48" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="o" x1="13" y1="0" x2="53" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f9f9f9"/><stop offset="1" stop-color="#b9b9b9"/></linearGradient><linearGradient id="m" x1="44" y1="43" x2="18" y2="-2" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#451b4c"/><stop offset="1" stop-color="#6c3c76"/></linearGradient><linearGradient id="i" x1="25" y1="5" x2="49" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2f0e35"/><stop offset="1" stop-color="#732e7d"/></linearGradient><linearGradient id="c" x1="24" y1="12" x2="42" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f1f0f1"/><stop offset="1" stop-color="#ada7af"/></linearGradient><linearGradient id="p" x1="29" y1="18" x2="33" y2="23" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#66386f"/><stop offset="1" stop-color="#461d4d"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#o)"/><circle cx="33" cy="31" r="28" fill="url(#m)"/><circle cx="35" cy="29" r="21" fill="url(#i)"/><circle cx="32" cy="32" r="14" fill="url(#c)"/><path d="M28 25v12l10-6z" fill="url(#p)"/></svg>`;
+  var GEAR_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" style="fill: currentColor;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0 .59-.22L2.74 8.87c-.04.17 0 .42.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`;
+  function getVisibleChild(wrapper) {
+    if (!wrapper?.firstElementChild) {
+      return wrapper;
+    }
+    for (const child of wrapper.children) {
+      const rect = child.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return child;
+      }
+    }
+    return wrapper;
+  }
+  function findFullscreenButton() {
+    const matches = Array.from(
+      document.querySelectorAll(
+        '[title*="fullscreen" i], [title*="tela cheia" i], [title*="pantalla" i], [title*="plein" i], [title*="vollbild" i]'
+      )
+    );
+    for (const match of matches) {
+      const child = getVisibleChild(match);
+      const rect = child.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return child;
+      }
+    }
+    const navButtonsContainer = document.querySelector('[class*="buttons-container-"]');
+    if (navButtonsContainer) {
+      const scopedTitleElements = Array.from(navButtonsContainer.querySelectorAll("[title]"));
+      for (const element of scopedTitleElements) {
+        const title = element.getAttribute("title")?.toLowerCase() || "";
+        if (title.includes("fullscreen") || title.includes("tela cheia") || title.includes("pantalla") || title.includes("plein") || title.includes("vollbild")) {
+          const child = getVisibleChild(element);
+          const rect = child.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            return child;
+          }
+        }
+      }
+      const visibleChildren = Array.from(navButtonsContainer.children).filter((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+      if (visibleChildren.length > 0) {
+        return getVisibleChild(visibleChildren[0]);
+      }
+      return navButtonsContainer;
+    }
+    const docFullscreen = Array.from(document.querySelectorAll("[title]")).find((element) => {
+      const title = element.getAttribute("title")?.toLowerCase() || "";
+      if (title.includes("fullscreen") || title.includes("tela cheia") || title.includes("pantalla") || title.includes("plein") || title.includes("vollbild")) {
+        const child = getVisibleChild(element);
+        const rect = child.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }
+      return false;
+    });
+    return docFullscreen ? getVisibleChild(docFullscreen) : null;
+  }
+  function clampToViewport(value, minimum, maximum) {
+    return Math.min(Math.max(value, minimum), maximum);
+  }
+  function getCompactConfigButtonPosition() {
+    const fullscreenButton = findFullscreenButton();
+    if (!fullscreenButton) {
+      return null;
+    }
+    const rect = fullscreenButton.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    const buttonSize = 32;
+    const gap = 8;
+    const viewportPadding = 8;
+    const centeredTop = rect.top + (rect.height - buttonSize) / 2;
+    const leftOfFullscreen = rect.left - buttonSize - gap;
+    const rightOfFullscreen = rect.right + gap;
+    let left = leftOfFullscreen;
+    let top = centeredTop;
+    if (leftOfFullscreen < viewportPadding && rightOfFullscreen + buttonSize <= window.innerWidth - viewportPadding) {
+      left = rightOfFullscreen;
+    } else if (leftOfFullscreen < viewportPadding) {
+      left = rect.left + (rect.width - buttonSize) / 2;
+      top = rect.bottom + gap;
+    }
+    return {
+      left: clampToViewport(left, viewportPadding, window.innerWidth - buttonSize - viewportPadding),
+      top: clampToViewport(top, viewportPadding, window.innerHeight - buttonSize - viewportPadding)
+    };
+  }
+  function positionFloatingContainer(container, state, precomputedCompactPosition) {
+    container.style.left = "auto";
+    container.style.right = "20px";
+    container.style.bottom = "100px";
+    container.style.top = "auto";
+    container.style.zIndex = "99999";
+    container.style.alignItems = "flex-end";
+    container.style.flexDirection = "column";
+    if (state.containerPosition !== "top-right") {
+      return;
+    }
+    const compactPosition = precomputedCompactPosition ?? getCompactConfigButtonPosition();
+    container.style.bottom = "auto";
+    container.style.zIndex = "999999";
+    if (!compactPosition) {
+      container.style.top = "16px";
+      container.style.right = "70px";
+      return;
+    }
+    container.style.top = `${compactPosition.top}px`;
+    container.style.left = `${compactPosition.left}px`;
+    container.style.right = "auto";
+    container.style.alignItems = "flex-start";
+  }
+  var updateButtonFrame = null;
+  var compactPositionFrame = null;
+  function scheduleUpdateButtonInfo() {
+    if (updateButtonFrame !== null) {
+      return;
+    }
+    updateButtonFrame = requestAnimationFrame(() => {
+      updateButtonFrame = null;
+      updateButtonInfo();
+    });
+  }
+  var COMPACT_RETRY_MAX = 5;
+  var COMPACT_RETRY_DELAY = 250;
+  var compactRetryCount = 0;
+  function positionCompactConfigButton(isRetry = false) {
+    const container = document.getElementById("stremio-mpv-floating");
+    if (!container || isPlayerRoute() || GM_getValue("iconMode", "default") !== "compact") {
+      return;
+    }
+    if (!isRetry) {
+      compactRetryCount = 0;
+    }
+    const compactPosition = getCompactConfigButtonPosition();
+    positionFloatingContainer(container, applyIconMode("compact"), compactPosition);
+    if (compactPosition === null && compactRetryCount < COMPACT_RETRY_MAX) {
+      compactRetryCount++;
+      setTimeout(() => {
+        schedulePositionCompactConfigButton(true);
+      }, COMPACT_RETRY_DELAY);
+    } else if (compactPosition !== null) {
+      compactRetryCount = 0;
+    }
+  }
+  function schedulePositionCompactConfigButton(isRetry = false) {
+    if (compactPositionFrame !== null) {
+      return;
+    }
+    compactPositionFrame = requestAnimationFrame(() => {
+      compactPositionFrame = null;
+      positionCompactConfigButton(isRetry);
+    });
+  }
+  function createFloatingButton() {
+    if (document.getElementById("stremio-mpv-floating")) return;
+    const container = document.createElement("div");
+    container.id = "stremio-mpv-floating";
+    container.innerHTML = `
+        <style>
+            #stremio-mpv-floating {
+                position: fixed; bottom: 100px; right: 20px; z-index: 99999;
+                display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+            }
+            .s-btn {
+                border: none; border-radius: 50%; width: 56px; height: 56px;
+                cursor: pointer; display: flex; align-items: center; justify-content: center;
+                color: white; transition: all 0.3s ease; background: transparent;
+            }
+            #stremio-mpv-btn { width: 48px; height: 48px; }
+            #stremio-mpv-btn:hover { transform: scale(1.1); filter: drop-shadow(0 4px 10px rgba(139, 92, 246, 0.5)); }
+            #stremio-mpv-config { background: rgba(0,0,0,0.8); width: 32px; height: 32px; opacity: 0.6; }
+            #stremio-mpv-config:hover { opacity: 1; transform: rotate(45deg); }
+            #stremio-mpv-info {
+                background: rgba(0,0,0,0.8); color: #22c55e; padding: 4px 8px;
+                border-radius: 4px; font-size: 10px; margin-bottom: 4px;
+            }
+            .loading { opacity: 0.7; animation: pulse 1s infinite; pointer-events: none; }
+            @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+        </style>
+        <div id="stremio-mpv-info" style="display:none"></div>
+        <button id="stremio-mpv-config" title="Settings" class="s-btn">${GEAR_ICON}</button>
+        <button id="stremio-mpv-btn" title="Open in MPV" class="s-btn">${MPV_ICON}</button>
+    `;
+    document.body.appendChild(container);
+    container.querySelector("#stremio-mpv-btn").addEventListener("click", handleMPVClick);
+    container.querySelector("#stremio-mpv-config").addEventListener("click", createConfigModal);
+    updateButtonInfo();
+  }
+  function updateButtonInfo() {
+    const container = document.getElementById("stremio-mpv-floating");
+    if (!container) return;
+    if (isPlayerRoute()) {
+      container.style.display = "none";
+      return;
+    }
+    const route = getRouteText();
+    const isDetail = route.includes("/detail/");
+    const isAddons = route.includes("/addons");
+    let state;
+    if (isDetail) {
+      const iconMode = GM_getValue("iconMode", "default");
+      state = applyIconMode(iconMode);
+    } else if (isAddons) {
+      state = {
+        containerVisible: true,
+        mpvButtonVisible: false,
+        configButtonVisible: true,
+        configButtonEnlarged: true,
+        configButtonSize: "large",
+        containerPosition: "bottom-right"
+      };
+    } else {
+      state = {
+        containerVisible: false,
+        mpvButtonVisible: false,
+        configButtonVisible: false,
+        configButtonEnlarged: false,
+        configButtonSize: "small",
+        containerPosition: "bottom-right"
+      };
+    }
+    container.style.display = state.containerVisible ? "flex" : "none";
+    positionFloatingContainer(container, state);
+    const playBtn = document.getElementById("stremio-mpv-btn");
+    if (playBtn) playBtn.style.display = state.mpvButtonVisible ? "flex" : "none";
+    const configBtn = document.getElementById("stremio-mpv-config");
+    if (configBtn) {
+      const svg = configBtn.querySelector("svg");
+      configBtn.style.display = state.configButtonVisible ? "flex" : "none";
+      configBtn.style.order = state.containerPosition === "top-right" ? "0" : "";
+      if (state.configButtonSize === "large") {
+        configBtn.style.width = "48px";
+        configBtn.style.height = "48px";
+        configBtn.style.opacity = "1";
+        if (svg) {
+          svg.setAttribute("width", "24");
+          svg.setAttribute("height", "24");
+        }
+      } else {
+        configBtn.style.width = "32px";
+        configBtn.style.height = "32px";
+        configBtn.style.opacity = "0.6";
+        if (svg) {
+          svg.setAttribute("width", "14");
+          svg.setAttribute("height", "14");
+        }
+      }
+    }
+    const info2 = document.getElementById("stremio-mpv-info");
+    if (info2) {
+      if (state.containerPosition === "top-right") {
+        info2.textContent = "";
+        info2.style.display = "none";
+        return;
+      }
+      info2.style.order = state.containerPosition === "top-right" ? "1" : "";
+      if (isDetail) {
+        const content = parseCurrentURL();
+        if (content?.episode) {
+          info2.textContent = `S${content.season}E${content.episode}`;
+          info2.style.display = "block";
+        } else {
+          info2.style.display = "none";
+        }
+      } else {
+        info2.style.display = "none";
+      }
+    }
+  }
+
+  // stremio-mpv-bridge/userscript/src/providers.js
   var AVAILABLE_PROVIDERS = {
     providers: [
       { id: "torrentio", name: "Torrentio" },
@@ -159,7 +1698,7 @@
       const loadingSpan = item.querySelector(".mpv-loading-name");
       if (providerId.startsWith("custom") && providerUrl && label) {
         if (loadingSpan) loadingSpan.textContent = "(loading...)";
-        const provider = providers.find((p) => p.id === providerId);
+        const provider = settings.providers.find((p) => p.id === providerId);
         if (provider) {
           const resolvedName = await resolveProviderName(provider);
           label.textContent = resolvedName;
@@ -182,303 +1721,15 @@
       label.textContent = resolvedName;
     }
   }
-  var DEFAULT_ACTIVE = [
-    { id: "torrentio", name: "Torrentio", url: "", enabled: true },
-    { id: "custom", name: "Custom", url: "", enabled: true }
-  ];
-  var CURRENT_CONFIG_VERSION = 2;
-  function inferIconMode(legacy) {
-    if (!legacy || typeof legacy !== "object") {
-      return "default";
-    }
-    const showMpvIcon = legacy.showMpvIcon;
-    const showConfigIcon = legacy.showConfigIcon;
-    const compactMode = legacy.compactMode;
-    if (showMpvIcon === false && showConfigIcon === true && compactMode === true) {
-      return "compact";
-    }
-    if (showMpvIcon === false && showConfigIcon === true) {
-      return "config-only";
-    }
-    if (compactMode === true) {
-      return "compact";
-    }
-    if (showMpvIcon === false && showConfigIcon === false) {
-      return "disabled";
-    }
-    return "default";
-  }
-  function applyIconMode(iconMode) {
-    const mode = iconMode || "default";
-    switch (mode) {
-      case "config-only":
-        return {
-          containerVisible: true,
-          mpvButtonVisible: false,
-          configButtonVisible: true,
-          configButtonEnlarged: true,
-          configButtonSize: "large",
-          containerPosition: "bottom-right"
-        };
-      case "compact":
-        return {
-          containerVisible: true,
-          mpvButtonVisible: false,
-          configButtonVisible: true,
-          configButtonEnlarged: false,
-          configButtonSize: "small",
-          containerPosition: "top-right"
-        };
-      case "disabled":
-        return {
-          containerVisible: false,
-          mpvButtonVisible: false,
-          configButtonVisible: false,
-          configButtonEnlarged: false,
-          configButtonSize: "small",
-          containerPosition: "bottom-right"
-        };
-      default:
-        return {
-          containerVisible: true,
-          mpvButtonVisible: true,
-          configButtonVisible: true,
-          configButtonEnlarged: false,
-          configButtonSize: "small",
-          containerPosition: "bottom-right"
-        };
-    }
-  }
-  function migrateLocalConfigToV2() {
-    const storedVersion = GM_getValue("configVersion", null);
-    if (storedVersion === CURRENT_CONFIG_VERSION) {
-      return;
-    }
-    const legacy = {
-      autoFetch: GM_getValue("autoFetchEnabled", void 0),
-      extraEpisodes: GM_getValue("extraEpisodes", void 0),
-      showMpvIcon: GM_getValue("showMpvIcon", void 0),
-      showConfigIcon: GM_getValue("showConfigIcon", void 0),
-      compactMode: GM_getValue("compactMode", void 0)
-    };
-    const hasLegacyValue = Object.values(legacy).some((v) => v !== void 0);
-    if (hasLegacyValue) {
-      const autoFetch2 = legacy.autoFetch !== false;
-      const extraEpisodes2 = typeof legacy.extraEpisodes === "number" ? legacy.extraEpisodes : 2;
-      const iconMode = inferIconMode(legacy);
-      GM_setValue("autofetch", autoFetch2);
-      GM_setValue("extraEpisodes", extraEpisodes2);
-      GM_setValue("iconMode", iconMode);
-    }
-    GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
-  }
-  migrateLocalConfigToV2();
-  var autoFetch = GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true));
-  var extraEpisodes = GM_getValue("extraEpisodes", 2);
-  var playlistMode = GM_getValue("playlistMode", "batch");
-  var mpvShortcut = GM_getValue("mpvShortcut", "v");
-  var preferredGroup = GM_getValue("preferredGroup", "");
-  var preferredQuality = GM_getValue("preferredQuality", "");
-  var mpvArgsStr = GM_getValue("mpvArgsStr", "");
-  var storedProviders = GM_getValue("providers", []);
-  var providers;
-  if (storedProviders.length > 0) {
-    providers = storedProviders.filter((p) => p.id !== "torbox");
-    if (providers.length !== storedProviders.length) {
-      GM_setValue("providers", providers);
-    }
-  } else {
-    providers = [...DEFAULT_ACTIVE];
-  }
-  var pendingBridgeConfig = null;
-  function postBridgeConfig(config) {
-    return new Promise((resolve, reject) => {
-      try {
-        GM_xmlhttpRequest({
-          method: "POST",
-          url: "http://localhost:9632/config",
-          headers: { "Content-Type": "application/json" },
-          data: JSON.stringify(config),
-          onload: (r) => {
-            if (r.status >= 200 && r.status < 300) {
-              resolve();
-              return;
-            }
-            const responseBody = (r.responseText || "").trim();
-            const detail = responseBody ? `: ${responseBody}` : "";
-            reject(new Error(`Config sync failed (HTTP ${r.status})${detail}`));
-          },
-          onerror: () => reject(new Error("Config sync failed: connection failed")),
-          ontimeout: () => reject(new Error("Config sync failed: request timed out"))
-        });
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }
-  async function flushPendingBridgeConfig() {
-    const configToFlush = pendingBridgeConfig;
-    if (!configToFlush) {
-      return true;
-    }
-    try {
-      await postBridgeConfig(configToFlush);
-    } catch (_) {
-      return false;
-    }
-    if (pendingBridgeConfig === configToFlush) {
-      pendingBridgeConfig = null;
-    }
-    return true;
-  }
-  function getNonEmptyString(value) {
-    if (typeof value !== "string") {
-      return null;
-    }
-    const trimmedValue = value.trim();
-    return trimmedValue.length > 0 ? trimmedValue : null;
-  }
-  function getPositiveInteger(value) {
-    return Number.isInteger(value) && value > 0 ? value : null;
-  }
-  function buildBridgeStremioMeta(content) {
-    if (!content || typeof content !== "object") {
-      return null;
-    }
-    const meta = {};
-    const stringFields = ["seriesId", "libraryItemId", "videoId", "name", "episodeTitle", "type"];
-    const numberFields = ["season", "episode", "episodesInSeason"];
-    for (const field of stringFields) {
-      const value = getNonEmptyString(content[field]);
-      if (value) {
-        meta[field] = value;
-      }
-    }
-    const imdbId = getNonEmptyString(content.imdbId);
-    if (imdbId && isRealImdbId(imdbId)) {
-      meta.imdbId = imdbId;
-    } else if (content.imdbId === null) {
-      meta.imdbId = null;
-    }
-    for (const field of numberFields) {
-      const value = getPositiveInteger(content[field]);
-      if (value) {
-        meta[field] = value;
-      }
-    }
-    const hasIdentity = Boolean(meta.seriesId || meta.libraryItemId || meta.videoId || meta.imdbId || meta.name);
-    return hasIdentity ? meta : null;
-  }
-  function log(...args) {
-    if (GM_getValue("debug", false)) {
-      console.log("%c[Stremio-MPV]", "color: #8b5cf6; font-weight: bold;", ...args);
-    }
-  }
-  function info(...args) {
-    console.log("%c[Stremio-MPV]", "color: #22c55e; font-weight: bold;", ...args);
-  }
-  function notify(msg, type = "info") {
-    info(msg);
-    showToast(msg, type);
-  }
-  function showConfirmModal(title, message, onConfirm, confirmText = "Yes", cancelText = "Cancel") {
-    if (document.getElementById("stremio-mpv-confirm")) return;
-    const overlay = document.createElement("div");
-    overlay.id = "stremio-mpv-confirm";
-    overlay.innerHTML = `
-        <style>
-            #stremio-mpv-confirm {
-                position: fixed; inset: 0; z-index: 100005;
-                background: rgba(0, 0, 0, 0.4);
-                backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-                display: flex; align-items: center; justify-content: center;
-                font-family: 'Roboto', sans-serif;
-                opacity: 0; transition: opacity 0.2s ease;
-                color-scheme: dark;
-            }
-            .mpv-confirm-content {
-                background: rgba(15, 15, 15, 0.85);
-                color: #eee;
-                padding: 24px;
-                border-radius: 20px;
-                width: 320px; max-width: 90vw;
-                border: 1px solid rgba(139, 92, 246, 0.3);
-                box-shadow: 0 25px 50px rgba(0,0,0,0.6), 0 0 40px rgba(239, 68, 68, 0.15);
-                display: flex; flex-direction: column; align-items: center; text-align: center;
-                transform: scale(0.9); transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-            }
-            #stremio-mpv-confirm.active { opacity: 1; }
-            #stremio-mpv-confirm.active .mpv-confirm-content { transform: scale(1); }
 
-            .mpv-confirm-icon { font-size: 32px; margin-bottom: 12px; }
-            .mpv-confirm-title { font-size: 18px; font-weight: bold; margin-bottom: 8px; color: #fff; }
-            .mpv-confirm-message { font-size: 14px; opacity: 0.8; margin-bottom: 24px; line-height: 1.4; }
-            .mpv-confirm-actions { display: flex; gap: 12px; width: 100%; }
-
-            .mpv-confirm-btn {
-                flex: 1; padding: 10px; border-radius: 8px; cursor: pointer;
-                border: none; font-weight: 600; font-size: 14px; transition: all 0.2s ease;
-            }
-            .mpv-confirm-cancel {
-                background: rgba(255, 255, 255, 0.05); color: #aaa; border: 1px solid rgba(255,255,255,0.1);
-            }
-            .mpv-confirm-cancel:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
-            .mpv-confirm-cancel:focus { outline: none; border-color: #8b5cf6; box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3); }
-
-            .mpv-confirm-yes {
-                background: #ef4444; color: white; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-            }
-            .mpv-confirm-yes:hover {
-                background: #dc2626; transform: translateY(-1px); box-shadow: 0 6px 15px rgba(239, 68, 68, 0.4);
-            }
-            .mpv-confirm-yes:focus { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #ef4444; }
-        </style>
-        <div class="mpv-confirm-content">
-            <div class="mpv-confirm-icon">⚠️</div>
-            <div class="mpv-confirm-title">${title}</div>
-            <div class="mpv-confirm-message">${message}</div>
-            <div class="mpv-confirm-actions">
-                <button class="mpv-confirm-btn mpv-confirm-cancel">${cancelText}</button>
-                <button class="mpv-confirm-btn mpv-confirm-yes">${confirmText}</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-    const cancelBtn = overlay.querySelector(".mpv-confirm-cancel");
-    const yesBtn = overlay.querySelector(".mpv-confirm-yes");
-    requestAnimationFrame(() => {
-      overlay.classList.add("active");
-      cancelBtn.focus();
-    });
-    const close = () => {
-      overlay.classList.remove("active");
-      document.removeEventListener("keydown", handleEscape);
-      setTimeout(() => overlay.remove(), 200);
-    };
-    const handleEscape = (e) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-      }
-    };
-    document.addEventListener("keydown", handleEscape);
-    cancelBtn.addEventListener("click", close);
-    yesBtn.addEventListener("click", () => {
-      onConfirm();
-      close();
-    });
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) close();
-    });
-  }
+  // stremio-mpv-bridge/userscript/src/config-modal.js
   function createConfigModal() {
     if (document.getElementById("stremio-mpv-modal")) return;
     const modal = document.createElement("div");
     modal.id = "stremio-mpv-modal";
     const storedIconMode = GM_getValue("iconMode", "default");
     const selectedIconMode = ["default", "config-only", "compact", "disabled"].includes(storedIconMode) ? storedIconMode : "default";
-    const providersHTML = providers.map((p, _index) => {
+    const providersHTML = settings.providers.map((p, _index) => {
       const isCustom = p.id.startsWith("custom");
       const loadingIndicator = isCustom && p.url ? '<span class="mpv-loading-name" style="font-size: 10px; opacity: 0.6; margin-left: 4px;"></span>' : "";
       const defaults = getProviderDefaults(p.id);
@@ -821,29 +2072,29 @@
                     <div class="mpv-form-group">
                         <label class="mpv-label">Stream Mode</label>
 
-                        <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${playlistMode === "single" ? "rgba(139, 92, 246, 0.12)" : "rgba(255,255,255,0.03)"}; border: 1px solid ${playlistMode === "single" ? "rgba(139, 92, 246, 0.4)" : "rgba(255,255,255,0.08)"}; transition: all 0.2s ease;">
-                            <input type="radio" name="mpv-stream-mode" id="mpv-mode-single" value="single" class="mpv-radio" ${playlistMode === "single" ? "checked" : ""}>
+                        <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${settings.playlistMode === "single" ? "rgba(139, 92, 246, 0.12)" : "rgba(255,255,255,0.03)"}; border: 1px solid ${settings.playlistMode === "single" ? "rgba(139, 92, 246, 0.4)" : "rgba(255,255,255,0.08)"}; transition: all 0.2s ease;">
+                            <input type="radio" name="mpv-stream-mode" id="mpv-mode-single" value="single" class="mpv-radio" ${settings.playlistMode === "single" ? "checked" : ""}>
                             <div style="pointer-events: none; flex: 1;">
                                 <label for="mpv-mode-single" style="cursor:pointer; font-size: 15px; font-weight: 600; display: block; margin-bottom: 2px;">Single Episode</label>
                                 <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Load only the selected episode</div>
                             </div>
                         </div>
 
-                        <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${playlistMode === "batch" ? "rgba(139, 92, 246, 0.12)" : "rgba(255,255,255,0.03)"}; border: 1px solid ${playlistMode === "batch" ? "rgba(139, 92, 246, 0.4)" : "rgba(255,255,255,0.08)"}; transition: all 0.2s ease;">
-                            <input type="radio" name="mpv-stream-mode" id="mpv-mode-batch" value="batch" class="mpv-radio" ${playlistMode === "batch" ? "checked" : ""}>
+                        <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; margin-bottom: 8px; background: ${settings.playlistMode === "batch" ? "rgba(139, 92, 246, 0.12)" : "rgba(255,255,255,0.03)"}; border: 1px solid ${settings.playlistMode === "batch" ? "rgba(139, 92, 246, 0.4)" : "rgba(255,255,255,0.08)"}; transition: all 0.2s ease;">
+                            <input type="radio" name="mpv-stream-mode" id="mpv-mode-batch" value="batch" class="mpv-radio" ${settings.playlistMode === "batch" ? "checked" : ""}>
                             <div style="pointer-events: none; flex: 1;">
                                 <label for="mpv-mode-batch" style="cursor:pointer; font-size: 15px; font-weight: 600; display: block; margin-bottom: 2px;">Batch Episodes</label>
                                 <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Load selected + next episodes</div>
                             </div>
                         </div>
 
-                        <div id="mpv-group-count" style="margin-bottom: 15px; padding-left: 42px; ${playlistMode !== "batch" ? "display:none" : ""}">
+                        <div id="mpv-group-count" style="margin-bottom: 15px; padding-left: 42px; ${settings.playlistMode !== "batch" ? "display:none" : ""}">
                             <label class="mpv-label" style="font-size: 11px; color: #a78bfa; margin-bottom: 4px;">Next episodes to load</label>
-                            <input type="number" id="mpv-ep-count" class="mpv-input" value="${extraEpisodes}" min="1" max="25" style="width: 70px; padding: 8px;">
+                            <input type="number" id="mpv-ep-count" class="mpv-input" value="${settings.extraEpisodes}" min="1" max="25" style="width: 70px; padding: 8px;">
                         </div>
 
-                        <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; background: ${playlistMode === "all" ? "rgba(139, 92, 246, 0.12)" : "rgba(255,255,255,0.03)"}; border: 1px solid ${playlistMode === "all" ? "rgba(139, 92, 246, 0.4)" : "rgba(255,255,255,0.08)"}; transition: all 0.2s ease;">
-                            <input type="radio" name="mpv-stream-mode" id="mpv-mode-all" value="all" class="mpv-radio" ${playlistMode === "all" ? "checked" : ""}>
+                        <div class="mpv-radio-option" style="display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; cursor: pointer; background: ${settings.playlistMode === "all" ? "rgba(139, 92, 246, 0.12)" : "rgba(255,255,255,0.03)"}; border: 1px solid ${settings.playlistMode === "all" ? "rgba(139, 92, 246, 0.4)" : "rgba(255,255,255,0.08)"}; transition: all 0.2s ease;">
+                            <input type="radio" name="mpv-stream-mode" id="mpv-mode-all" value="all" class="mpv-radio" ${settings.playlistMode === "all" ? "checked" : ""}>
                             <div style="pointer-events: none; flex: 1;">
                                 <label for="mpv-mode-all" style="cursor:pointer; font-size: 15px; font-weight: 600; display: block; margin-bottom: 2px;">Load All</label>
                                 <div class="mpv-help" style="margin-top: 0; font-size: 12px; opacity: 0.6;">Loads all remaining episodes (may take a while)</div>
@@ -855,7 +2106,7 @@
                         <label class="mpv-label">Auto-Fetch Episodes</label>
                         <div class="mpv-checkbox-group" style="justify-content: space-between;">
                             <span style="font-size: 13px; color: #ccc;">Automatically request the next episodes near playlist end</span>
-                            <div class="mpv-toggle-track mpv-auto-fetch-toggle" data-enabled="${autoFetch ? "true" : "false"}" role="switch" aria-checked="${autoFetch ? "true" : "false"}" tabindex="0" title="${autoFetch ? "Enabled" : "Disabled"}">
+                            <div class="mpv-toggle-track mpv-auto-fetch-toggle" data-enabled="${settings.autoFetch ? "true" : "false"}" role="switch" aria-checked="${settings.autoFetch ? "true" : "false"}" tabindex="0" title="${settings.autoFetch ? "Enabled" : "Disabled"}">
                                 <div class="mpv-toggle-thumb"></div>
                             </div>
                         </div>
@@ -865,7 +2116,7 @@
                     <div class="mpv-form-group">
                         <label class="mpv-label">Preferred Release Group</label>
                         <div style="position: relative;">
-                            <input type="text" id="mpv-preferred-group" class="mpv-input" placeholder="e.g. subsplease, judas" value="${preferredGroup}">
+                            <input type="text" id="mpv-preferred-group" class="mpv-input" placeholder="e.g. subsplease, judas" value="${settings.preferredGroup}">
                             <div id="mpv-release-groups-dropdown" style="display: none; position: fixed; max-height: 200px; overflow-y: auto; background: #151515; border: 1px solid rgba(139, 92, 246, 0.4); border-radius: 8px; z-index: 100003; box-shadow: 0 4px 15px rgba(0,0,0,0.5);"></div>
                         </div>
                         <div class="mpv-help" style="margin-top: 4px;">Bridge will try to pick streams from this group.</div>
@@ -875,18 +2126,18 @@
                         <label class="mpv-label">Preferred Quality</label>
                         <div class="mpv-quality-pills" style="display: flex; gap: 8px; flex-wrap: wrap;">
                             ${["4K", "2K", "1080p", "720p", "Unknown"].map((q) => {
-      const isActive = preferredQuality.split(",").map((s) => s.trim()).includes(q);
+      const isActive = settings.preferredQuality.split(",").map((s) => s.trim()).includes(q);
       return `<button type="button" class="mpv-pill-btn ${isActive ? "active" : ""}" data-quality="${q}">${q}</button>`;
     }).join("")}
                         </div>
-                        <input type="hidden" id="mpv-preferred-quality" value="${preferredQuality}">
+                        <input type="hidden" id="mpv-preferred-quality" value="${settings.preferredQuality}">
                         <div class="mpv-help" style="margin-top: 6px;">Bridge will prioritize these resolutions.</div>
                     </div>
 
                     <div class="mpv-form-group">
                         <label class="mpv-label">Keyboard Shortcut</label>
-                        <button type="button" id="mpv-shortcut-btn" class="mpv-input" style="width: 80px; text-align: center; text-transform: uppercase; font-weight: bold; cursor: pointer; border: 1px dashed rgba(139, 92, 246, 0.5);">${mpvShortcut.toUpperCase()}</button>
-                        <input type="hidden" id="mpv-shortcut" value="${mpvShortcut}">
+                        <button type="button" id="mpv-shortcut-btn" class="mpv-input" style="width: 80px; text-align: center; text-transform: uppercase; font-weight: bold; cursor: pointer; border: 1px dashed rgba(139, 92, 246, 0.5);">${settings.mpvShortcut.toUpperCase()}</button>
+                        <input type="hidden" id="mpv-shortcut" value="${settings.mpvShortcut}">
                         <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
                     </div>
 
@@ -927,7 +2178,7 @@
 
                     <div class="mpv-form-group" style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 20px;">
                         <label class="mpv-label">Custom MPV Arguments</label>
-                        <input type="text" id="mpv-custom-args" class="mpv-input" placeholder="e.g. --fs --volume=50" value="${mpvArgsStr}">
+                        <input type="text" id="mpv-custom-args" class="mpv-input" placeholder="e.g. --fs --volume=50" value="${settings.mpvArgsStr}">
                         <div class="mpv-help" style="margin-top: 4px;">Pass extra flags to MPV. See <a href="https://github.com/mpv-player/mpv/blob/master/DOCS/man/options.rst" target="_blank" style="color: #a78bfa;">MPV manual</a></div>
                         <div style="margin-top: 12px;">
                             <span style="font-size: 11px; color: #a78bfa; margin-bottom: 6px; display: block; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Presets</span>
@@ -1143,9 +2394,9 @@
     pillBtns.forEach((btn) => {
       btn.addEventListener("click", () => {
         btn.classList.toggle("active");
-        const activeQualities = Array.from(
-          modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn.active")
-        ).map((b) => b.dataset.quality);
+        const activeQualities = Array.from(modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn.active")).map(
+          (b) => b.dataset.quality
+        );
         qualityInput.value = activeQualities.join(",");
       });
     });
@@ -1155,7 +2406,7 @@
       document.removeEventListener("keydown", handleEsc);
       stopBridgePolling();
     };
-    const initialMpvArgs = mpvArgsStr;
+    const initialMpvArgs = settings.mpvArgsStr;
     const hasUnsavedMpvArgsChanges = () => {
       const currentArgsInput = modal.querySelector("#mpv-custom-args");
       return currentArgsInput && currentArgsInput.value.trim() !== initialMpvArgs;
@@ -1212,14 +2463,14 @@
           GM_setValue("autofetch", true);
           GM_setValue("iconMode", "default");
           updateButtonInfo();
-          providers = [...DEFAULT_ACTIVE];
-          autoFetch = true;
-          playlistMode = "batch";
-          extraEpisodes = 2;
-          mpvShortcut = "v";
-          preferredGroup = "";
-          preferredQuality = "";
-          mpvArgsStr = "";
+          settings.providers = [...DEFAULT_ACTIVE];
+          settings.autoFetch = true;
+          settings.playlistMode = "batch";
+          settings.extraEpisodes = 2;
+          settings.mpvShortcut = "v";
+          settings.preferredGroup = "";
+          settings.preferredQuality = "";
+          settings.mpvArgsStr = "";
           showToast("Settings reset to defaults", "success");
           closeModal();
         },
@@ -1283,7 +2534,7 @@
             data: JSON.stringify({
               playlist: [{ url, title }],
               contentTitle: title,
-              args: mpvArgsStr
+              args: settings.mpvArgsStr
             }),
             onload: (r) => r.status === 200 ? resolve() : reject(new Error("Server error")),
             onerror: () => reject(new Error("Connection failed"))
@@ -1617,7 +2868,7 @@
     const preferredQualityInput = modal.querySelector("#mpv-preferred-quality");
     const customArgsInput = modal.querySelector("#mpv-custom-args");
     const providerItems = Array.from(modal.querySelectorAll(".mpv-provider-item"));
-    providers = providerItems.map((item) => {
+    settings.providers = providerItems.map((item) => {
       const id = item.dataset.id;
       const input = item.querySelector(".mpv-provider-input");
       const toggle = item.querySelector(".mpv-provider-toggle");
@@ -1636,25 +2887,25 @@
         enabled: isEnabled
       };
     });
-    GM_setValue("providers", providers);
-    extraEpisodes = Math.max(1, Math.min(25, parseInt(countInput.value, 10) || 2));
-    GM_setValue("extraEpisodes", extraEpisodes);
-    playlistMode = selectedMode ? selectedMode.value : "batch";
-    GM_setValue("playlistMode", playlistMode);
-    mpvShortcut = (shortcutInput.value || "v").toLowerCase();
-    GM_setValue("mpvShortcut", mpvShortcut);
-    preferredGroup = preferredGroupInput ? preferredGroupInput.value.trim() : "";
-    GM_setValue("preferredGroup", preferredGroup);
-    preferredQuality = preferredQualityInput ? preferredQualityInput.value.trim() : "";
-    GM_setValue("preferredQuality", preferredQuality);
-    mpvArgsStr = customArgsInput ? customArgsInput.value.trim() : "";
-    GM_setValue("mpvArgsStr", mpvArgsStr);
+    GM_setValue("providers", settings.providers);
+    settings.extraEpisodes = Math.max(1, Math.min(25, parseInt(countInput.value, 10) || 2));
+    GM_setValue("extraEpisodes", settings.extraEpisodes);
+    settings.playlistMode = selectedMode ? selectedMode.value : "batch";
+    GM_setValue("playlistMode", settings.playlistMode);
+    settings.mpvShortcut = (shortcutInput.value || "v").toLowerCase();
+    GM_setValue("mpvShortcut", settings.mpvShortcut);
+    settings.preferredGroup = preferredGroupInput ? preferredGroupInput.value.trim() : "";
+    GM_setValue("preferredGroup", settings.preferredGroup);
+    settings.preferredQuality = preferredQualityInput ? preferredQualityInput.value.trim() : "";
+    GM_setValue("preferredQuality", settings.preferredQuality);
+    settings.mpvArgsStr = customArgsInput ? customArgsInput.value.trim() : "";
+    GM_setValue("mpvArgsStr", settings.mpvArgsStr);
     const debugToggle = modal.querySelector(".mpv-debug-toggle");
     const debugEnabled = debugToggle ? debugToggle.dataset.enabled === "true" : GM_getValue("debug", false);
     GM_setValue("debug", debugEnabled);
     const autoFetchToggle = modal.querySelector(".mpv-auto-fetch-toggle");
-    autoFetch = autoFetchToggle ? autoFetchToggle.dataset.enabled === "true" : GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true));
-    GM_setValue("autofetch", autoFetch);
+    settings.autoFetch = autoFetchToggle ? autoFetchToggle.dataset.enabled === "true" : GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true));
+    GM_setValue("autofetch", settings.autoFetch);
     GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
     const iconModeSelect = modal.querySelector("#mpv-icon-mode");
     const validIconModes = ["default", "config-only", "compact", "disabled"];
@@ -1666,14 +2917,14 @@
     try {
       const bridgeConfig = {
         configVersion: CURRENT_CONFIG_VERSION,
-        autoFetch: { enabled: autoFetch },
-        extraEpisodes,
-        providers,
-        playlistMode,
-        mpvShortcut,
-        preferredGroup,
-        preferredQuality,
-        mpvArgsStr,
+        autoFetch: { enabled: settings.autoFetch },
+        extraEpisodes: settings.extraEpisodes,
+        providers: settings.providers,
+        playlistMode: settings.playlistMode,
+        mpvShortcut: settings.mpvShortcut,
+        preferredGroup: settings.preferredGroup,
+        preferredQuality: settings.preferredQuality,
+        mpvArgsStr: settings.mpvArgsStr,
         debug: debugEnabled,
         iconMode
       };
@@ -1682,10 +2933,10 @@
       if (bridgeStremioMeta) {
         bridgeConfig.stremioMeta = bridgeStremioMeta;
       }
-      pendingBridgeConfig = bridgeConfig;
+      bridgeState.pendingConfig = bridgeConfig;
       postBridgeConfig(bridgeConfig).then(() => {
-        if (pendingBridgeConfig === bridgeConfig) {
-          pendingBridgeConfig = null;
+        if (bridgeState.pendingConfig === bridgeConfig) {
+          bridgeState.pendingConfig = null;
         }
         log("Config synced to bridge");
       }).catch((error) => {
@@ -1695,1235 +2946,17 @@
       log("Failed to build bridge config:", error.message);
     }
   }
-  function scrapeMetadata() {
-    const metadata = {
-      seriesName: null,
-      episodeTitle: null,
-      season: null,
-      episode: null
-    };
-    try {
-      const cachedSeriesId = window.location.hash.match(/series\/([^/?#]+)/i);
-      if (cachedSeriesId?.[1] && seriesNameCache.has(cachedSeriesId[1])) {
-        metadata.seriesName = seriesNameCache.get(cachedSeriesId[1]);
-      }
-      const headerEl = document.querySelector('div[class*="episode-title"]');
-      if (headerEl?.innerText) {
-        const seMatch = headerEl.innerText.match(/S(\d+)E(\d+)/i);
-        if (seMatch) {
-          metadata.season = parseInt(seMatch[1], 10);
-          metadata.episode = parseInt(seMatch[2], 10);
-          log(`Scraped from header: S${metadata.season}E${metadata.episode}`);
-        }
-        const titlePart = headerEl.innerText.replace(/S\d+E\d+/i, "").trim();
-        if (titlePart.length > 2) {
-          metadata.episodeTitle = titlePart;
-        }
-      }
-      const nameCandidates = [];
-      const metaLogoEl = document.querySelector('[class*="meta-info-container"] img[class*="logo"]');
-      if (metaLogoEl?.title) {
-        nameCandidates.push(metaLogoEl.title.trim());
-      } else if (metaLogoEl?.alt) {
-        nameCandidates.push(metaLogoEl.alt.trim());
-      }
-      const titleEl = document.querySelector('[class*="title-label"]');
-      if (titleEl?.innerText) {
-        nameCandidates.push(titleEl.innerText.trim());
-      }
-      if (document.title) {
-        const titleMatch = document.title.replace(/\s*[-\u2013\u2014]\s*Stremio\s*$/i, "").trim();
-        if (titleMatch && titleMatch.length > 1) {
-          nameCandidates.push(titleMatch);
-        }
-      }
-      const metaTitle = document.querySelector('meta[property="og:title"]');
-      if (metaTitle?.content) {
-        nameCandidates.push(metaTitle.content.trim());
-      }
-      const invalidPatterns = [
-        /you might also like/i,
-        /similar to/i,
-        /more like/i,
-        /recommended/i,
-        /trending/i,
-        /popular/i,
-        /^watch$/i,
-        /^stream$/i
-      ];
-      for (const candidate of nameCandidates) {
-        if (!candidate || candidate.length < 2) continue;
-        if (invalidPatterns.some((p) => p.test(candidate))) continue;
-        metadata.seriesName = candidate;
-        break;
-      }
-      const urlSeriesId = window.location.hash.match(/series\/([^/?#]+)/i);
-      if (urlSeriesId?.[1] && metadata.seriesName) {
-        seriesNameCache.set(urlSeriesId[1], metadata.seriesName);
-      }
-      if (!metadata.season) {
-        const allMultiselects = document.querySelectorAll('[class*="multiselect-button"]');
-        for (const el of allMultiselects) {
-          if (el.innerText?.includes("Season")) {
-            const match = el.innerText.match(/Season\s*(\d+)/i);
-            if (match) {
-              metadata.season = parseInt(match[1], 10);
-              break;
-            }
-          }
-        }
-      }
-      if (!metadata.season) {
-        const urlMatch = window.location.hash.match(/season=(\d+)/i);
-        if (urlMatch) metadata.season = parseInt(urlMatch[1], 10);
-      }
-    } catch (e) {
-      console.warn("Scraper error:", e);
-    }
-    return metadata;
-  }
-  function isRealImdbId(id) {
-    return typeof id === "string" && /^tt\d+$/.test(id);
-  }
-  function getRouteText() {
-    return `${window.location.pathname || ""}${window.location.hash || ""}`.toLowerCase();
-  }
-  function isPlayerRoute() {
-    const route = getRouteText();
-    return /(?:^|[#/])player(?:$|[/?#])/.test(route);
-  }
-  function isDetailRoute() {
-    return getRouteText().includes("/detail/");
-  }
-  function parseCurrentURL() {
-    const hash = window.location.hash;
-    log("Parsing URL:", `${hash.substring(0, 80)}...`);
-    if (hash.includes("/player/") && lastValidContent?.episode) {
-      log("Using saved content (player mode):", lastValidContent);
-      return lastValidContent;
-    }
-    const uiMeta = scrapeMetadata();
-    const decodedHash = decodeURIComponent(hash);
-    let seriesId = null;
-    const seriesMatch = decodedHash.match(/\/detail\/(?:series|movie)\/([^/]+)/);
-    if (seriesMatch) {
-      seriesId = seriesMatch[1];
-      log("Extracted seriesId:", seriesId);
-    }
-    const imdbMatch = decodedHash.match(/(tt\d+):(\d+):(\d+)/);
-    if (imdbMatch) {
-      const videoId = imdbMatch[0];
-      const result = {
-        type: "series",
-        libraryItemId: seriesId || imdbMatch[1],
-        imdbId: imdbMatch[1],
-        seriesId: seriesId || imdbMatch[1],
-        streamId: imdbMatch[1],
-        videoId,
-        name: uiMeta.seriesName,
-        season: parseInt(imdbMatch[2], 10),
-        episode: parseInt(imdbMatch[3], 10)
-      };
-      log("IMDb content found:", result);
-      lastValidContent = result;
-      return result;
-    }
-    const kitsuMatch = decodedHash.match(/kitsu[:%]3A(\d+)[:%]3A(\d+)/i) || decodedHash.match(/kitsu:(\d+):(\d+)/i);
-    if (kitsuMatch) {
-      const streamId = `kitsu:${kitsuMatch[1]}`;
-      const result = {
-        type: "series",
-        libraryItemId: seriesId || streamId,
-        imdbId: null,
-        seriesId: seriesId || streamId,
-        streamId,
-        videoId: `${streamId}:${kitsuMatch[2]}`,
-        name: uiMeta.seriesName,
-        episodeTitle: uiMeta.episodeTitle,
-        season: uiMeta.season || 1,
-        episode: uiMeta.episode || parseInt(kitsuMatch[2], 10)
-      };
-      log("Kitsu content found:", result);
-      lastValidContent = result;
-      return result;
-    }
-    const genericMatch = decodedHash.match(/(\w+)[:%]3A(\d+)[:%]3A(\d+)[:%]3A(\d+)/i) || decodedHash.match(/(\w+):(\d+):(\d+):(\d+)/i);
-    if (genericMatch) {
-      const streamId = `${genericMatch[1]}:${genericMatch[2]}`;
-      const videoId = `${streamId}:${genericMatch[3]}:${genericMatch[4]}`;
-      const result = {
-        type: "series",
-        libraryItemId: seriesId || streamId,
-        imdbId: isRealImdbId(streamId) ? streamId : null,
-        seriesId: seriesId || streamId,
-        streamId,
-        videoId,
-        name: uiMeta.seriesName,
-        season: parseInt(genericMatch[3], 10),
-        episode: parseInt(genericMatch[4], 10)
-      };
-      log("Generic content found:", result);
-      lastValidContent = result;
-      return result;
-    }
-    const imdbIdMatch = decodedHash.match(/(tt\d+)/);
-    if (imdbIdMatch) {
-      return {
-        type: "series",
-        libraryItemId: seriesId || imdbIdMatch[1],
-        imdbId: imdbIdMatch[1],
-        seriesId: seriesId || imdbIdMatch[1],
-        streamId: imdbIdMatch[1],
-        videoId: null,
-        name: uiMeta.seriesName,
-        season: parseInt(decodedHash.match(/season=(\d+)/)?.[1], 10) || uiMeta.season || null,
-        episode: null
-      };
-    }
-    return lastValidContent || null;
-  }
-  var lastValidContent = null;
-  var seriesNameCache = /* @__PURE__ */ new Map();
-  var MPV_ICON = `<svg viewBox="0 0 64 64" width="48" height="48" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="o" x1="13" y1="0" x2="53" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f9f9f9"/><stop offset="1" stop-color="#b9b9b9"/></linearGradient><linearGradient id="m" x1="44" y1="43" x2="18" y2="-2" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#451b4c"/><stop offset="1" stop-color="#6c3c76"/></linearGradient><linearGradient id="i" x1="25" y1="5" x2="49" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2f0e35"/><stop offset="1" stop-color="#732e7d"/></linearGradient><linearGradient id="c" x1="24" y1="12" x2="42" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f1f0f1"/><stop offset="1" stop-color="#ada7af"/></linearGradient><linearGradient id="p" x1="29" y1="18" x2="33" y2="23" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#66386f"/><stop offset="1" stop-color="#461d4d"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#o)"/><circle cx="33" cy="31" r="28" fill="url(#m)"/><circle cx="35" cy="29" r="21" fill="url(#i)"/><circle cx="32" cy="32" r="14" fill="url(#c)"/><path d="M28 25v12l10-6z" fill="url(#p)"/></svg>`;
-  var GEAR_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" style="fill: currentColor;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0 .59-.22L2.74 8.87c-.04.17 0 .42.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`;
-  function getVisibleChild(wrapper) {
-    if (!wrapper?.firstElementChild) {
-      return wrapper;
-    }
-    for (const child of wrapper.children) {
-      const rect = child.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        return child;
-      }
-    }
-    return wrapper;
-  }
-  function findFullscreenButton() {
-    const matches = Array.from(
-      document.querySelectorAll(
-        '[title*="fullscreen" i], [title*="tela cheia" i], [title*="pantalla" i], [title*="plein" i], [title*="vollbild" i]'
-      )
-    );
-    for (const match of matches) {
-      const child = getVisibleChild(match);
-      const rect = child.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        return child;
-      }
-    }
-    const navButtonsContainer = document.querySelector('[class*="buttons-container-"]');
-    if (navButtonsContainer) {
-      const scopedTitleElements = Array.from(navButtonsContainer.querySelectorAll("[title]"));
-      for (const element of scopedTitleElements) {
-        const title = element.getAttribute("title")?.toLowerCase() || "";
-        if (title.includes("fullscreen") || title.includes("tela cheia") || title.includes("pantalla") || title.includes("plein") || title.includes("vollbild")) {
-          const child = getVisibleChild(element);
-          const rect = child.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            return child;
-          }
-        }
-      }
-      const visibleChildren = Array.from(navButtonsContainer.children).filter((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
-      if (visibleChildren.length > 0) {
-        return getVisibleChild(visibleChildren[0]);
-      }
-      return navButtonsContainer;
-    }
-    const docFullscreen = Array.from(document.querySelectorAll("[title]")).find((element) => {
-      const title = element.getAttribute("title")?.toLowerCase() || "";
-      if (title.includes("fullscreen") || title.includes("tela cheia") || title.includes("pantalla") || title.includes("plein") || title.includes("vollbild")) {
-        const child = getVisibleChild(element);
-        const rect = child.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      }
-      return false;
-    });
-    return docFullscreen ? getVisibleChild(docFullscreen) : null;
-  }
-  function clampToViewport(value, minimum, maximum) {
-    return Math.min(Math.max(value, minimum), maximum);
-  }
-  function getCompactConfigButtonPosition() {
-    const fullscreenButton = findFullscreenButton();
-    if (!fullscreenButton) {
-      return null;
-    }
-    const rect = fullscreenButton.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-    const buttonSize = 32;
-    const gap = 8;
-    const viewportPadding = 8;
-    const centeredTop = rect.top + (rect.height - buttonSize) / 2;
-    const leftOfFullscreen = rect.left - buttonSize - gap;
-    const rightOfFullscreen = rect.right + gap;
-    let left = leftOfFullscreen;
-    let top = centeredTop;
-    if (leftOfFullscreen < viewportPadding && rightOfFullscreen + buttonSize <= window.innerWidth - viewportPadding) {
-      left = rightOfFullscreen;
-    } else if (leftOfFullscreen < viewportPadding) {
-      left = rect.left + (rect.width - buttonSize) / 2;
-      top = rect.bottom + gap;
-    }
-    return {
-      left: clampToViewport(left, viewportPadding, window.innerWidth - buttonSize - viewportPadding),
-      top: clampToViewport(top, viewportPadding, window.innerHeight - buttonSize - viewportPadding)
-    };
-  }
-  function positionFloatingContainer(container, state, precomputedCompactPosition) {
-    container.style.left = "auto";
-    container.style.right = "20px";
-    container.style.bottom = "100px";
-    container.style.top = "auto";
-    container.style.zIndex = "99999";
-    container.style.alignItems = "flex-end";
-    container.style.flexDirection = "column";
-    if (state.containerPosition !== "top-right") {
-      return;
-    }
-    const compactPosition = precomputedCompactPosition ?? getCompactConfigButtonPosition();
-    container.style.bottom = "auto";
-    container.style.zIndex = "999999";
-    if (!compactPosition) {
-      container.style.top = "16px";
-      container.style.right = "70px";
-      return;
-    }
-    container.style.top = `${compactPosition.top}px`;
-    container.style.left = `${compactPosition.left}px`;
-    container.style.right = "auto";
-    container.style.alignItems = "flex-start";
-  }
-  var updateButtonFrame = null;
-  var compactPositionFrame = null;
-  function scheduleUpdateButtonInfo() {
-    if (updateButtonFrame !== null) {
-      return;
-    }
-    updateButtonFrame = requestAnimationFrame(() => {
-      updateButtonFrame = null;
-      updateButtonInfo();
-    });
-  }
-  var COMPACT_RETRY_MAX = 5;
-  var COMPACT_RETRY_DELAY = 250;
-  var compactRetryCount = 0;
-  function positionCompactConfigButton(isRetry = false) {
-    const container = document.getElementById("stremio-mpv-floating");
-    if (!container || isPlayerRoute() || GM_getValue("iconMode", "default") !== "compact") {
-      return;
-    }
-    if (!isRetry) {
-      compactRetryCount = 0;
-    }
-    const compactPosition = getCompactConfigButtonPosition();
-    positionFloatingContainer(container, applyIconMode("compact"), compactPosition);
-    if (compactPosition === null && compactRetryCount < COMPACT_RETRY_MAX) {
-      compactRetryCount++;
-      setTimeout(() => {
-        schedulePositionCompactConfigButton(true);
-      }, COMPACT_RETRY_DELAY);
-    } else if (compactPosition !== null) {
-      compactRetryCount = 0;
-    }
-  }
-  function schedulePositionCompactConfigButton(isRetry = false) {
-    if (compactPositionFrame !== null) {
-      return;
-    }
-    compactPositionFrame = requestAnimationFrame(() => {
-      compactPositionFrame = null;
-      positionCompactConfigButton(isRetry);
-    });
-  }
-  function createFloatingButton() {
-    if (document.getElementById("stremio-mpv-floating")) return;
-    const container = document.createElement("div");
-    container.id = "stremio-mpv-floating";
-    container.innerHTML = `
-        <style>
-            #stremio-mpv-floating {
-                position: fixed; bottom: 100px; right: 20px; z-index: 99999;
-                display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
-            }
-            .s-btn {
-                border: none; border-radius: 50%; width: 56px; height: 56px;
-                cursor: pointer; display: flex; align-items: center; justify-content: center;
-                color: white; transition: all 0.3s ease; background: transparent;
-            }
-            #stremio-mpv-btn { width: 48px; height: 48px; }
-            #stremio-mpv-btn:hover { transform: scale(1.1); filter: drop-shadow(0 4px 10px rgba(139, 92, 246, 0.5)); }
-            #stremio-mpv-config { background: rgba(0,0,0,0.8); width: 32px; height: 32px; opacity: 0.6; }
-            #stremio-mpv-config:hover { opacity: 1; transform: rotate(45deg); }
-            #stremio-mpv-info {
-                background: rgba(0,0,0,0.8); color: #22c55e; padding: 4px 8px;
-                border-radius: 4px; font-size: 10px; margin-bottom: 4px;
-            }
-            .loading { opacity: 0.7; animation: pulse 1s infinite; pointer-events: none; }
-            @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
-        </style>
-        <div id="stremio-mpv-info" style="display:none"></div>
-        <button id="stremio-mpv-config" title="Settings" class="s-btn">${GEAR_ICON}</button>
-        <button id="stremio-mpv-btn" title="Open in MPV" class="s-btn">${MPV_ICON}</button>
-    `;
-    document.body.appendChild(container);
-    container.querySelector("#stremio-mpv-btn").addEventListener("click", handleMPVClick);
-    container.querySelector("#stremio-mpv-config").addEventListener("click", createConfigModal);
-    updateButtonInfo();
-  }
-  function updateButtonInfo() {
-    const container = document.getElementById("stremio-mpv-floating");
-    if (!container) return;
-    if (isPlayerRoute()) {
-      container.style.display = "none";
-      return;
-    }
-    const route = getRouteText();
-    const isDetail = route.includes("/detail/");
-    const isAddons = route.includes("/addons");
-    let state;
-    if (isDetail) {
-      const iconMode = GM_getValue("iconMode", "default");
-      state = applyIconMode(iconMode);
-    } else if (isAddons) {
-      state = {
-        containerVisible: true,
-        mpvButtonVisible: false,
-        configButtonVisible: true,
-        configButtonEnlarged: true,
-        configButtonSize: "large",
-        containerPosition: "bottom-right"
-      };
-    } else {
-      state = {
-        containerVisible: false,
-        mpvButtonVisible: false,
-        configButtonVisible: false,
-        configButtonEnlarged: false,
-        configButtonSize: "small",
-        containerPosition: "bottom-right"
-      };
-    }
-    container.style.display = state.containerVisible ? "flex" : "none";
-    positionFloatingContainer(container, state);
-    const playBtn = document.getElementById("stremio-mpv-btn");
-    if (playBtn) playBtn.style.display = state.mpvButtonVisible ? "flex" : "none";
-    const configBtn = document.getElementById("stremio-mpv-config");
-    if (configBtn) {
-      const svg = configBtn.querySelector("svg");
-      configBtn.style.display = state.configButtonVisible ? "flex" : "none";
-      configBtn.style.order = state.containerPosition === "top-right" ? "0" : "";
-      if (state.configButtonSize === "large") {
-        configBtn.style.width = "48px";
-        configBtn.style.height = "48px";
-        configBtn.style.opacity = "1";
-        if (svg) {
-          svg.setAttribute("width", "24");
-          svg.setAttribute("height", "24");
-        }
-      } else {
-        configBtn.style.width = "32px";
-        configBtn.style.height = "32px";
-        configBtn.style.opacity = "0.6";
-        if (svg) {
-          svg.setAttribute("width", "14");
-          svg.setAttribute("height", "14");
-        }
-      }
-    }
-    const info2 = document.getElementById("stremio-mpv-info");
-    if (info2) {
-      if (state.containerPosition === "top-right") {
-        info2.textContent = "";
-        info2.style.display = "none";
-        return;
-      }
-      info2.style.order = state.containerPosition === "top-right" ? "1" : "";
-      if (isDetail) {
-        const content = parseCurrentURL();
-        if (content?.episode) {
-          info2.textContent = `S${content.season}E${content.episode}`;
-          info2.style.display = "block";
-        } else {
-          info2.style.display = "none";
-        }
-      } else {
-        info2.style.display = "none";
-      }
-    }
-  }
-  async function handleMPVClick(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    const activeProviders = providers.filter((p) => p.enabled && p.url);
-    if (activeProviders.length === 0) {
-      createConfigModal();
-      return;
-    }
-    const btn = document.getElementById("stremio-mpv-btn");
-    btn.classList.add("loading");
-    try {
-      if (!await checkServer()) {
-        showToast("Server offline! (npm start)", "error");
-        return;
-      }
-      const content = parseCurrentURL();
-      if (!content?.episode) {
-        showToast("Please select an episode", "error");
-        return;
-      }
-      const limit = playlistMode === "all" ? 50 : playlistMode === "single" ? 0 : extraEpisodes;
-      const modeText = playlistMode === "all" ? "Load All" : playlistMode === "single" ? "Single" : `Batch | Extra: ${extraEpisodes}`;
-      notify(`Mode: ${modeText}`, "info");
-      const playlist = await collectStreams(content, limit);
-      if (playlist.length === 0) {
-        showToast("No streams found", "error");
-        return;
-      }
-      await sendToMPV(playlist, content);
-      showToast(`Opening ${playlist.length} item(s) in MPV`, "success");
-      showNowPlayingWidget(playlist[0].title || content.name || "Unknown Video");
-    } catch (error) {
-      log("Error:", error);
-      showToast(error.message, "error");
-    } finally {
-      btn.classList.remove("loading");
-    }
-  }
-  async function checkServer() {
-    return new Promise(
-      (r) => GM_xmlhttpRequest({
-        method: "GET",
-        url: `${CONFIG.SERVER_URL}/health`,
-        timeout: 5e3,
-        onload: (res) => r(res.status === 200),
-        onerror: () => r(false),
-        ontimeout: () => r(false)
-      })
-    );
-  }
-  async function fetchSeriesMeta(baseUrl, imdbId) {
-    return new Promise((resolve) => {
-      const url = `${baseUrl}/meta/series/${imdbId}.json`;
-      log(`Fetching series meta from: ${url}`);
-      GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        timeout: 15e3,
-        headers: { Accept: "application/json" },
-        onload: (response) => {
-          try {
-            if (response.status !== 200) {
-              log(`Series meta fetch returned status ${response.status}`);
-              resolve([]);
-              return;
-            }
-            const data = JSON.parse(response.responseText);
-            const meta = data.meta;
-            if (meta?.videos) {
-              const episodes = meta.videos.map((v) => {
-                const match = v.id.match(/:(\d+):(\d+)$/);
-                if (match) {
-                  return {
-                    season: parseInt(match[1], 10),
-                    episode: parseInt(match[2], 10),
-                    title: v.title || null
-                  };
-                }
-                log("Skipping video entry with unrecognized ID format:", v.id);
-                return null;
-              }).filter((ep) => ep !== null);
-              log(`Series meta returned ${episodes.length} episodes`);
-              resolve(episodes);
-              return;
-            }
-            resolve([]);
-          } catch (e) {
-            log("Failed to parse series meta:", e.message);
-            resolve([]);
-          }
-        },
-        onerror: () => {
-          log("Series meta request error");
-          resolve([]);
-        },
-        ontimeout: () => {
-          log("Series meta request timeout");
-          resolve([]);
-        }
-      });
-    });
-  }
-  async function collectStreams(content, limit) {
-    const items = [];
-    const seenKeys = /* @__PURE__ */ new Set();
-    const addItem = (item) => {
-      const key = `${item.season}:${item.episode}`;
-      if (seenKeys.has(key)) {
-        log(`Skipping duplicate episode ${key}`);
-        return false;
-      }
-      seenKeys.add(key);
-      items.push(item);
-      return true;
-    };
-    let inferredGroup = null;
-    const fetchWithProviders = async (season, ep) => {
-      for (const p of providers) {
-        if (!p.enabled || !p.url) continue;
-        log(`Trying ${p.name || p.id} for S${season}E${ep}...`);
-        const providerSeriesId = content.streamId || content.imdbId || content.seriesId;
-        if (!providerSeriesId) continue;
-        const streams = await fetchStreams(p.url, providerSeriesId, season, ep);
-        const streamItem = findBestStream(streams, season, ep, inferredGroup, content.name);
-        if (streamItem) {
-          if (!inferredGroup && streamItem.title) {
-            inferredGroup = extractReleaseGroup(streamItem.title);
-          }
-          log(`Found on ${p.name || p.id}`);
-          return {
-            ...streamItem,
-            imdbId: content.imdbId,
-            streamId: providerSeriesId,
-            season,
-            episode: ep,
-            type: content.type
-          };
-        }
-      }
-      return null;
-    };
-    notify(`Fetching S${content.season}E${content.episode}...`);
-    const firstItem = await fetchWithProviders(content.season, content.episode);
-    if (firstItem) addItem(firstItem);
-    if (content.type === "series" && limit > 0) {
-      let discoveredEpisodes = [];
-      for (const p of providers) {
-        if (!p.enabled || !p.url) continue;
-        const providerSeriesId = content.streamId || content.imdbId || content.seriesId;
-        if (!providerSeriesId) continue;
-        const episodes = await fetchSeriesMeta(p.url, providerSeriesId);
-        if (episodes.length > 0) {
-          discoveredEpisodes = episodes;
-          log(`Discovered ${episodes.length} episodes from ${p.name || p.id} meta`);
-          break;
-        }
-      }
-      if (discoveredEpisodes.length > 0) {
-        const sameSeasonEpisodes = discoveredEpisodes.filter((ep) => ep.season === content.season);
-        if (sameSeasonEpisodes.length > 0) {
-          content.episodesInSeason = sameSeasonEpisodes.length;
-        }
-        const nextEpisodes = discoveredEpisodes.filter((ep) => {
-          if (ep.season == null || ep.episode == null) return false;
-          if (ep.season > content.season) return true;
-          if (ep.season === content.season && ep.episode > content.episode) return true;
-          return false;
-        }).sort((a, b) => {
-          if (a.season !== b.season) return a.season - b.season;
-          return a.episode - b.episode;
-        }).slice(0, limit);
-        for (const ep of nextEpisodes) {
-          notify(`Fetching S${ep.season}E${ep.episode}${ep.title ? ` - ${ep.title}` : ""}...`);
-          const nextItem = await fetchWithProviders(ep.season, ep.episode);
-          if (nextItem) {
-            addItem(nextItem);
-          } else {
-            log(`Episode S${ep.season}E${ep.episode} not found on any provider.`);
-          }
-        }
-      } else {
-        log("No series meta available, falling back to sequential episode increment");
-        let failures = 0;
-        for (let i = 1; i <= limit; i++) {
-          const nextEp = content.episode + i;
-          notify(`Fetching S${content.season}E${nextEp}...`);
-          const nextItem = await fetchWithProviders(content.season, nextEp);
-          if (nextItem) {
-            const added = addItem(nextItem);
-            if (added) failures = 0;
-          } else {
-            log(`Episode ${nextEp} not found on any provider.`);
-            failures++;
-            if (playlistMode === "all" && failures >= 3) {
-              log("Too many consecutive failures, stopping search.");
-              break;
-            }
-          }
-        }
-      }
-    }
-    return items;
-  }
-  async function fetchStreams(baseUrl, id, season, episode) {
-    const isKitsu = id.startsWith("kitsu:");
-    const url = isKitsu ? `${baseUrl}/stream/series/${id}:${episode}.json` : `${baseUrl}/stream/series/${id}:${season}:${episode}.json`;
-    const MAX_RETRIES = 2;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (attempt > 0) {
-        notify(
-          `Retrying stream fetch for S${season}E${episode} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`
-        );
-        await new Promise((r) => setTimeout(r, 1e3));
-      }
-      const result = await new Promise((resolve) => {
-        log(`Fetching streams from: ${url}`);
-        GM_xmlhttpRequest({
-          method: "GET",
-          url,
-          timeout: 1e4,
-          onload: (r) => {
-            if (r.status !== 200) {
-              log(`Stream fetch returned status ${r.status} for S${season}E${episode}`);
-              resolve({ retry: true, data: [] });
-              return;
-            }
-            try {
-              const data = JSON.parse(r.responseText);
-              resolve({ retry: false, data: data.streams || [] });
-            } catch (e) {
-              log(`Failed to parse stream response for S${season}E${episode}:`, e.message);
-              resolve({ retry: false, data: [] });
-            }
-          },
-          onerror: () => {
-            log(`Stream fetch error for S${season}E${episode}`);
-            resolve({ retry: true, data: [] });
-          },
-          ontimeout: () => {
-            log(`Stream fetch timeout for S${season}E${episode}`);
-            resolve({ retry: true, data: [] });
-          }
-        });
-      });
-      if (!result.retry || attempt === MAX_RETRIES) {
-        return result.data;
-      }
-    }
-    return [];
-  }
-  function extractStreamLeafFilename(stream) {
-    if (typeof stream?.behaviorHints?.filename === "string" && stream.behaviorHints.filename.trim().length > 0) {
-      const parts = stream.behaviorHints.filename.trim().split(/[\\/]/);
-      return parts[parts.length - 1].trim();
-    }
-    const text = [stream?.title, stream?.description].filter((v) => typeof v === "string" && v.trim().length > 0).join("\n");
-    if (!text) {
-      return "";
-    }
-    const lines = text.split(/\r?\n|\\n/).map((line) => line.trim()).filter((line) => line.length > 0);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const cleanedLine = lines[i].replace(/^📁\s*/u, "").trim();
-      if (/\.(?:mkv|mp4|avi|webm|m4v|ts)$/i.test(cleanedLine) || lines[i].includes("📁")) {
-        const parts = cleanedLine.split(/[\\/]/);
-        return parts[parts.length - 1].trim();
-      }
-    }
-    const firstLineParts = lines[0].split(/[\\/]/);
-    return firstLineParts[firstLineParts.length - 1].trim();
-  }
-  function parseSingleStream(stream) {
-    let url = stream.url || stream.externalUrl;
-    if (!url && stream.infoHash) {
-      url = `magnet:?xt=urn:btih:${stream.infoHash}`;
-      if (stream.sources)
-        stream.sources.forEach((s) => {
-          url += `&tr=${encodeURIComponent(s)}`;
-        });
-    }
-    const leafFilename = extractStreamLeafFilename(stream);
-    let title = stream.behaviorHints?.filename || (leafFilename ? leafFilename : null) || (stream.title ? stream.title.split("\n")[0].split("\\n")[0] : null) || (stream.description ? stream.description.split("\n")[0].split("\\n")[0] : null) || stream.name || "Video";
-    if (title.length > 200) title = `${title.substring(0, 200)}...`;
-    return { url, title };
-  }
-  function getQualityAliases(quality) {
-    const q = quality.toLowerCase();
-    if (q === "4k" || q === "2160p") return ["4k", "2160p"];
-    if (q === "2k" || q === "1440p") return ["2k", "1440p"];
-    if (q === "fhd" || q === "1080p") return ["fhd", "1080p"];
-    if (q === "hd" || q === "720p") return ["hd", "720p"];
-    return [q];
-  }
-  var TECHNICAL_BRACKET_TAGS = /* @__PURE__ */ new Set([
-    "1080p",
-    "720p",
-    "2160p",
-    "1440p",
-    "480p",
-    "4k",
-    "2k",
-    "fhd",
-    "hd",
-    "hevc",
-    "avc",
-    "x264",
-    "x265",
-    "h264",
-    "h265",
-    "10bit",
-    "8bit",
-    "hdr",
-    "dv",
-    "web-dl",
-    "webrip",
-    "bluray",
-    "bdrip",
-    "aac",
-    "eac3",
-    "ac3",
-    "flac",
-    "multisub",
-    "dual-audio",
-    "dual audio",
-    "dublado",
-    "legendado",
-    "tb+",
-    "rd+",
-    "ad+",
-    "pm+",
-    "dl"
-  ]);
-  var ROMAN_SEASON_MAP = {
-    ii: 2,
-    iii: 3,
-    iv: 4,
-    v: 5,
-    vi: 6
-  };
-  function extractReleaseGroup(text) {
-    if (typeof text !== "string" || text.trim().length === 0) {
-      return null;
-    }
-    const tagIconMatch = text.match(/(?:🏷️?|🏷)\s*([A-Za-z0-9._-]{2,25})/u);
-    if (tagIconMatch) {
-      const candidate = tagIconMatch[1].trim().toLowerCase();
-      if (candidate && !TECHNICAL_BRACKET_TAGS.has(candidate)) {
-        return candidate;
-      }
-    }
-    const lines = text.split(/\r?\n|\\n/).map((line) => line.trim()).filter((line) => line.length > 0);
-    const orderedLines = [
-      ...lines.filter((line) => line.includes("📁") || /\.(?:mkv|mp4|avi|webm|m4v|ts)$/i.test(line)),
-      ...lines
-    ];
-    for (const rawLine of orderedLines) {
-      const lineParts = rawLine.replace(/^📁\s*/u, "").split(/[\\/]/);
-      const leafLine = lineParts[lineParts.length - 1].trim();
-      const bracketMatches = leafLine.matchAll(/\[([^[\]]{2,30})\]/g);
-      for (const match of bracketMatches) {
-        const candidate = match[1].trim().toLowerCase();
-        if (!candidate || TECHNICAL_BRACKET_TAGS.has(candidate) || /^[0-9a-f]{8}$/i.test(candidate)) {
-          continue;
-        }
-        if (/^\d{3,4}p$/i.test(candidate) || /season/i.test(candidate) || /audio/i.test(candidate)) {
-          continue;
-        }
-        return candidate;
-      }
-      const withoutExtension = leafLine.replace(/\.(?:mkv|mp4|avi|webm|m4v|ts)$/i, "");
-      const suffixMatch = withoutExtension.match(/(?:^|[\s._])-([A-Za-z0-9]{2,20})$/);
-      if (suffixMatch) {
-        const candidate = suffixMatch[1].trim().toLowerCase();
-        if (!TECHNICAL_BRACKET_TAGS.has(candidate) && !/^\d+$/i.test(candidate)) {
-          return candidate;
-        }
-      }
-    }
-    return null;
-  }
-  function inferSeasonFromTitlePrefix(titlePrefix) {
-    if (!titlePrefix) {
-      return null;
-    }
-    const cleaned = titlePrefix.replace(/^\[[^[\]]+\]\s*/g, "").replace(/[._]+/g, " ").trim();
-    if (/\b(?:bridon\s+arc|yingdu\s+pian)\b/i.test(cleaned)) {
-      return 3;
-    }
-    const explicitSeasonMatch = cleaned.match(/\bseason\s*0*(\d{1,2})\b/i) || cleaned.match(/\b(\d{1,2})(?:nd|rd|th)\s+season\b/i) || cleaned.match(/\bs0*(\d{1,2})\b/i);
-    if (explicitSeasonMatch) {
-      return Number.parseInt(explicitSeasonMatch[1], 10);
-    }
-    const romanMatch = cleaned.match(/\b(ii|iii|iv|v|vi)\s*$/i);
-    if (romanMatch) {
-      return ROMAN_SEASON_MAP[romanMatch[1].toLowerCase()] ?? null;
-    }
-    return null;
-  }
-  function evaluateStreamEpisodeMatch(stream, targetSeason, targetEpisode, seriesName = null) {
-    if (!Number.isInteger(targetSeason) || targetSeason < 1 || !Number.isInteger(targetEpisode) || targetEpisode < 1) {
-      return "neutral";
-    }
-    const leafFilename = extractStreamLeafFilename(stream);
-    const candidateText = leafFilename || [stream?.behaviorHints?.filename, stream?.title, stream?.description, stream?.name].filter((v) => typeof v === "string" && v.trim().length > 0).join("\n");
-    if (!candidateText) {
-      return "neutral";
-    }
-    const explicitPairs = [];
-    for (const match of candidateText.matchAll(/\bS0*(\d{1,2})[\s._-]*E0*(\d{1,3})\b/gi)) {
-      const prefixBeforeMatch = candidateText.slice(0, match.index ?? 0);
-      const prefixSeason = inferSeasonFromTitlePrefix(prefixBeforeMatch);
-      let effectiveSeason = Number.parseInt(match[1], 10);
-      if (effectiveSeason === 1 && prefixSeason !== null && prefixSeason !== 1) {
-        effectiveSeason = prefixSeason;
-      } else if (effectiveSeason === 1 && targetSeason === 1 && typeof seriesName === "string" && seriesName.trim()) {
-        const normSeries = seriesName.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-        const normPrefix = prefixBeforeMatch.replace(/^\[[^[\]]+\]\s*/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-        if (normSeries && normPrefix.startsWith(`${normSeries} `) && normPrefix.length > normSeries.length + 2) {
-          const extraWords = normPrefix.slice(normSeries.length).trim();
-          if (/\b(?:arc|pian|part|cour|chapter|hen)\b/i.test(extraWords)) {
-            effectiveSeason = -1;
-          }
-        }
-      }
-      explicitPairs.push({
-        season: effectiveSeason,
-        episode: Number.parseInt(match[2], 10)
-      });
-    }
-    for (const match of candidateText.matchAll(/(?<!\d)0*(\d{1,2})x0*(\d{1,3})(?!\d)/gi)) {
-      explicitPairs.push({
-        season: Number.parseInt(match[1], 10),
-        episode: Number.parseInt(match[2], 10)
-      });
-    }
-    if (explicitPairs.length > 0) {
-      const hasExactMatch = explicitPairs.some(
-        (pair) => pair.season === targetSeason && pair.episode === targetEpisode
-      );
-      return hasExactMatch ? "exact" : "mismatch";
-    }
-    if (leafFilename) {
-      const normalizedLeaf = leafFilename.replace(/\.(?:mkv|mp4|avi|webm|m4v|ts)$/i, "").replace(/^\[[^[\]]+\]\s*/g, "").replace(/_/g, " ");
-      const dashEpMatch = normalizedLeaf.match(/^(.*?)\s*-\s*0*(\d{1,3})(?:v\d+)?(?:\s|\(|\[|$)/i);
-      if (dashEpMatch) {
-        const titlePart = dashEpMatch[1].trim();
-        const parsedEp = Number.parseInt(dashEpMatch[2], 10);
-        if (parsedEp !== targetEpisode) {
-          return "mismatch";
-        }
-        const inferredSeason = inferSeasonFromTitlePrefix(titlePart);
-        if (inferredSeason !== null) {
-          return inferredSeason === targetSeason ? "exact" : "mismatch";
-        }
-        if (targetSeason === 1) {
-          return "exact";
-        }
-        if (typeof seriesName === "string" && seriesName.trim()) {
-          const normSeries = seriesName.toLowerCase().replace(/['’`´]+/g, "").replace(/[^a-z0-9]+/g, " ").trim();
-          const normTitlePart = titlePart.toLowerCase().replace(/['’`´]+/g, "").replace(/[^a-z0-9]+/g, " ").trim();
-          if (normSeries && normTitlePart === normSeries) {
-            return "mismatch";
-          }
-        }
-        return "exact";
-      }
-    }
-    const hasSeasonRange = /\b(?:season\s*|s)0*\d{1,2}\s*-\s*(?:season\s*|s)?0*\d{1,2}\b/i.test(candidateText);
-    if (!hasSeasonRange) {
-      const explicitSeasons = [];
-      for (const match of candidateText.matchAll(/\b(?:season\s+|s0*)(\d{1,2})\b/gi)) {
-        explicitSeasons.push(Number.parseInt(match[1], 10));
-      }
-      if (explicitSeasons.length > 0 && !explicitSeasons.includes(targetSeason)) {
-        return "mismatch";
-      }
-    }
-    return "neutral";
-  }
-  function findBestStream(streams, targetSeason = null, targetEpisode = null, fallbackGroup = null, seriesName = null) {
-    if (!streams?.length) return null;
-    const validStreams = streams.filter((s) => (s.url || s.externalUrl || "").startsWith("http") || s.infoHash);
-    if (!validStreams.length) return null;
-    const episodeMatchByStream = /* @__PURE__ */ new Map();
-    for (const s of validStreams) {
-      episodeMatchByStream.set(s, evaluateStreamEpisodeMatch(s, targetSeason, targetEpisode, seriesName));
-    }
-    const candidateStreams = validStreams.filter((s) => episodeMatchByStream.get(s) !== "mismatch");
-    if (!candidateStreams.length) return null;
-    const preferredGroups = (preferredGroup || "").split(",").map((g) => g.trim().toLowerCase()).filter((g) => g.length > 0);
-    const inferredGroup = preferredGroups.length === 0 && typeof fallbackGroup === "string" ? fallbackGroup.trim().toLowerCase() : "";
-    const selectedQualities = (preferredQuality || "").split(",").map((q) => q.trim().toLowerCase()).filter((q) => q.length > 0);
-    const hasEpisodeMatchSignal = candidateStreams.some((s) => episodeMatchByStream.get(s) === "exact");
-    if (preferredGroups.length > 0 || inferredGroup.length > 0 || selectedQualities.length > 0 || hasEpisodeMatchSignal) {
-      let bestStream = candidateStreams[0];
-      let bestScore = -1;
-      for (const s of candidateStreams) {
-        const t = [s.behaviorHints?.filename, s.title, s.description, s.name, s.id].filter((v) => typeof v === "string").join(" ").toLowerCase();
-        const normalizedTitle = t.replace(/[[\]]/g, "");
-        let score = 0;
-        if (episodeMatchByStream.get(s) === "exact") {
-          score += 3;
-        }
-        if (preferredGroups.length > 0) {
-          if (preferredGroups.some((g) => normalizedTitle.includes(g.replace(/[[\]]/g, "")))) {
-            score += 4;
-          }
-        } else if (inferredGroup.length > 0) {
-          const streamGroup = extractReleaseGroup(
-            s.behaviorHints?.filename || s.title || s.description || s.name || ""
-          );
-          if (streamGroup === inferredGroup || normalizedTitle.includes(inferredGroup.replace(/[[\]]/g, ""))) {
-            score += 2;
-          }
-        }
-        if (selectedQualities.length > 0) {
-          const matched = selectedQualities.some((q) => {
-            const aliases = getQualityAliases(q);
-            return aliases.some((alias) => t.includes(alias));
-          });
-          if (matched) {
-            score += 1;
-          }
-        }
-        if (score > bestScore) {
-          bestScore = score;
-          bestStream = s;
-        }
-      }
-      if (bestStream) {
-        log(`Found preferred stream matching criteria (Score: ${bestScore > -1 ? bestScore : 0})`);
-        return parseSingleStream(bestStream);
-      }
-    }
-    return parseSingleStream(candidateStreams[0]);
-  }
-  function sendToMPV(playlist, title) {
-    if (pendingBridgeConfig) {
-      return flushPendingBridgeConfig().then((flushed) => {
-        if (!flushed) {
-          log("[Bridge] Pending config sync failed; aborting /play");
-          return Promise.reject(new Error("Pending config sync failed"));
-        }
-        return sendToMPVInner(playlist, title);
-      });
-    }
-    return sendToMPVInner(playlist, title);
-  }
-  function sendToMPVInner(playlist, title) {
-    return new Promise((resolve, reject) => {
-      const profile = JSON.parse(localStorage.getItem("profile") || "{}");
-      const authKey = profile.auth?.key;
-      const realImdbId = isRealImdbId(title.imdbId) ? title.imdbId : null;
-      log(
-        `Bridge: Sending payload with authKey: ${authKey ? "Found" : "MISSING"} | libraryItemId: ${title.libraryItemId || title.seriesId} | imdbId: ${realImdbId || "none"}`
-      );
-      GM_xmlhttpRequest({
-        method: "POST",
-        url: `${CONFIG.SERVER_URL}/play`,
-        headers: { "Content-Type": "application/json" },
-        data: JSON.stringify({
-          playlist,
-          contentTitle: title.videoId || title.streamId || realImdbId || title.seriesId,
-          args: mpvArgsStr,
-          stremioAuth: authKey,
-          stremioContext: {
-            libraryItemId: title.libraryItemId || title.seriesId,
-            seriesId: title.seriesId,
-            imdbId: realImdbId,
-            videoId: title.videoId || null,
-            name: title.name,
-            episodeTitle: title.episodeTitle,
-            season: title.season,
-            episode: title.episode,
-            episodesInSeason: title.episodesInSeason || null,
-            type: title.type
-          }
-        }),
-        onload: (r) => r.status === 200 ? resolve() : reject(new Error("Server error")),
-        onerror: () => reject(new Error("Connection failed"))
-      });
-    });
-  }
-  var toastCounter = 0;
-  var MAX_TOASTS = 5;
-  var TOAST_DURATION = 3e3;
-  function getToastContainer() {
-    let container = document.getElementById("stremio-mpv-toast-container");
-    if (!container) {
-      container = document.createElement("div");
-      container.id = "stremio-mpv-toast-container";
-      container.style.cssText = `
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            flex-direction: column-reverse;
-            align-items: center;
-            gap: 8px;
-            z-index: 999999;
-            pointer-events: none;
-        `;
-      document.body.appendChild(container);
-    }
-    return container;
-  }
-  function showToast(message, type = "info") {
-    const container = getToastContainer();
-    const color = type === "error" ? "#ef4444" : type === "success" ? "#22c55e" : "#3b82f6";
-    const toasts = container.querySelectorAll(".stremio-mpv-toast");
-    if (toasts.length >= MAX_TOASTS) {
-      toasts[toasts.length - 1].remove();
-    }
-    const id = `stremio-mpv-toast-${++toastCounter}`;
-    const toast = document.createElement("div");
-    toast.id = id;
-    toast.className = "stremio-mpv-toast";
-    toast.style.cssText = `
-        background: ${color};
-        color: white;
-        padding: 10px 20px;
-        border-radius: 8px;
-        font-size: 14px;
-        font-family: 'Roboto', sans-serif;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-        pointer-events: auto;
-        cursor: pointer;
-        animation: mpv-toast-in 0.25s ease-out;
-        transition: opacity 0.2s ease, transform 0.2s ease;
-    `;
-    toast.textContent = message;
-    toast.addEventListener("click", () => dismissToast(toast));
-    if (!document.getElementById("mpv-toast-styles")) {
-      const style = document.createElement("style");
-      style.id = "mpv-toast-styles";
-      style.textContent = `
-            @keyframes mpv-toast-in {
-                from { opacity: 0; transform: translateY(12px); }
-                to   { opacity: 1; transform: translateY(0); }
-            }
-            @keyframes mpv-toast-out {
-                from { opacity: 1; transform: scale(1); }
-                to   { opacity: 0; transform: scale(0.95); }
-            }
-        `;
-      document.head.appendChild(style);
-    }
-    container.prepend(toast);
-    const timer = setTimeout(() => dismissToast(toast), TOAST_DURATION);
-    toast._dismissTimer = timer;
-  }
-  function dismissToast(toast) {
-    if (toast._dismissed) return;
-    toast._dismissed = true;
-    clearTimeout(toast._dismissTimer);
-    toast.style.animation = "mpv-toast-out 0.2s ease forwards";
-    toast.addEventListener("animationend", () => toast.remove(), { once: true });
-  }
-  function showNowPlayingWidget(title) {
-    const existing = document.getElementById("mpv-now-playing");
-    if (existing) existing.remove();
-    const widget = document.createElement("div");
-    widget.id = "mpv-now-playing";
-    widget.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 12px;">
-            <div style="width: 40px; height: 40px; background: rgba(139, 92, 246, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #a78bfa;">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            </div>
-            <div style="display: flex; flex-direction: column; overflow: hidden;">
-                <span style="font-size: 11px; text-transform: uppercase; color: #a78bfa; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px;">Now Playing</span>
-                <span style="font-size: 14px; color: white; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;" title="${title}">${title}</span>
-            </div>
-        </div>
-    `;
-    widget.style.cssText = `
-        position: fixed; bottom: 30px; right: 30px;
-        background: rgba(15, 15, 20, 0.95);
-        backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
-        border: 1px solid rgba(139, 92, 246, 0.4);
-        border-radius: 16px; padding: 16px 20px; z-index: 999999;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
-        transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.5s ease;
-        transform: translateY(100px); opacity: 0;
-        font-family: 'Roboto', sans-serif;
-    `;
-    document.body.appendChild(widget);
-    void widget.offsetWidth;
-    widget.classList.add("show");
-    widget.style.transform = "translateY(0)";
-    widget.style.opacity = "1";
-    setTimeout(() => {
-      widget.classList.remove("show");
-      widget.style.transform = "translateY(100px)";
-      widget.style.opacity = "0";
-      setTimeout(() => widget.remove(), 500);
-    }, 6e3);
-  }
-  function showBridgeConnectedToast() {
-    const existing = document.getElementById("mpv-bridge-connected");
-    if (existing) existing.remove();
-    const widget = document.createElement("div");
-    widget.id = "mpv-bridge-connected";
-    widget.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 12px;">
-            <div style="width: 40px; height: 40px; background: rgba(139, 92, 246, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #a78bfa;">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-            </div>
-            <div style="display: flex; flex-direction: column; overflow: hidden;">
-                <span style="font-size: 11px; text-transform: uppercase; color: #a78bfa; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px;">MPV Bridge</span>
-                <span style="font-size: 14px; color: white; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;">Bridge Connected</span>
-            </div>
-        </div>
-    `;
-    widget.style.cssText = `
-        position: fixed; bottom: 30px; right: 30px;
-        background: rgba(15, 15, 20, 0.95);
-        backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
-        border: 1px solid rgba(139, 92, 246, 0.4);
-        border-radius: 16px; padding: 16px 20px; z-index: 999999;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05) inset;
-        transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.5s ease;
-        transform: translateY(100px); opacity: 0;
-        font-family: 'Roboto', sans-serif;
-    `;
-    document.body.appendChild(widget);
-    void widget.offsetWidth;
-    widget.style.transform = "translateY(0)";
-    widget.style.opacity = "1";
-    setTimeout(() => {
-      widget.style.transform = "translateY(100px)";
-      widget.style.opacity = "0";
-      setTimeout(() => widget.remove(), 500);
-    }, 4e3);
-  }
-  var bridgePollInterval = null;
-  var wasBridgeOnline = false;
-  function startBridgePolling() {
-    if (bridgePollInterval) return;
-    checkServer().then((isOnline) => {
-      wasBridgeOnline = isOnline;
-      log(`[BridgePoll] Initial seed: isOnline=${isOnline}, wasBridgeOnline=${wasBridgeOnline}`);
-      bridgePollInterval = setInterval(async () => {
-        const isOnline2 = await checkServer();
-        log(`[BridgePoll] Tick: isOnline=${isOnline2}, wasBridgeOnline=${wasBridgeOnline}`);
-        if (isOnline2 && !wasBridgeOnline) {
-          log("[BridgePoll] Detected offline -> online transition, showing toast");
-          showBridgeConnectedToast();
-        }
-        wasBridgeOnline = isOnline2;
-      }, 1e4);
-    });
-  }
-  function stopBridgePolling() {
-    if (bridgePollInterval) {
-      clearInterval(bridgePollInterval);
-      bridgePollInterval = null;
-    }
-  }
+
+  // stremio-mpv-bridge/userscript/src/main.js
   async function init() {
     const version = GM_info.script.version;
-    const activeProviders = providers.filter((p) => p.enabled && p.url);
+    const activeProviders = settings.providers.filter((p) => p.enabled && p.url);
     let providerSummary = "None";
     if (activeProviders.length > 0) {
       const resolvedNames = await Promise.all(activeProviders.map((p) => resolveProviderName(p)));
       providerSummary = resolvedNames.join(", ");
     }
-    const modeText = playlistMode === "all" ? "Load All" : playlistMode === "single" ? "Single" : `Batch | Extra: ${extraEpisodes}`;
+    const modeText = settings.playlistMode === "all" ? "Load All" : settings.playlistMode === "single" ? "Single" : `Batch | Extra: ${settings.extraEpisodes}`;
     notify(`v${version} initialized — ${providerSummary} — ${modeText}`);
     if (typeof GM_registerMenuCommand === "function") {
       GM_registerMenuCommand("Open MPV Bridge Settings", () => {
@@ -2941,7 +2974,7 @@
     startBridgePolling();
     window.addEventListener("keydown", (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key.toLowerCase() === mpvShortcut) {
+      if (e.key.toLowerCase() === settings.mpvShortcut) {
         if (isDetailRoute()) {
           handleMPVClick(e);
         }

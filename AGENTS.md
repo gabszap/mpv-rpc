@@ -246,6 +246,8 @@ npm run bridge
 
 - **Stremio userscript (`stremio-mpv-bridge/stremio-mpv.user.js`) — generated file, do not edit by hand**
   - edit: `stremio-mpv-bridge/userscript/src/**` (code) and `stremio-mpv-bridge/userscript/header.txt` (metadata block)
+  - layout: `main.js` (entry/`init`), `settings.js` (persisted settings, exposed as the mutable `settings` object — ES module imports cannot be reassigned), `bridge-api.js`, `bridge-polling.js`, `providers.js`, `stream-selection.js`, `playback.js`, `config-modal.js`, `floating-ui.js`, `toasts.js`, `url-parser.js`, `page-scraper.js`, `icon-mode.js`, `logging.js`, `constants.js`
+  - globals `GM_*` come from Violentmonkey; do not import them
   - rebuild: `npm run build:userscript` (esbuild bundles to the single file Violentmonkey needs)
   - verify: `npm run check:userscript`; `tests/userscript-bundle.test.ts` fails when the committed output is stale
   - note: semantic-release bumps `@version` in both `header.txt` and the built file
