@@ -156,7 +156,7 @@ describe("JikanProvider error logging and jikan-edge contract", () => {
                 data: {
                     data: [
                         {
-                             relation: "Sequel",
+                            relation: "Sequel",
                             malId: 25777,
                             type: "anime",
                             title: "Shingeki no Kyojin Season 2",
@@ -269,7 +269,14 @@ describe("JikanProvider error logging and jikan-edge contract", () => {
                     status: 200,
                     data: {
                         data: entry?.sequelId
-                            ? [{ relation: "Sequel", malId: entry.sequelId, type: "anime", title: jojoChain[entry.sequelId].title }]
+                            ? [
+                                  {
+                                      relation: "Sequel",
+                                      malId: entry.sequelId,
+                                      type: "anime",
+                                      title: jojoChain[entry.sequelId].title,
+                                  },
+                              ]
                             : [],
                     },
                 };
