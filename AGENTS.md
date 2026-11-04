@@ -24,6 +24,7 @@ The intent of this file is to keep work safe, reproducible, and easy to troubles
   - Run compiled app: `npm start`
   - Build and run in one command: `npm run dev`
   - Start the Stremio bridge workspace: `npm run bridge`
+  - Rebuild the single-file userscript after editing `stremio-mpv-bridge/userscript/`: `npm run build:userscript`
   - Run MAL OAuth flow: `npm start -- mal-auth`
 
 - **If you change anything under `src/`, you must finish with:**
@@ -242,6 +243,12 @@ npm run bridge
   - edit: `stremio-mpv-bridge/`
   - validate: bridge tests under `tests/` (if applicable)
   - keep: endpoint expectations `/health` + `/play` (see playbook)
+
+- **Stremio userscript (`stremio-mpv-bridge/stremio-mpv.user.js`) — generated file, do not edit by hand**
+  - edit: `stremio-mpv-bridge/userscript/src/**` (code) and `stremio-mpv-bridge/userscript/header.txt` (metadata block)
+  - rebuild: `npm run build:userscript` (esbuild bundles to the single file Violentmonkey needs)
+  - verify: `npm run check:userscript`; `tests/userscript-bundle.test.ts` fails when the committed output is stale
+  - note: semantic-release bumps `@version` in both `header.txt` and the built file
 
 - **Semantic-Release configuration updates**
   - edit: `semantic-release/`

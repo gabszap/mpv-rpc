@@ -40,6 +40,7 @@ module.exports = {
                     "stremio-mpv-bridge/package.json",
                     "stremio-mpv-bridge/package-lock.json",
                     "stremio-mpv-bridge/stremio-mpv.user.js",
+                    "stremio-mpv-bridge/userscript/header.txt",
                 ],
                 message:
                     "chore(release): bridge ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}",
