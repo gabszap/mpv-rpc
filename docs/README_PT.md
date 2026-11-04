@@ -12,13 +12,13 @@ Discord Rich Presence para o MPV Media Player com metadados de anime, sincroniza
 </p>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Demo do MPV Discord RPC" width="600">
+  <img src="../assets/demo.gif" alt="Demo do MPV Discord RPC" width="600">
   <br>
   <em>Discord Rich Presence em ação</em>
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="README_PT.md">Português</a>
+  <a href="../README.md">English</a> | <a href="README_PT.md">Português</a>
 </p>
 
 ---
@@ -139,15 +139,15 @@ Use este caminho se você quer abrir streams do Stremio Web no MPV:
 
 4. Abra `https://web.stremio.com/`, escolha um episódio/filme e use o botão ou atalho do MPV Bridge.
 
-Guia completo: [Guia do Stremio MPV Bridge](docs/stremio-mpv-bridge.md)
+Guia completo: [Guia do Stremio MPV Bridge](stremio-mpv-bridge.md)
 
 ### Serviços de sincronização
 
 | Serviço | Ativar no `.env` | Comando de autenticação | Guia |
 | --- | --- | --- | --- |
-| MyAnimeList | `MAL_SYNC=true` | `npm start -- mal-auth` | [Guia MAL](docs/mal-sync-setup.md) |
-| Trakt.tv | `TRAKT_SYNC=true` | `npm start -- trakt-auth` | [Guia Trakt](docs/trakt-sync-setup.md) |
-| Stremio | `STREMIO_SYNC=true` | Abra uma mídia pelo bridge para capturar contexto/autenticação | [Guia Stremio](docs/stremio-mpv-bridge.md) |
+| MyAnimeList | `MAL_SYNC=true` | `npm start -- mal-auth` | [Guia MAL](mal-sync-setup.md) |
+| Trakt.tv | `TRAKT_SYNC=true` | `npm start -- trakt-auth` | [Guia Trakt](trakt-sync-setup.md) |
+| Stremio | `STREMIO_SYNC=true` | Abra uma mídia pelo bridge para capturar contexto/autenticação | [Guia Stremio](stremio-mpv-bridge.md) |
 
 Tokens e contexto do Stremio ficam armazenados em `.config/`, pasta ignorada pelo git.
 
@@ -293,7 +293,7 @@ Userscript no Stremio Web
 
 | Título em romaji | Título em inglês | Fallback pelo nome do arquivo |
 | :---: | :---: | :---: |
-| ![Modo com título em romaji](assets/romaji.png) | ![Modo com título em inglês](assets/english.png) | ![Modo pelo nome do arquivo](assets/filename.png) |
+| ![Modo com título em romaji](../assets/romaji.png) | ![Modo com título em inglês](../assets/english.png) | ![Modo pelo nome do arquivo](../assets/filename.png) |
 
 > Nome do arquivo (Filename) significa que o título do episódio é exibido com base no nome do arquivo (sem provedor de metadados).
 
@@ -302,19 +302,19 @@ Userscript no Stremio Web
 
 | Inglês | Português | Espanhol |
 | :---: | :---: | :---: |
-| ![Título de episódio em inglês](assets/english.png) | ![Título de episódio em português](assets/portuguese.png) | ![Título de episódio em espanhol](assets/spanish.png) |
+| ![Título de episódio em inglês](../assets/english.png) | ![Título de episódio em português](../assets/portuguese.png) | ![Título de episódio em espanhol](../assets/spanish.png) |
 
 | Francês | Alemão | Italiano |
 | :---: | :---: | :---: |
-| ![Título de episódio em francês](assets/french.png) | ![Título de episódio em alemão](assets/german.png) | ![Título de episódio em italiano](assets/italian.png) |
+| ![Título de episódio em francês](../assets/french.png) | ![Título de episódio em alemão](../assets/german.png) | ![Título de episódio em italiano](../assets/italian.png) |
 
 | Russo | Chinês | Japonês |
 | :---: | :---: | :---: |
-| ![Título de episódio em russo](assets/russian.png) | ![Título de episódio em chinês](assets/chinese.png) | ![Título de episódio em japonês](assets/japanese.png) |
+| ![Título de episódio em russo](../assets/russian.png) | ![Título de episódio em chinês](../assets/chinese.png) | ![Título de episódio em japonês](../assets/japanese.png) |
 
 ### Modo de privacidade
 
-![Prévia do modo de privacidade](assets/privacymode.png)
+![Prévia do modo de privacidade](../assets/privacymode.png)
 
 ## Solução de problemas
 
@@ -364,4 +364,4 @@ Para execuções locais do semantic-release, mantenha `GH_TOKEN` ou `GITHUB_TOKE
 
 ## Licença
 
-Licença MIT. Veja [LICENSE](LICENSE) para detalhes.
+Licença MIT. Veja [LICENSE](../LICENSE) para detalhes.

@@ -125,7 +125,7 @@ Set `SYNC_DRY_RUN=true` in your `.env` file to run the app without affecting any
 
 Useful for testing parser results, provider resolution, or configuration changes without leaving traces on external services during development.
 
-> **Note:** The `SYNC_DRY_RUN` env var is also listed in the main [README](README.md) configuration table — this section explains its development use case.
+> **Note:** The `SYNC_DRY_RUN` env var is also listed in the main [README](../README.md) configuration table — this section explains its development use case.
 
 ---
 
@@ -282,11 +282,11 @@ Ensure all gate conditions are met:
 
 ## Documentation
 
-- [README.md](README.md) — Project overview and setup
+- [README.md](../README.md) — Project overview and setup
 - [README_PT.md](README_PT.md) — Portuguese overview
-- [docs/mal-sync-setup.md](docs/mal-sync-setup.md) — MAL OAuth and sync setup
-- [docs/stremio-mpv-bridge.md](docs/stremio-mpv-bridge.md) — Stremio bridge setup
-- [guessit-api/README.md](guessit-api/README.md) — GuessIt API deployment
+- [mal-sync-setup.md](mal-sync-setup.md) — MAL OAuth and sync setup
+- [stremio-mpv-bridge.md](stremio-mpv-bridge.md) — Stremio bridge setup
+- [guessit-api/README.md](../guessit-api/README.md) — GuessIt API deployment
 
 ---
 
