@@ -2,6 +2,19 @@
 
 This file is managed by semantic-release.
 
+## [1.11.0](https://github.com/gabszap/mpv-rpc/compare/bridge-v1.10.0...bridge-v1.11.0) (2026-11-04)
+
+### Features
+
+* **bridge:** add auto-fetch and config persistence endpoints ([ab52a30](https://github.com/gabszap/mpv-rpc/commit/ab52a30b6206761854a680c402ab96b60eeacc03))
+* **stremio-sync:** add Continue Watching sync with Stremio API ([2d1804a](https://github.com/gabszap/mpv-rpc/commit/2d1804a23b582c05eb5bcfd31964152a4e3752a7))
+* **userscript:** improve series name detection and config sync ([a916a63](https://github.com/gabszap/mpv-rpc/commit/a916a6343e64ebfe3c8db6057f05a6483102d950))
+
+### Bug Fixes
+
+* add auto-fetch deduplication and unify config defaults ([a2affbd](https://github.com/gabszap/mpv-rpc/commit/a2affbdb25d37a0d381a25d5f2a0720b29a30c7c))
+* **release:** deduplicate bridge changelog header [skip ci] ([5085fab](https://github.com/gabszap/mpv-rpc/commit/5085fabe3f00b0eaff7092425714c771eda9231c))
+
 ## [1.10.0](https://github.com/gabszap/mpv-rpc/compare/bridge-v1.9.0...bridge-v1.10.0) (2026-04-25)
 
 ### Features
