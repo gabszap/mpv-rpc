@@ -42,8 +42,11 @@ The intent of this file is to keep work safe, reproducible, and easy to troubles
   - Windows: `\\.\pipe\mpv`
   - Unix (Linux/macOS): `/tmp/mpv-socket`
 
-- **Equivalent video quality aliases must remain consistent (`stremio-mpv-bridge/`):**
-  - Scoring and matching in both `server.js` and `stremio-mpv.user.js` must resolve equivalent terms (e.g., `4K` ↔ `2160p`, `2K` ↔ `1440p`, `FHD` ↔ `1080p`, `HD` ↔ `720p`) to prevent quality filtering from failing or falling back to lower resolution streams.
+- **Equivalent video quality aliases must stay resolved by one implementation (`stremio-mpv-bridge/shared/stream-selection.js`):**
+  - `getQualityAliases()` and the stream scoring (`findBestStream`, release group and season detection) live only in `shared/stream-selection.js`; `server.js` `require`s it and the userscript bundles it. Never re-implement them in either consumer.
+  - Aliases must resolve equivalent terms (e.g., `4K` ↔ `2160p`, `2K` ↔ `1440p`, `FHD` ↔ `1080p`, `HD` ↔ `720p`) to prevent quality filtering from failing or falling back to lower resolution streams.
+  - The module must stay free of Node-only and browser-only APIs. `tests/shared-stream-selection.test.ts` fails if a second definition appears.
+  - After editing it, run `npm run build:userscript` so `stremio-mpv.user.js` includes the change.
 
 - **Start script (`npm run start:all`) must bypass npm spawn overhead:**
   - The script must execute the direct node commands (`node dist/index.js` and `node stremio-mpv-bridge/server.js`) without intermediate `npm run` task chaining, keeping boot time under ~6 seconds.
@@ -246,7 +249,7 @@ npm run bridge
 
 - **Stremio userscript (`stremio-mpv-bridge/stremio-mpv.user.js`) — generated file, do not edit by hand**
   - edit: `stremio-mpv-bridge/userscript/src/**` (code) and `stremio-mpv-bridge/userscript/header.txt` (metadata block)
-  - layout: `main.js` (entry/`init`), `settings.js` (persisted settings, exposed as the mutable `settings` object — ES module imports cannot be reassigned), `bridge-api.js`, `bridge-polling.js`, `providers.js`, `stream-selection.js`, `playback.js`, `config-modal.js`, `floating-ui.js`, `toasts.js`, `url-parser.js`, `page-scraper.js`, `icon-mode.js`, `logging.js`, `constants.js`
+  - layout: `main.js` (entry/`init`), `settings.js` (persisted settings, exposed as the mutable `settings` object — ES module imports cannot be reassigned), `bridge-api.js`, `bridge-polling.js`, `providers.js`, `stream-selection.js` (thin adapter over `shared/stream-selection.js`), `playback.js`, `config-modal.js`, `floating-ui.js`, `toasts.js`, `url-parser.js`, `page-scraper.js`, `icon-mode.js`, `logging.js`, `constants.js`
   - globals `GM_*` come from Violentmonkey; do not import them
   - rebuild: `npm run build:userscript` (esbuild bundles to the single file Violentmonkey needs)
   - verify: `npm run check:userscript`; `tests/userscript-bundle.test.ts` fails when the committed output is stale
