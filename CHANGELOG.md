@@ -2,6 +2,38 @@
 
 This file is managed by semantic-release.
 
+## [2.5.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.4.0...mpv-rpc-v2.5.0) (2026-11-04)
+
+### Features
+
+* **auto-fetch:** validate Stremio config matches current anime ([40ec132](https://github.com/gabszap/mpv-rpc/commit/40ec1321511d3a6dcc49d35864bb326df8359ac2))
+* **stremio-sync:** add Continue Watching sync with Stremio API ([2d1804a](https://github.com/gabszap/mpv-rpc/commit/2d1804a23b582c05eb5bcfd31964152a4e3752a7))
+* **stremio-sync:** add watched bitset marking with Cinemeta video IDs ([28c140d](https://github.com/gabszap/mpv-rpc/commit/28c140d5de21128c8ea172ea1fe554e8c7ae238a))
+
+### Bug Fixes
+
+* add auto-fetch deduplication and unify config defaults ([a2affbd](https://github.com/gabszap/mpv-rpc/commit/a2affbdb25d37a0d381a25d5f2a0720b29a30c7c))
+* harden parser fallbacks and trakt absolute mapping ([5d7c470](https://github.com/gabszap/mpv-rpc/commit/5d7c4709fca8af436a64a3df0af6f102025b4947))
+
+## [2.4.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.3.0...mpv-rpc-v2.4.0) (2026-11-04)
+
+### Features
+
+* **trakt:** add Trakt.tv scrobble integration with OAuth2 device auth ([1573394](https://github.com/gabszap/mpv-rpc/commit/157339486dcb284d118b08e2d974a4b9d18b4657))
+
+### Bug Fixes
+
+* **trakt:** guard filename-change stop with 1% progress minimum ([7fe0931](https://github.com/gabszap/mpv-rpc/commit/7fe09314effd505d86a9d64687dd6b35235d6eb6))
+* **trakt:** improve resilience and edge case handling ([6218067](https://github.com/gabszap/mpv-rpc/commit/62180674fd5a160cf3a2f67d584505e1128e959f))
+* **trakt:** improve scrobble reliability and API logging ([bb242f7](https://github.com/gabszap/mpv-rpc/commit/bb242f7ec5e9542d2d9f340271c9eb3b3790dfbf))
+* **trakt:** threshold-first scrobble logic + debug API logging ([b88b28e](https://github.com/gabszap/mpv-rpc/commit/b88b28e4fc97f752de6ba5725701e232a82cbfe3))
+
+## [2.3.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.2.0...mpv-rpc-v2.3.0) (2026-11-04)
+
+### Features
+
+* **auto-fetch:** add auto-detection and fetching of next episodes ([34b76ed](https://github.com/gabszap/mpv-rpc/commit/34b76edeed06a7775130b056b5bf38a7c18f0a4d))
+
 ## [2.2.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.1.1...mpv-rpc-v2.2.0) (2026-04-28)
 
 ### Features
