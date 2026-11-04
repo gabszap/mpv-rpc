@@ -10,6 +10,7 @@ import { readStremioPlaybackContext } from "../stremio-sync/context";
 import { normalizeTitle } from "../trakt-sync/api";
 import { resolveCanonicalSplitPartEpisode } from "./canonical-episode";
 import { config } from "./config";
+import { filterTitleStopTokens } from "./title-tokens";
 
 // Shared config file path (same as bridge uses)
 const CONFIG_PATH = path.join(process.cwd(), ".config", ".stremio-mpv-config.json");
@@ -93,23 +94,13 @@ function isAutoFetchEnabled(sharedConfig: SharedConfig): boolean {
     return sharedConfig.autoFetch?.enabled !== false;
 }
 
-const CONJUNCTION_STOP_WORDS = new Set(["and", "e", "y", "und", "et"]);
-
-function filterTitleComparisonTokens(title: string): string[] {
-    const rawTokens = title.split(/\s+/).filter((t) => t.length > 0);
-    const filtered = rawTokens.filter(
-        (t) => !/^(?:19|20)\d{2}$/.test(t) && !CONJUNCTION_STOP_WORDS.has(t),
-    );
-    return filtered.length > 0 ? filtered : rawTokens;
-}
-
 /**
  * Token-based title matching with minimum overlap threshold.
  * Prevents substring false positives like "Naruto" matching "Boruto: Naruto Next Generations".
  */
 function titlesMatch(configTitle: string, watchingTitle: string): boolean {
-    const configTokens = filterTitleComparisonTokens(configTitle);
-    const watchTokens = filterTitleComparisonTokens(watchingTitle);
+    const configTokens = filterTitleStopTokens(configTitle.split(/\s+/).filter((t) => t.length > 0));
+    const watchTokens = filterTitleStopTokens(watchingTitle.split(/\s+/).filter((t) => t.length > 0));
 
     if (configTokens.length === 0 || watchTokens.length === 0) return false;
 

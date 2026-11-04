@@ -1,4 +1,5 @@
 import { type CanonicalEpisodePosition, resolveCanonicalSplitPartEpisode } from "../core/canonical-episode";
+import { normalizeTitleTokens } from "../core/title-tokens";
 import type { MpvData } from "../integrations/mpv";
 import type { StremioPlaybackContext } from "./context";
 
@@ -66,20 +67,8 @@ export function getCurrentEpisodePosition(data: MpvData): EpisodePosition {
     };
 }
 
-const CONJUNCTION_STOP_WORDS = new Set(["and", "e", "y", "und", "et"]);
-
 function normalizeTitleForMatch(title: string): string {
-    const rawTokens = title
-        .replace(/\(\s*(?:19|20)\d{2}\s*\)/g, " ")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ")
-        .trim()
-        .split(/\s+/)
-        .filter((token) => token.length > 0);
-    const filtered = rawTokens.filter(
-        (token) => !/^(?:19|20)\d{2}$/.test(token) && !CONJUNCTION_STOP_WORDS.has(token),
-    );
-    return (filtered.length > 0 ? filtered : rawTokens).join(" ");
+    return normalizeTitleTokens(title).join(" ");
 }
 
 function stripEpisodeMarkersFromFilename(filename: string): string {
