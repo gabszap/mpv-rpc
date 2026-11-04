@@ -141,7 +141,7 @@
       }
     },
     "scribe": {
-      "model": "google/gemini-3-1-flash-lite",
+      "model": "google/gemini-3.1-flash-lite",
       "temperature": 1,
       "reasoningEffort": "low",
       "textVerbosity": "high",
@@ -158,7 +158,7 @@
       }
     },
     "reviewer": {
-      "model": "google/gemma-4-31b-it",
+      "model": "google/gemini-3.1-flash-lite",
       "temperature": 0.1,
       "reasoningEffort": "high",
       "textVerbosity": "medium",
