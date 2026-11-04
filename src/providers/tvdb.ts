@@ -6,14 +6,16 @@
  */
 
 import axios from "axios";
-import { config } from "../config";
+import { config } from "../core/config";
 import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
-import { formatProviderErrorDetails, logApiCall } from "./types";
+import { formatProviderErrorDetails, logApiCall, markSeasonAnimeValidated } from "./types";
 
 const TVDB_BASE = "https://api4.thetvdb.com/v4";
 const MAX_SEASON_LOOKUP_PAGES = 3;
 const MAX_ORDER_MAPPING_PAGES = 20;
 const MIN_INFERENCE_SCORE = 40;
+export const TVDB_ARTWORK_TYPE_SERIES_POSTER = 2;
+export const TVDB_ARTWORK_TYPE_SEASON_POSTER = 7;
 const TITLE_HINT_STOP_WORDS = new Set([
     "a",
     "an",
@@ -38,6 +40,30 @@ interface TvdbEpisodeRecord {
     seasonNumber?: number | string;
     number?: number | string;
     absoluteNumber?: number | string | null;
+    nameTranslations?: unknown;
+    overviewTranslations?: unknown;
+    translationLanguages?: unknown;
+    translations?: unknown;
+}
+
+interface TvdbRequestOptions {
+    expectedMissingStatuses?: number[];
+}
+
+interface EpisodeTranslationLanguagePlan {
+    canonicalLanguage: string;
+    candidates: string[];
+    availableLanguages: string[];
+}
+
+export interface TvdbArtworkRecord {
+    id?: number | string;
+    image?: string | null;
+    thumbnail?: string | null;
+    language?: string | null;
+    score?: number | string | null;
+    seasonId?: number | string | null;
+    type?: number | string | null;
 }
 
 export interface TvdbAiredToAbsoluteMapping {
@@ -63,6 +89,17 @@ interface TvdbSeasonRecord {
         | null;
 }
 
+interface TvdbSeriesRecord {
+    name?: string | null;
+    image?: string | null;
+    artworks?: TvdbArtworkRecord[];
+    nameTranslations?: unknown;
+    seasons?: TvdbSeasonRecord[];
+    status?: {
+        name?: string | null;
+    } | null;
+}
+
 interface SeasonInferenceResult {
     season: number;
     score: number;
@@ -82,6 +119,7 @@ const episodeOrderCache = new Map<string, Promise<TvdbEpisodeRecord[]>>();
 const airedToAbsoluteCache = new Map<string, { expiresAt: number; result: TvdbAiredToAbsoluteMapping | null }>();
 const ORDER_MAPPING_SUCCESS_TTL_MS = 24 * 60 * 60 * 1000;
 const ORDER_MAPPING_FAILURE_TTL_MS = 10 * 60 * 1000;
+const loggedLanguageNormalizations = new Set<string>();
 
 // Circuit Breaker
 const circuitBreaker = {
@@ -155,7 +193,12 @@ async function authenticate(): Promise<string> {
 /**
  * Make an authenticated request to TVDB API
  */
-async function tvdbRequest(endpoint: string, params?: Record<string, any>, operation = "query"): Promise<any> {
+async function tvdbRequest(
+    endpoint: string,
+    params?: Record<string, any>,
+    operation = "query",
+    options: TvdbRequestOptions = {},
+): Promise<any> {
     if (circuitBreaker.isOpen()) {
         logApiCall("TVDB", operation, params || {}, "CIRCUIT_OPEN", "blocked");
         throw new Error("Circuit breaker open");
@@ -189,7 +232,7 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
             bearerToken = null;
             tokenExpiry = 0;
             logApiCall("TVDB", operation, params || {}, "401 EXPIRED", "retrying");
-            return tvdbRequest(endpoint, params, operation);
+            return tvdbRequest(endpoint, params, operation, options);
         }
 
         if (e.response?.status === 429) {
@@ -197,7 +240,12 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
             console.log("[TVDB] Rate limited, waiting 2s...");
             circuitBreaker.recordFailure();
             await new Promise((resolve) => setTimeout(resolve, 2000));
-            return tvdbRequest(endpoint, params, operation);
+            return tvdbRequest(endpoint, params, operation, options);
+        }
+
+        const responseStatus = typeof e.response?.status === "number" ? e.response.status : null;
+        if (responseStatus !== null && options.expectedMissingStatuses?.includes(responseStatus)) {
+            throw e;
         }
 
         logApiCall("TVDB", operation, params || {}, "ERROR", e.message || "unknown");
@@ -215,13 +263,210 @@ async function tvdbRequest(endpoint: string, params?: Record<string, any>, opera
     }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function readString(value: unknown): string | null {
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed || null;
+}
+
+function readStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value.filter((item): item is string => typeof item === "string");
+}
+
+function normalizeRawTvdbLanguageCode(rawLanguage: string | null | undefined): string {
+    const normalizedInput = (rawLanguage || "eng").trim().toLowerCase().replace(/_/g, "-");
+    if (!normalizedInput) {
+        return "eng";
+    }
+
+    const mappedLanguages: Record<string, string> = {
+        en: "eng",
+        pt: "por",
+        "pt-br": "por",
+        ptbr: "por",
+        ja: "jpn",
+        jp: "jpn",
+        es: "spa",
+        fr: "fra",
+        de: "deu",
+        it: "ita",
+        ru: "rus",
+        zh: "zho",
+        cn: "zho",
+        ko: "kor",
+        kr: "kor",
+    };
+
+    if (mappedLanguages[normalizedInput]) {
+        return mappedLanguages[normalizedInput];
+    }
+
+    if (/^[a-z]{3}$/.test(normalizedInput)) {
+        return normalizedInput;
+    }
+
+    return normalizedInput;
+}
+
+export function normalizeTvdbLanguageCode(rawLanguage: string | null | undefined): string {
+    return normalizeRawTvdbLanguageCode(rawLanguage);
+}
+
 /**
- * Get the configured TVDB language code
- * Uses TVDB_LANG from config (e.g. "eng", "por", "jpn", "spa")
- * See: https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes for available language codes
+ * Get the configured TVDB language code.
+ * Uses TVDB_LANG from config and normalizes common ISO-639-1 values to TVDB's ISO-639-2 codes.
  */
 function getTvdbLanguage(): string {
-    return config.tvdb.language || "eng";
+    const rawLanguage = config.tvdb.language || "eng";
+    const normalizedLanguage = normalizeRawTvdbLanguageCode(rawLanguage);
+    const normalizedInput = rawLanguage.trim().toLowerCase().replace(/_/g, "-") || "eng";
+
+    if (normalizedInput !== normalizedLanguage && !loggedLanguageNormalizations.has(rawLanguage)) {
+        loggedLanguageNormalizations.add(rawLanguage);
+        logApiCall(
+            "TVDB",
+            "language",
+            { raw: rawLanguage },
+            "DETAIL",
+            `normalized "${rawLanguage}" -> "${normalizedLanguage}"`,
+        );
+    }
+
+    return normalizedLanguage;
+}
+
+function appendUniqueLanguageCandidate(candidates: string[], candidate: string | null | undefined): void {
+    const cleanedCandidate = readString(candidate);
+    if (!cleanedCandidate) {
+        return;
+    }
+
+    const normalizedCandidate = cleanedCandidate.toLowerCase();
+    if (candidates.some((existingCandidate) => existingCandidate.toLowerCase() === normalizedCandidate)) {
+        return;
+    }
+
+    candidates.push(cleanedCandidate);
+}
+
+function readTranslationLanguageCode(value: unknown): string | null {
+    if (typeof value === "string") {
+        return readString(value);
+    }
+
+    if (!isRecord(value)) {
+        return null;
+    }
+
+    return (
+        readString(value.language) ??
+        readString(value.lang) ??
+        readString(value.code) ??
+        readString(value.id) ??
+        readString(value.iso_639_3) ??
+        readString(value.iso6393) ??
+        readString(value.iso_639_1) ??
+        readString(value.iso6391)
+    );
+}
+
+function isLikelyTvdbLanguageCode(value: string): boolean {
+    return /^[a-z]{2,3}(?:-[a-z]{2,3})?$/i.test(value.trim());
+}
+
+function collectTranslationLanguages(value: unknown, languages: string[]): void {
+    const languageCode = readTranslationLanguageCode(value);
+    if (languageCode) {
+        appendUniqueLanguageCandidate(languages, languageCode);
+        return;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            collectTranslationLanguages(item, languages);
+        }
+        return;
+    }
+
+    if (isRecord(value)) {
+        for (const [key, item] of Object.entries(value)) {
+            if (isLikelyTvdbLanguageCode(key)) {
+                appendUniqueLanguageCandidate(languages, key);
+            }
+            collectTranslationLanguages(item, languages);
+        }
+    }
+}
+
+function readEpisodeAvailableTranslationLanguages(episode: TvdbEpisodeRecord): string[] {
+    const languages: string[] = [];
+
+    collectTranslationLanguages(episode.nameTranslations, languages);
+    collectTranslationLanguages(episode.overviewTranslations, languages);
+    collectTranslationLanguages(episode.translationLanguages, languages);
+    collectTranslationLanguages(episode.translations, languages);
+
+    return languages;
+}
+
+function isPortugueseTvdbLanguage(rawLanguage: string, canonicalLanguage: string): boolean {
+    const normalizedRawLanguage = rawLanguage.trim().toLowerCase().replace(/_/g, "-");
+    return canonicalLanguage === "por" || normalizedRawLanguage === "pt" || normalizedRawLanguage.startsWith("pt-");
+}
+
+function isPortugueseTranslationCandidate(language: string): boolean {
+    const normalizedLanguage = language.trim().toLowerCase().replace(/_/g, "-");
+    return (
+        normalizedLanguage === "por" ||
+        normalizedLanguage === "pt" ||
+        normalizedLanguage === "ptbr" ||
+        normalizedLanguage.startsWith("pt-")
+    );
+}
+
+function buildEpisodeTranslationLanguagePlan(
+    rawLanguage: string,
+    canonicalLanguage: string,
+    episode: TvdbEpisodeRecord,
+): EpisodeTranslationLanguagePlan {
+    const availableLanguages = readEpisodeAvailableTranslationLanguages(episode);
+    const candidates: string[] = [];
+
+    appendUniqueLanguageCandidate(candidates, canonicalLanguage);
+
+    if (!isPortugueseTvdbLanguage(rawLanguage, canonicalLanguage)) {
+        return {
+            canonicalLanguage,
+            candidates,
+            availableLanguages,
+        };
+    }
+
+    appendUniqueLanguageCandidate(candidates, "pt");
+    appendUniqueLanguageCandidate(candidates, "pt-BR");
+
+    for (const availableLanguage of availableLanguages) {
+        if (isPortugueseTranslationCandidate(availableLanguage)) {
+            appendUniqueLanguageCandidate(candidates, availableLanguage);
+        }
+    }
+
+    return {
+        canonicalLanguage,
+        candidates,
+        availableLanguages,
+    };
 }
 
 function normalizeEpisodeNumber(value: unknown): number | null {
@@ -276,6 +521,22 @@ function findExactEpisode(episodes: TvdbEpisodeRecord[], season: number, episode
                 normalizeEpisodeNumber(candidate.seasonNumber) === seasonNum &&
                 normalizeEpisodeNumber(candidate.number) === episodeNum,
         ) || null
+    );
+}
+
+function findEpisodeByAbsoluteNumber(episodes: TvdbEpisodeRecord[], absoluteEpisode: number): TvdbEpisodeRecord | null {
+    const absoluteEpisodeNumber = normalizeEpisodeNumber(absoluteEpisode);
+    if (absoluteEpisodeNumber === null || absoluteEpisodeNumber < 1) {
+        return null;
+    }
+
+    return (
+        episodes.find((candidate) => {
+            const absoluteNumber = getAbsoluteEpisodeNumber(candidate);
+            const episodeNumber = normalizeEpisodeNumber(candidate.number);
+
+            return absoluteNumber === absoluteEpisodeNumber || episodeNumber === absoluteEpisodeNumber;
+        }) || null
     );
 }
 
@@ -560,6 +821,197 @@ function getSeasonNumber(season: TvdbSeasonRecord): number | null {
     return normalizeEpisodeNumber(season.number) ?? normalizeEpisodeNumber(season.seasonNumber);
 }
 
+function getSeasonId(season: TvdbSeasonRecord): number | null {
+    return normalizeEpisodeNumber(season.id);
+}
+
+function findSeasonRecordByNumber(seasons: TvdbSeasonRecord[], targetSeason: number): TvdbSeasonRecord | null {
+    if (!Number.isInteger(targetSeason) || targetSeason < 1) {
+        return null;
+    }
+
+    return seasons.find((season) => getSeasonNumber(season) === targetSeason) ?? null;
+}
+
+function getArtworkType(artwork: TvdbArtworkRecord): number | null {
+    return normalizeEpisodeNumber(artwork.type);
+}
+
+function getArtworkSeasonId(artwork: TvdbArtworkRecord): number | null {
+    return normalizeEpisodeNumber(artwork.seasonId);
+}
+
+function getArtworkScore(artwork: TvdbArtworkRecord): number {
+    if (typeof artwork.score === "number" && Number.isFinite(artwork.score)) {
+        return artwork.score;
+    }
+
+    if (typeof artwork.score === "string") {
+        const parsedScore = Number.parseFloat(artwork.score);
+        return Number.isFinite(parsedScore) ? parsedScore : 0;
+    }
+
+    return 0;
+}
+
+function getArtworkImageUrl(artwork: TvdbArtworkRecord): string | null {
+    return readString(artwork.image) ?? readString(artwork.thumbnail);
+}
+
+function getArtworkLanguage(artwork: TvdbArtworkRecord): string | null {
+    const rawLanguage = readString(artwork.language);
+    return rawLanguage ? normalizeRawTvdbLanguageCode(rawLanguage) : null;
+}
+
+function extractArtworkRecords(response: unknown): TvdbArtworkRecord[] {
+    if (!isRecord(response)) {
+        return [];
+    }
+
+    const data = response.data;
+    if (Array.isArray(data)) {
+        return data as TvdbArtworkRecord[];
+    }
+
+    if (isRecord(data) && Array.isArray(data.artworks)) {
+        return data.artworks as TvdbArtworkRecord[];
+    }
+
+    if (isRecord(data) && Array.isArray(data.data)) {
+        return data.data as TvdbArtworkRecord[];
+    }
+
+    if (isRecord(data) && isRecord(data.data) && Array.isArray(data.data.artworks)) {
+        return data.data.artworks as TvdbArtworkRecord[];
+    }
+
+    return [];
+}
+
+function selectSeriesPosterUrl(artworks: TvdbArtworkRecord[]): string | null {
+    const seriesPosters = artworks
+        .filter((artwork) => getArtworkType(artwork) === TVDB_ARTWORK_TYPE_SERIES_POSTER)
+        .filter((artwork) => getArtworkImageUrl(artwork));
+
+    if (seriesPosters.length === 0) {
+        return null;
+    }
+
+    const [bestPoster] = seriesPosters.sort((left, right) => getArtworkScore(right) - getArtworkScore(left));
+    return bestPoster ? getArtworkImageUrl(bestPoster) : null;
+}
+
+function getArtworkLanguageRank(artwork: TvdbArtworkRecord, preferredLanguage: string): number {
+    const language = getArtworkLanguage(artwork);
+    if (language === preferredLanguage) {
+        return 0;
+    }
+
+    if (language === "eng") {
+        return 1;
+    }
+
+    return 2;
+}
+
+export function selectSeasonPosterUrl(
+    artworks: TvdbArtworkRecord[],
+    seasonId: number,
+    preferredLanguage: string,
+): string | null {
+    if (!Number.isInteger(seasonId) || seasonId < 1) {
+        return null;
+    }
+
+    const normalizedPreferredLanguage = normalizeRawTvdbLanguageCode(preferredLanguage);
+    const matchingPosters = artworks
+        .filter((artwork) => getArtworkType(artwork) === TVDB_ARTWORK_TYPE_SEASON_POSTER)
+        .filter((artwork) => getArtworkSeasonId(artwork) === seasonId)
+        .filter((artwork) => getArtworkImageUrl(artwork));
+
+    if (matchingPosters.length === 0) {
+        return null;
+    }
+
+    const [bestPoster] = matchingPosters.sort((left, right) => {
+        const languageRankDifference =
+            getArtworkLanguageRank(left, normalizedPreferredLanguage) -
+            getArtworkLanguageRank(right, normalizedPreferredLanguage);
+        if (languageRankDifference !== 0) {
+            return languageRankDifference;
+        }
+
+        return getArtworkScore(right) - getArtworkScore(left);
+    });
+
+    return bestPoster ? getArtworkImageUrl(bestPoster) : null;
+}
+
+async function fetchSeasonCoverUrl(
+    seriesId: number,
+    targetSeason: number | null | undefined,
+    preferredLanguage: string,
+    initialResponse: unknown,
+): Promise<string | null> {
+    if (!Number.isInteger(targetSeason) || (targetSeason ?? 0) < 1) {
+        return null;
+    }
+
+    const seasonNumber = targetSeason as number;
+
+    try {
+        let seasonRecords = extractSeasonRecords(initialResponse);
+        let seasonRecord = findSeasonRecordByNumber(seasonRecords, seasonNumber);
+        let seasonId = seasonRecord ? getSeasonId(seasonRecord) : null;
+
+        if (seasonId === null) {
+            const seasonsResponse = await tvdbRequest(
+                `/series/${seriesId}/extended`,
+                { meta: "episodes" },
+                "getSeasons",
+            );
+            seasonRecords = extractSeasonRecords(seasonsResponse);
+            seasonRecord = findSeasonRecordByNumber(seasonRecords, seasonNumber);
+            seasonId = seasonRecord ? getSeasonId(seasonRecord) : null;
+        }
+
+        if (seasonId === null) {
+            logApiCall("TVDB", "getSeasonArtwork", { seriesId, season: seasonNumber }, "DETAIL", "missing seasonId");
+            return null;
+        }
+
+        const artworkResponse = await tvdbRequest(
+            `/series/${seriesId}/artworks`,
+            { type: TVDB_ARTWORK_TYPE_SEASON_POSTER },
+            "getSeasonArtwork",
+        );
+        const seasonPosterUrl = selectSeasonPosterUrl(
+            extractArtworkRecords(artworkResponse),
+            seasonId,
+            preferredLanguage,
+        );
+
+        logApiCall(
+            "TVDB",
+            "getSeasonArtwork",
+            { seriesId, season: seasonNumber, seasonId },
+            "DETAIL",
+            seasonPosterUrl ? `found "${seasonPosterUrl}"` : "no matching season poster",
+        );
+
+        return seasonPosterUrl;
+    } catch (error) {
+        logApiCall(
+            "TVDB",
+            "getSeasonArtwork",
+            { seriesId, season: seasonNumber },
+            "DETAIL",
+            `fallback series poster: ${error instanceof Error ? error.message : "artwork unavailable"}`,
+        );
+        return null;
+    }
+}
+
 function buildSeasonInferenceInputs(context?: EpisodeLookupContext): {
     normalizedHints: string[];
     hintTokens: Set<string>;
@@ -719,11 +1171,19 @@ async function inferSeasonFromTitleHints(
     }
 }
 
+interface TvdbEpisodeLookupResult {
+    episode: TvdbEpisodeRecord;
+    seasonType: TvdbEpisodeOrderType;
+    sourceSeason?: number;
+    sourceEpisode?: number;
+    tvdbAbsoluteEpisode?: number;
+}
+
 async function lookupEpisodeForSeasonNumber(
     seriesId: number,
     seasonNum: number,
     episode: number,
-): Promise<{ episode: TvdbEpisodeRecord; seasonType: TvdbSeasonType } | null> {
+): Promise<TvdbEpisodeLookupResult | null> {
     for (const seasonType of ["official", "default"] as TvdbSeasonType[]) {
         try {
             logApiCall(
@@ -822,8 +1282,298 @@ async function lookupEpisodeForSeasonNumber(
     return null;
 }
 
+function readAbsoluteNumberFromAbsoluteOrderEpisode(episode: TvdbEpisodeRecord): number | null {
+    return getAbsoluteEpisodeNumber(episode) ?? normalizeEpisodeNumber(episode.number);
+}
+
+async function lookupEpisodeForMappedSourcePosition(
+    seriesId: number,
+    sourceSeason: number,
+    sourceEpisode: number,
+    effectiveSeason: number,
+    effectiveEpisode: number,
+): Promise<TvdbEpisodeLookupResult | null> {
+    logApiCall(
+        "TVDB",
+        "getEpisode",
+        { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+        "DETAIL",
+        "source S/E lookup before effective episode fallback",
+    );
+
+    const sourceSeasonMatch = await lookupEpisodeForSeasonNumber(seriesId, sourceSeason, sourceEpisode);
+    if (sourceSeasonMatch) {
+        logApiCall(
+            "TVDB",
+            "getEpisode",
+            { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+            "DETAIL",
+            `source S/E matched seasonType=${sourceSeasonMatch.seasonType}`,
+        );
+
+        return {
+            ...sourceSeasonMatch,
+            sourceSeason,
+            sourceEpisode,
+        };
+    }
+
+    try {
+        const absoluteEpisodes = await fetchEpisodeOrder(seriesId, "absolute");
+        const absoluteSourcePositionMatch = findExactEpisode(absoluteEpisodes, sourceSeason, sourceEpisode);
+        if (absoluteSourcePositionMatch) {
+            const tvdbAbsoluteEpisode = readAbsoluteNumberFromAbsoluteOrderEpisode(absoluteSourcePositionMatch);
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode, tvdbAbsoluteEpisode },
+                "DETAIL",
+                "order=absolute source S/E match in TVDB absolute order",
+            );
+
+            return {
+                episode: absoluteSourcePositionMatch,
+                seasonType: "absolute",
+                sourceSeason,
+                sourceEpisode,
+                tvdbAbsoluteEpisode: tvdbAbsoluteEpisode ?? undefined,
+            };
+        }
+
+        const mappedEpisode = await mapTvdbAiredEpisodeToAbsolute(seriesId, sourceSeason, sourceEpisode);
+        if (!mappedEpisode) {
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+                "DETAIL",
+                "order=absolute no proven source S/E mapping -> fallback official/default effective episode",
+            );
+            return null;
+        }
+
+        const absoluteEpisodeMatch = findEpisodeByAbsoluteNumber(absoluteEpisodes, mappedEpisode.absoluteEpisode);
+        if (!absoluteEpisodeMatch) {
+            logApiCall(
+                "TVDB",
+                "getEpisode",
+                {
+                    id: seriesId,
+                    sourceSeason,
+                    sourceEpisode,
+                    effectiveSeason,
+                    effectiveEpisode,
+                    tvdbAbsoluteEpisode: mappedEpisode.absoluteEpisode,
+                },
+                "DETAIL",
+                "order=absolute mapped number missing from absolute order -> fallback official/default effective episode",
+            );
+            return null;
+        }
+
+        logApiCall(
+            "TVDB",
+            "getEpisode",
+            {
+                id: seriesId,
+                sourceSeason,
+                sourceEpisode,
+                effectiveSeason,
+                effectiveEpisode,
+                tvdbAbsoluteEpisode: mappedEpisode.absoluteEpisode,
+            },
+            "DETAIL",
+            `order=absolute mapped source S/E via ${mappedEpisode.seasonType}`,
+        );
+
+        return {
+            episode: absoluteEpisodeMatch,
+            seasonType: "absolute",
+            sourceSeason,
+            sourceEpisode,
+            tvdbAbsoluteEpisode: mappedEpisode.absoluteEpisode,
+        };
+    } catch (error) {
+        logApiCall(
+            "TVDB",
+            "getEpisode",
+            { id: seriesId, sourceSeason, sourceEpisode, effectiveSeason, effectiveEpisode },
+            "DETAIL",
+            `order=absolute unavailable: ${error instanceof Error ? error.message : "unknown"}`,
+        );
+        return null;
+    }
+}
+
+async function fetchSeriesTranslationName(
+    seriesId: number,
+    lang: string,
+    availableTranslations: string[],
+    label: string,
+): Promise<string | null> {
+    if (!availableTranslations.includes(lang)) {
+        logApiCall(
+            "TVDB",
+            "getTranslation",
+            { seriesId, lang },
+            "DETAIL",
+            `series ${label} translation skipped: unavailable`,
+        );
+        return null;
+    }
+
+    try {
+        const translationResponse = await tvdbRequest(
+            `/series/${seriesId}/translations/${lang}`,
+            { seriesId, lang },
+            "getTranslation",
+        );
+        const translationData = isRecord(translationResponse?.data) ? translationResponse.data : null;
+        const translatedName = readString(translationData?.name);
+
+        logApiCall(
+            "TVDB",
+            "getTranslation",
+            { seriesId, lang },
+            "DETAIL",
+            translatedName
+                ? `series ${label} translation found: "${translatedName}"`
+                : `series ${label} translation missing: no name`,
+        );
+
+        return translatedName;
+    } catch (error) {
+        logApiCall(
+            "TVDB",
+            "getTranslation",
+            { seriesId, lang },
+            "DETAIL",
+            `series ${label} translation missing: ${error instanceof Error ? error.message : "request failed"}`,
+        );
+        return null;
+    }
+}
+
+async function fetchLocalizedEpisodeTitle(
+    episodeId: number | null,
+    translationPlan: EpisodeTranslationLanguagePlan,
+    defaultTitle: string | null,
+): Promise<string | null> {
+    const { canonicalLanguage, candidates, availableLanguages } = translationPlan;
+
+    if (!defaultTitle) {
+        logApiCall(
+            "TVDB",
+            "getEpisodeTranslation",
+            { episodeId, lang: canonicalLanguage },
+            "DETAIL",
+            `episode translation skipped: no default title available for episodeId=${episodeId ?? "unknown"}, lang=${canonicalLanguage}`,
+        );
+        return null;
+    }
+
+    if (canonicalLanguage === "eng") {
+        logApiCall(
+            "TVDB",
+            "getEpisodeTranslation",
+            { episodeId, lang: canonicalLanguage },
+            "DETAIL",
+            `episode translation skipped: requested lang=${canonicalLanguage}; using default "${defaultTitle}"`,
+        );
+        return defaultTitle;
+    }
+
+    if (episodeId === null) {
+        logApiCall(
+            "TVDB",
+            "getEpisodeTranslation",
+            { episodeId, lang: canonicalLanguage },
+            "DETAIL",
+            `episode translation skipped: missing episodeId for lang=${canonicalLanguage}; fallback default "${defaultTitle}"`,
+        );
+        return defaultTitle;
+    }
+
+    logApiCall(
+        "TVDB",
+        "getEpisodeTranslation",
+        { episodeId, lang: canonicalLanguage },
+        "DETAIL",
+        `langCandidates:${JSON.stringify(candidates)}${
+            availableLanguages.length > 0 ? ` availableLanguages:${JSON.stringify(availableLanguages)}` : ""
+        }`,
+    );
+
+    for (const lang of candidates) {
+        const candidateTitle = await fetchLocalizedEpisodeTitleCandidate(episodeId, lang);
+        if (candidateTitle) {
+            const canonicalSuffix = lang === canonicalLanguage ? "" : `, canonical=${canonicalLanguage}`;
+            logApiCall(
+                "TVDB",
+                "getEpisodeTranslation",
+                { episodeId, lang },
+                "DETAIL",
+                `localized title found for episodeId=${episodeId}, lang=${lang}${canonicalSuffix}: "${candidateTitle}"`,
+            );
+            return candidateTitle;
+        }
+    }
+
+    logApiCall(
+        "TVDB",
+        "getEpisodeTranslation",
+        { episodeId, lang: canonicalLanguage },
+        "DETAIL",
+        `no localized title found for episodeId=${episodeId}, langCandidates:${JSON.stringify(
+            candidates,
+        )}; fallback default "${defaultTitle}"`,
+    );
+    return defaultTitle;
+}
+
+async function fetchLocalizedEpisodeTitleCandidate(episodeId: number, lang: string): Promise<string | null> {
+    try {
+        const translationResponse = await tvdbRequest(
+            `/episodes/${episodeId}/translations/${lang}`,
+            { episodeId, lang },
+            "getEpisodeTranslation",
+            { expectedMissingStatuses: [404] },
+        );
+        const translationData = isRecord(translationResponse?.data) ? translationResponse.data : null;
+        const localizedTitle = readString(translationData?.name);
+
+        if (localizedTitle) {
+            return localizedTitle;
+        }
+
+        logApiCall(
+            "TVDB",
+            "getEpisodeTranslation",
+            { episodeId, lang },
+            "DETAIL",
+            `candidate missing for episodeId=${episodeId}, lang=${lang}: no name`,
+        );
+        return null;
+    } catch (error) {
+        logApiCall(
+            "TVDB",
+            "getEpisodeTranslation",
+            { episodeId, lang },
+            "DETAIL",
+            `candidate unavailable for episodeId=${episodeId}, lang=${lang}: ${
+                error instanceof Error ? error.message : "request failed"
+            }`,
+        );
+        return null;
+    }
+}
+
 export class TvdbProvider implements AnimeProvider {
     readonly name = "tvdb";
+
+    getEpisodeCacheKeyScope(): string {
+        return getTvdbLanguage();
+    }
 
     async searchAnime(title: string, _expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
@@ -862,7 +1612,7 @@ export class TvdbProvider implements AnimeProvider {
         }
     }
 
-    async getAnimeById(id: number): Promise<AnimeInfo | null> {
+    async getAnimeById(id: number, season?: number | null): Promise<AnimeInfo | null> {
         try {
             const response = await tvdbRequest(
                 `/series/${id}/extended`,
@@ -873,76 +1623,53 @@ export class TvdbProvider implements AnimeProvider {
                 "getById",
             );
 
-            const series = response?.data;
+            const series = response?.data as TvdbSeriesRecord | undefined;
             if (!series) return null;
 
             // series.name = original title (Japanese for anime)
-            const titleRomaji = series.name || "";
-            let titleEnglish: string | null = null;
+            const titleRomaji = readString(series.name) || "";
+            let displayTitle: string | null = null;
+            const availableTranslations = readStringArray(series.nameTranslations);
 
             // Always try to get the English title
-            if (series.nameTranslations?.includes("eng")) {
-                try {
-                    const engResponse = await tvdbRequest(
-                        `/series/${id}/translations/eng`,
-                        { seriesId: id, lang: "eng" },
-                        "getTranslation",
-                    );
-                    if (engResponse?.data?.name) {
-                        titleEnglish = engResponse.data.name;
-                    }
-                } catch {
-                    // Fall back to series.name
-                }
-            }
+            displayTitle = await fetchSeriesTranslationName(id, "eng", availableTranslations, "English");
 
             // If TVDB_LANG is not English, also fetch localized name for display
             const lang = getTvdbLanguage();
-            if (lang !== "eng" && series.nameTranslations?.includes(lang)) {
-                try {
-                    const transResponse = await tvdbRequest(
-                        `/series/${id}/translations/${lang}`,
-                        { seriesId: id, lang },
-                        "getTranslation",
-                    );
-                    const translation = transResponse?.data;
-                    if (translation?.name) {
-                        // Use the localized title as the display title
-                        titleEnglish = translation.name;
-                    }
-                } catch {
-                    // Use English title if localized fails
+            if (lang !== "eng") {
+                const localizedName = await fetchSeriesTranslationName(id, lang, availableTranslations, "localized");
+                if (localizedName) {
+                    // Use the localized title as the display title
+                    displayTitle = localizedName;
                 }
             }
 
             // Fallback: if no English title found, use series.name
-            if (!titleEnglish) {
-                titleEnglish = series.name || null;
+            if (!displayTitle) {
+                displayTitle = readString(series.name);
             }
 
             // Get artwork - find poster type
-            let coverUrl: string | null = series.image || null;
+            let coverUrl: string | null = readString(series.image);
             if (series.artworks && series.artworks.length > 0) {
-                // Type 2 = poster in TVDB
-                const poster = series.artworks.find((a: any) => a.type === 2);
-                if (poster?.image) {
-                    coverUrl = poster.image;
-                }
+                coverUrl = selectSeriesPosterUrl(series.artworks) ?? coverUrl;
             }
+            const seasonCoverUrl = await fetchSeasonCoverUrl(id, season, lang, response);
 
             logApiCall(
                 "TVDB",
                 "getById",
                 { id },
                 "DETAIL",
-                `"${titleEnglish || titleRomaji}" (${series.status?.name || "unknown"})`,
+                `"${displayTitle || titleRomaji}" (${series.status?.name || "unknown"})`,
             );
 
             return {
                 id: id,
-                title_english: titleEnglish,
+                title_english: displayTitle,
                 title_romaji: titleRomaji,
                 cover_url: coverUrl,
+                season_cover_url: seasonCoverUrl,
                 total_episodes: undefined, // TVDB doesn't have this in base record
             };
         } catch {
@@ -970,7 +1697,23 @@ export class TvdbProvider implements AnimeProvider {
                 }
             }
 
-            const lookupResult = await lookupEpisodeForSeasonNumber(seriesId, resolvedSeason, episode);
+            const sourceEpisode = normalizeEpisodeNumber(context?.sourceEpisode);
+            const sourceSeason = normalizeEpisodeNumber(context?.sourceSeason);
+            const shouldTrySourcePosition =
+                sourceSeason !== null &&
+                sourceSeason > 0 &&
+                sourceEpisode !== null &&
+                sourceEpisode > 0 &&
+                (sourceSeason !== resolvedSeason || sourceEpisode !== episode);
+            const lookupResult = shouldTrySourcePosition
+                ? ((await lookupEpisodeForMappedSourcePosition(
+                      seriesId,
+                      sourceSeason,
+                      sourceEpisode,
+                      resolvedSeason,
+                      episode,
+                  )) ?? (await lookupEpisodeForSeasonNumber(seriesId, resolvedSeason, episode)))
+                : await lookupEpisodeForSeasonNumber(seriesId, resolvedSeason, episode);
 
             if (!lookupResult) {
                 logApiCall(
@@ -986,32 +1729,30 @@ export class TvdbProvider implements AnimeProvider {
             const selectedEpisode = lookupResult.episode;
             const selectedSeasonType = lookupResult.seasonType;
 
-            let epTitle = selectedEpisode.name || null;
+            let epTitle = readString(selectedEpisode.name);
             const episodeId = normalizeEpisodeNumber(selectedEpisode.id);
 
             // Try to get localized episode title
+            const rawLanguage = config.tvdb.language || "eng";
             const lang = getTvdbLanguage();
-            if (epTitle && lang !== "eng" && episodeId !== null) {
-                try {
-                    const transResponse = await tvdbRequest(
-                        `/episodes/${episodeId}/translations/${lang}`,
-                        { episodeId, lang },
-                        "getEpisodeTranslation",
-                    );
-                    const translation = transResponse?.data;
-                    if (translation?.name) {
-                        epTitle = translation.name;
-                    }
-                } catch {
-                    // Use default name
-                }
-            }
+            const translationPlan = buildEpisodeTranslationLanguagePlan(rawLanguage, lang, selectedEpisode);
+            epTitle = await fetchLocalizedEpisodeTitle(episodeId, translationPlan, epTitle);
 
             if (epTitle) {
+                const finalLogParams = {
+                    id: seriesId,
+                    season: resolvedSeason,
+                    ep: episode,
+                    ...(lookupResult.sourceSeason ? { sourceSeason: lookupResult.sourceSeason } : {}),
+                    ...(lookupResult.sourceEpisode ? { sourceEpisode: lookupResult.sourceEpisode } : {}),
+                    ...(lookupResult.tvdbAbsoluteEpisode
+                        ? { tvdbAbsoluteEpisode: lookupResult.tvdbAbsoluteEpisode }
+                        : {}),
+                };
                 logApiCall(
                     "TVDB",
                     "getEpisode",
-                    { id: seriesId, season: resolvedSeason, ep: episode },
+                    finalLogParams,
                     "DETAIL",
                     `seasonType=${selectedSeasonType || "unknown"} "${epTitle}"`,
                 );
@@ -1023,10 +1764,11 @@ export class TvdbProvider implements AnimeProvider {
         }
     }
 
-    async findSeasonAnime(baseId: number, _targetSeason: number): Promise<AnimeInfo | null> {
+    async findSeasonAnime(baseId: number, targetSeason: number): Promise<AnimeInfo | null> {
         // TVDB groups all seasons under one series, so we just return the base series
-        // The season info is used when fetching episodes
-        return this.getAnimeById(baseId);
+        // The season info is used when fetching episodes and season-specific artwork
+        const anime = await this.getAnimeById(baseId, targetSeason);
+        return anime ? markSeasonAnimeValidated(anime, targetSeason, "provider-season") : null;
     }
 
     async getSequelInfo(_animeId: number): Promise<SequelInfo | null> {

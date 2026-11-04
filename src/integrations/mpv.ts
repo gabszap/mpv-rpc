@@ -5,10 +5,108 @@
  */
 
 import * as net from "node:net";
-import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "./anime";
-import { config } from "./config";
-import { checkSeriesNameOverride } from "./console";
-import { parseFilename } from "./parser";
+import { checkSeriesNameOverride } from "../console";
+import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "../core/anime";
+import { config } from "../core/config";
+import { parseFilename } from "../core/parser";
+import { normalizeTvdbLanguageCode } from "../providers/tvdb";
+import { readStremioPlaybackContext, type StremioPlaybackContext } from "../stremio-sync/context";
+
+/**
+ * Normalize titles for a conservative bridge-context compatibility check.
+ */
+function normalizeStremioIdentityTitle(title: string | null | undefined): string[] {
+    if (!title) {
+        return [];
+    }
+
+    return title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter((token) => token.length > 0);
+}
+
+function titlesHaveSafeTokenOverlap(contextName: string | null, playbackTitle: string): boolean {
+    const contextTokens = normalizeStremioIdentityTitle(contextName);
+    const playbackTokens = normalizeStremioIdentityTitle(playbackTitle);
+    if (contextTokens.length === 0 || playbackTokens.length === 0) {
+        return false;
+    }
+
+    const shorterTokens = contextTokens.length <= playbackTokens.length ? contextTokens : playbackTokens;
+    const longerTokens = new Set(contextTokens.length <= playbackTokens.length ? playbackTokens : contextTokens);
+    const matchingTokens = shorterTokens.filter((token) => longerTokens.has(token)).length;
+
+    return matchingTokens / shorterTokens.length >= 0.8;
+}
+
+function isStremioIdentitySafeForPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+    if (!context.imdbId) {
+        return false;
+    }
+
+    if (context.type === "movie") {
+        return titlesHaveSafeTokenOverlap(context.name, data.series_title);
+    }
+
+    if (context.season === null || context.episode === null) {
+        return false;
+    }
+
+    const isExactPositionMatch = data.season === context.season && data.episode === context.episode;
+    const isEpisodeOnlyMatch = data.season === null && data.episode !== null && data.episode === context.episode;
+    if (!isExactPositionMatch && !isEpisodeOnlyMatch) {
+        return false;
+    }
+
+    return titlesHaveSafeTokenOverlap(context.name, data.series_title);
+}
+
+/**
+ * Read secure Stremio identity fields when the bridge has already captured them.
+ * The context must still be compatible with current playback before its IMDb ID
+ * is copied into MPV data; otherwise a stale bridge context could validate itself.
+ */
+function readProviderIdFromContext(context: StremioPlaybackContext, provider: "mal" | "tvdb" | "kitsu"): number | null {
+    const candidates = [context.libraryItemId, context.seriesId, context.videoId].filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+    for (const val of candidates) {
+        const match = val.match(new RegExp(`(?:^|:)${provider}:(\\d+)(?::|$)`, "i"));
+        if (match) {
+            const num = Number.parseInt(match[1], 10);
+            if (Number.isInteger(num) && num > 0) return num;
+        }
+    }
+    return null;
+}
+
+function readStremioPlaybackIdentity(data: MpvData): {
+    imdbId?: string;
+    type?: "series" | "movie";
+    malId?: number;
+    tvdbId?: number;
+    kitsuId?: number;
+} {
+    const context = readStremioPlaybackContext(Date.now());
+    if (!context || !isStremioIdentitySafeForPlayback(context, data)) {
+        return {};
+    }
+
+    const malId = readProviderIdFromContext(context, "mal");
+    const tvdbId = readProviderIdFromContext(context, "tvdb");
+    const kitsuId = readProviderIdFromContext(context, "kitsu");
+
+    return {
+        ...(context.imdbId ? { imdbId: context.imdbId } : {}),
+        ...(context.type ? { type: context.type } : {}),
+        ...(malId ? { malId } : {}),
+        ...(tvdbId ? { tvdbId } : {}),
+        ...(kitsuId ? { kitsuId } : {}),
+    };
+}
 
 export interface MpvData {
     media_title: string;
@@ -29,8 +127,60 @@ export interface MpvData {
     adjusted_episode: number | null; // Adjusted episode for split cour (null if no overflow)
     imdb_id?: string; // For Stremio sync
     type?: string; // For Stremio sync
+    tvdb_id?: number; // For Stremio fallback tracking
+    kitsu_id?: number; // For Stremio fallback tracking
     playlistPos: number; // Current position in playlist (0-indexed)
     playlistCount: number; // Total number of items in playlist
+}
+
+export function selectCoverImage(
+    animeInfo: { cover_url: string | null; season_cover_url?: string | null },
+    existingCoverImage: string | null = null,
+): string | null {
+    return animeInfo.season_cover_url ?? animeInfo.cover_url ?? existingCoverImage;
+}
+
+interface RuntimeEpisodeTitleResolutionInput {
+    currentEpisodeTitle: string | null;
+    episode: number | null;
+    metadataSourceProvider: string | null;
+    tvdbLanguage: string;
+    fetchEpisodeTitle: () => Promise<string | null>;
+}
+
+export function shouldPreferTvdbLocalizedEpisodeTitle(
+    metadataSourceProvider: string | null,
+    tvdbLanguage: string,
+): boolean {
+    if (metadataSourceProvider !== "tvdb") {
+        return false;
+    }
+
+    return normalizeTvdbLanguageCode(tvdbLanguage) !== "eng";
+}
+
+export async function resolveRuntimeEpisodeTitle({
+    currentEpisodeTitle,
+    episode,
+    metadataSourceProvider,
+    tvdbLanguage,
+    fetchEpisodeTitle,
+}: RuntimeEpisodeTitleResolutionInput): Promise<string | null> {
+    if (episode === null || episode < 1) {
+        return currentEpisodeTitle;
+    }
+
+    const hasParsedEpisodeTitle = Boolean(currentEpisodeTitle?.trim());
+    const shouldFetchMissingTitle = !hasParsedEpisodeTitle;
+    const shouldRefreshLocalizedTvdbTitle =
+        hasParsedEpisodeTitle && shouldPreferTvdbLocalizedEpisodeTitle(metadataSourceProvider, tvdbLanguage);
+
+    if (!shouldFetchMissingTitle && !shouldRefreshLocalizedTvdbTitle) {
+        return currentEpisodeTitle;
+    }
+
+    const fetchedEpisodeTitle = await fetchEpisodeTitle();
+    return fetchedEpisodeTitle || currentEpisodeTitle;
 }
 
 let socket: net.Socket | null = null;
@@ -336,6 +486,7 @@ export async function getMpvData(): Promise<MpvData | null> {
         let malId: number | null = null;
         let totalEpisodes: number | null = null;
         let adjustedEpisode: number | null = null;
+        let metadataSourceProvider: string | null = null;
         const originalTitle = parsed.series_title; // Keep original for episode lookup
 
         // Check for manual series name override (rename command)
@@ -353,7 +504,8 @@ export async function getMpvData(): Promise<MpvData | null> {
                 if (animeResult) {
                     const animeInfo = animeResult.animeInfo;
                     const sourceProvider = animeResult.sourceProvider;
-                    coverImage = animeInfo.cover_url;
+                    metadataSourceProvider = sourceProvider;
+                    coverImage = selectCoverImage(animeInfo);
                     malId = animeInfo.mal_id || null;
                     totalEpisodes = animeInfo.total_episodes || null;
 
@@ -375,7 +527,7 @@ export async function getMpvData(): Promise<MpvData | null> {
                             totalEpisodes = overflowResult.animeInfo.total_episodes || null;
                             adjustedEpisode = overflowResult.adjustedEpisode;
                             // Update display info to show the correct cour
-                            coverImage = overflowResult.animeInfo.cover_url || coverImage;
+                            coverImage = selectCoverImage(overflowResult.animeInfo, coverImage);
                             // Update series title to reflect the resolved cour
                             if (titlePref === "english") {
                                 seriesTitle =
@@ -410,21 +562,26 @@ export async function getMpvData(): Promise<MpvData | null> {
                     // If "none" without rename, keep the original filename title
                 }
 
-                // Get episode title if not in filename
-                // Use override name when available, otherwise original title
-                if (!episodeTitle && parsed.episode) {
+                // Get episode title when it is missing, or refresh a parsed title
+                // when TVDB is the metadata source and a localized language is configured.
+                // Use override name when available, otherwise original title.
+                if (parsed.episode !== null) {
+                    const parsedEpisode = parsed.episode;
                     const episodeLookupTitle = renameOverride?.overrideName ?? originalTitle;
-                    const epTitle = await getEpisodeTitle(episodeLookupTitle, parsed.season, parsed.episode);
-                    if (epTitle) {
-                        episodeTitle = epTitle;
-                    }
+                    episodeTitle = await resolveRuntimeEpisodeTitle({
+                        currentEpisodeTitle: episodeTitle,
+                        episode: parsedEpisode,
+                        metadataSourceProvider,
+                        tvdbLanguage: config.tvdb.language,
+                        fetchEpisodeTitle: () => getEpisodeTitle(episodeLookupTitle, parsed.season, parsedEpisode),
+                    });
                 }
             } catch (e) {
                 console.error("[MPV] Error fetching anime metadata:", e);
             }
         }
 
-        return {
+        const mpvData: MpvData = {
             media_title: parsed.full_title,
             series_title: seriesTitle,
             season: parsed.season,
@@ -443,6 +600,16 @@ export async function getMpvData(): Promise<MpvData | null> {
             adjusted_episode: adjustedEpisode,
             playlistPos: typeof playlistPos === "number" ? playlistPos : 0,
             playlistCount: typeof playlistCount === "number" ? playlistCount : 0,
+        };
+        const stremioIdentity = readStremioPlaybackIdentity(mpvData);
+
+        return {
+            ...mpvData,
+            imdb_id: stremioIdentity.imdbId,
+            type: stremioIdentity.type,
+            mal_id: mpvData.mal_id || stremioIdentity.malId || null,
+            tvdb_id: mpvData.tvdb_id || stremioIdentity.tvdbId,
+            kitsu_id: mpvData.kitsu_id || stremioIdentity.kitsuId,
         };
     } catch (e) {
         console.error("[MPV] Error getting data:", e);

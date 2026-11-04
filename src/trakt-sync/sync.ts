@@ -5,8 +5,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { config } from "../config";
-import type { MpvData } from "../mpv";
+import { config } from "../core/config";
+import type { MpvData } from "../integrations/mpv";
 import { mapTvdbAiredEpisodeToAbsolute } from "../providers/tvdb";
 import { readStremioPlaybackContext } from "../stremio-sync/context";
 import { getCanonicalEpisodePosition, isPlaybackContextMatchingData } from "../stremio-sync/identity";
@@ -1062,7 +1062,6 @@ async function stopCurrentScrobbleOnce(): Promise<void> {
     try {
         const success = await scrobbleStop(episode, show, progress);
         if (success) {
-            // Warn user if progress is below threshold
             const threshold = config.trakt.syncThreshold;
             if (progress >= threshold) {
                 recordSyncSuccess(show.ids.trakt, episode.number, episode.season);

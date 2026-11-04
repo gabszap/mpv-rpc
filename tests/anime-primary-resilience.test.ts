@@ -10,7 +10,7 @@ const fallbackKitsuSearchAnimeMock = vi.fn();
 const fallbackKitsuGetAnimeByIdMock = vi.fn();
 const fallbackKitsuGetEpisodeTitleMock = vi.fn();
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         metadataProvider: "jikan",
         tvdb: {
@@ -119,7 +119,7 @@ describe("Anime provider resilience", () => {
 
         fallbackKitsuGetEpisodeTitleMock.mockResolvedValueOnce("To You, in 2000 Years");
 
-        const { getEpisodeTitle } = await import("../src/anime");
+        const { getEpisodeTitle } = await import("../src/core/anime");
         const title = await getEpisodeTitle("Attack on Titan", 1, 1);
 
         expect(title).toBe("To You, in 2000 Years");
@@ -158,7 +158,7 @@ describe("Anime provider resilience", () => {
 
         const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-        const { getAnimeInfo } = await import("../src/anime");
+        const { getAnimeInfo } = await import("../src/core/anime");
 
         try {
             await expect(getAnimeInfo("Attack on Titan", 1)).resolves.toBeNull();
@@ -175,7 +175,7 @@ describe("Anime provider resilience", () => {
         primaryJikanSearchAnimeMock.mockResolvedValue(null);
         fallbackKitsuSearchAnimeMock.mockResolvedValue(null);
 
-        const { getAnimeInfo } = await import("../src/anime");
+        const { getAnimeInfo } = await import("../src/core/anime");
 
         await expect(getAnimeInfo("Attack on Titan", 1)).resolves.toBeNull();
         await expect(getAnimeInfo("Attack on Titan", 1)).resolves.toBeNull();

@@ -5,18 +5,20 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { MpvData } from "../integrations/mpv";
+import { readStremioPlaybackContext } from "../stremio-sync/context";
+import { normalizeTitle } from "../trakt-sync/api";
 import { resolveCanonicalSplitPartEpisode } from "./canonical-episode";
 import { config } from "./config";
-import type { MpvData } from "./mpv";
-import { normalizeTitle } from "./trakt-sync/api";
 
 // Shared config file path (same as bridge uses)
-const CONFIG_PATH = path.resolve(__dirname, "..", ".config", ".stremio-mpv-config.json");
+const CONFIG_PATH = path.join(process.cwd(), ".config", ".stremio-mpv-config.json");
 
 // Deduplication state
 let lastTriggerKey: string | null = null;
 let lastFilename: string | null = null;
-let lastTriggerTime = 0;
+let isAutoFetchArmed = true;
+const lastAttemptByEpisodeKey = new Map<string, number>();
 
 // Single-flight: tracks in-flight requests keyed by current episode identity.
 // Prevents two concurrent `update()` ticks from both passing the gate and
@@ -25,7 +27,8 @@ let lastTriggerTime = 0;
 const autoFetchInFlight = new Set<string>();
 
 // Cooldown between trigger attempts (success or failure) to prevent spam
-const TRIGGER_COOLDOWN_MS = 30_000;
+const TRIGGER_COOLDOWN_MS = 60_000;
+const AUTO_FETCH_THRESHOLD_PERCENT = 80;
 
 /**
  * Build a stable key identifying the current episode the user is watching.
@@ -43,18 +46,22 @@ export function buildCurrentEpisodeKey(data: MpvData): string {
 }
 
 interface StremioMeta {
-    imdbId?: string;
-    seriesId?: string;
-    name?: string;
-    season?: number;
-    episode?: number;
-    type?: string;
+    imdbId?: string | null;
+    seriesId?: string | null;
+    name?: string | null;
+    season?: number | null;
+    episode?: number | null;
+    type?: string | null;
+    libraryItemId?: string | null;
+    videoId?: string | null;
+    episodesInSeason?: number | null;
 }
 
 interface SharedConfig {
     stremioMeta?: StremioMeta;
     autoFetch?: { enabled?: boolean };
     extraEpisodes?: number;
+    providers?: unknown[];
     [key: string]: unknown;
 }
 
@@ -70,12 +77,16 @@ type CompleteEpisodePosition = {
 
 type AutoFetchBridgeResponse = {
     success?: boolean;
-    status?: "completed" | "in_progress";
+    status?: "completed" | "in_progress" | "no_new_episodes_recently" | "no_released_episodes";
     added?: number;
     skippedInFlight?: number;
     skippedCompleted?: number;
+    skippedNotFound?: number;
     skippedPlaylist?: number;
+    skippedUnreleased?: number;
+    newlyNotFound?: number;
     error?: string;
+    message?: string;
 };
 
 function isAutoFetchEnabled(sharedConfig: SharedConfig): boolean {
@@ -198,11 +209,6 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
         return;
     }
 
-    // Guard: not on last episode or not near end
-    if (data.playlistPos !== data.playlistCount - 1 || data.percent_pos < 80) {
-        return;
-    }
-
     // Guard: feature disabled
     if (!config.autoFetch.enabled) {
         return;
@@ -214,7 +220,19 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
     if (lastFilename !== data.filename) {
         lastTriggerKey = null;
         autoFetchInFlight.clear();
+        lastAttemptByEpisodeKey.clear();
+        isAutoFetchArmed = true;
         lastFilename = data.filename;
+    }
+
+    const isLastPlaylistItem = data.playlistPos === data.playlistCount - 1;
+    if (!isLastPlaylistItem || data.percent_pos < AUTO_FETCH_THRESHOLD_PERCENT) {
+        if (data.percent_pos < AUTO_FETCH_THRESHOLD_PERCENT && !isAutoFetchArmed) {
+            isAutoFetchArmed = true;
+            lastTriggerKey = null;
+            console.log("[DETAIL] auto-fetch armed: user left threshold");
+        }
+        return;
     }
 
     // Single-flight guard: if a request for this exact episode identity is
@@ -222,18 +240,27 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
     // closes the race that the 30s cooldown cannot (cooldown only blocks
     // sequential calls, not two ticks that arrive within the same window).
     const currentKey = buildCurrentEpisodeKey(data);
+    if (!isAutoFetchArmed) {
+        return;
+    }
+
+    isAutoFetchArmed = false;
+
     if (autoFetchInFlight.has(currentKey)) {
         console.debug?.(`[AutoFetch] Skipped duplicate in-flight request: ${currentKey}`);
         return;
     }
 
-    // Guard: cooldown active (prevents spam when bridge is down)
-    if (Date.now() - lastTriggerTime < TRIGGER_COOLDOWN_MS) {
+    const now = Date.now();
+    const lastEpisodeAttemptTime = lastAttemptByEpisodeKey.get(currentKey);
+
+    // Guard: per-episode cooldown active (prevents spam regardless of bridge response)
+    if (lastEpisodeAttemptTime !== undefined && now - lastEpisodeAttemptTime < TRIGGER_COOLDOWN_MS) {
         return;
     }
 
     // Mark attempt started to prevent spam from any subsequent failure
-    lastTriggerTime = Date.now();
+    lastAttemptByEpisodeKey.set(currentKey, now);
 
     // Deduplication: skip if already triggered for this episode position
     const triggerKey = `${data.filename}:${data.playlistPos}`;
@@ -258,7 +285,8 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
             return;
         }
 
-        const stremioMeta = sharedConfig.stremioMeta;
+        const playbackContext = readStremioPlaybackContext(data);
+        const stremioMeta = playbackContext ?? sharedConfig.stremioMeta;
         if (!stremioMeta?.imdbId || !stremioMeta.name) {
             console.warn("[AutoFetch] No Stremio metadata in shared config. Skipping auto-fetch.");
             return;
@@ -321,13 +349,19 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
 
         // Trigger auto-fetch
         const extraEpisodes = sharedConfig.extraEpisodes ?? 2;
+        const configuredProviders = Array.isArray(sharedConfig.providers) ? sharedConfig.providers : undefined;
         const requestBody = {
             imdbId: stremioMeta.imdbId,
             name: stremioMeta.name,
             season,
             episode,
             type: stremioMeta.type || "series",
+            libraryItemId: stremioMeta.libraryItemId,
+            seriesId: stremioMeta.seriesId,
+            videoId: stremioMeta.videoId,
+            episodesInSeason: stremioMeta.episodesInSeason,
             extraEpisodes,
+            ...(configuredProviders ? { providers: configuredProviders } : {}),
         };
 
         if (config.syncDryRun) {
@@ -356,10 +390,36 @@ export async function checkAndTriggerAutoFetch(data: MpvData): Promise<void> {
             if (result.status === "in_progress") {
                 const skippedCount = result.skippedInFlight ?? 0;
                 console.log(`[AutoFetch] Auto-fetch already in progress for ${skippedCount} target episode(s).`);
-            } else {
+                lastTriggerKey = triggerKey;
+            } else if (result.status === "no_new_episodes_recently") {
+                const skippedCount = result.skippedNotFound ?? 0;
+                console.log(
+                    `[AutoFetch] No new released episodes recently; bridge skipped ${skippedCount} cached missing target(s).`,
+                );
+                lastTriggerKey = triggerKey;
+            } else if (result.status === "no_released_episodes") {
+                if ((result.skippedUnreleased ?? 0) > 0) {
+                    console.log(
+                        `[DETAIL] target not released, skipping auto-fetch (${result.skippedUnreleased ?? 0} target episode(s))`,
+                    );
+                    lastTriggerKey = triggerKey;
+                    return;
+                }
+
+                const missingCount = result.newlyNotFound ?? result.skippedNotFound ?? 0;
+                console.log(
+                    `[AutoFetch] No released episodes found on enabled providers; cached ${missingCount} missing target(s) for retry later.`,
+                );
+                lastTriggerKey = triggerKey;
+            } else if ((result.added ?? 0) > 0) {
                 console.log(`[AutoFetch] Added ${result.added ?? 0} episode(s) to playlist.`);
+                lastTriggerKey = triggerKey;
+            } else {
+                console.log(
+                    result.message ? `[AutoFetch] ${result.message}` : "[AutoFetch] No new episodes were added.",
+                );
+                lastTriggerKey = triggerKey;
             }
-            lastTriggerKey = triggerKey;
         } else {
             console.error(`[AutoFetch] Bridge returned error: ${result.error}`);
         }

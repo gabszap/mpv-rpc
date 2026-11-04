@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { config } from "../src/config";
-import type { MpvData } from "../src/mpv";
+import { config } from "../src/core/config";
+import type { MpvData } from "../src/integrations/mpv";
 
 // Mock config so autoFetch.enabled is predictable.
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         syncDryRun: false,
         autoFetch: {
@@ -32,6 +32,8 @@ vi.mock("node:fs", async () => {
     };
 });
 
+const ENABLED_PROVIDERS = [{ id: "torrentio", name: "Torrentio", url: "https://provider.example", enabled: true }];
+
 const SHARED_CONFIG = {
     stremioMeta: {
         imdbId: "tt1234567",
@@ -41,6 +43,7 @@ const SHARED_CONFIG = {
         type: "series",
     },
     extraEpisodes: 2,
+    providers: ENABLED_PROVIDERS,
 };
 
 function makeMpvData(overrides: Partial<MpvData> = {}): MpvData {
@@ -75,9 +78,9 @@ function mockJsonResponse(body: unknown, status = 200): Response {
     });
 }
 
-async function importAutoFetchModule(): Promise<typeof import("../src/auto-fetch")> {
+async function importAutoFetchModule(): Promise<typeof import("../src/core/auto-fetch")> {
     vi.resetModules();
-    return import("../src/auto-fetch");
+    return import("../src/core/auto-fetch");
 }
 
 describe("buildCurrentEpisodeKey", () => {
@@ -159,6 +162,18 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         expect(autoFetchCall).toBeDefined();
     });
 
+    it("sends configured providers with the auto-fetch request", async () => {
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(makeMpvData());
+
+        const autoFetchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/auto-fetch"));
+        expect(autoFetchCall).toBeDefined();
+        const request = autoFetchCall?.[1] as RequestInit;
+        expect(JSON.parse(String(request.body))).toMatchObject({
+            providers: ENABLED_PROVIDERS,
+        });
+    });
+
     it("logs bridge in-progress responses without saying zero episodes were added", async () => {
         const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
         fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
@@ -180,6 +195,133 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         );
         expect(consoleLogSpy).not.toHaveBeenCalledWith("[AutoFetch] Added 0 episode(s) to playlist.");
         consoleLogSpy.mockRestore();
+    });
+
+    it("logs recently missing auto-fetch targets without saying zero episodes were added", async () => {
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input.toString();
+            if (url.endsWith("/health")) {
+                return mockJsonResponse({ status: "ok" });
+            }
+            if (url.endsWith("/auto-fetch")) {
+                return mockJsonResponse({
+                    success: true,
+                    status: "no_new_episodes_recently",
+                    added: 0,
+                    skippedNotFound: 2,
+                });
+            }
+            return mockJsonResponse({}, 404);
+        });
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(makeMpvData());
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            "[AutoFetch] No new released episodes recently; bridge skipped 2 cached missing target(s).",
+        );
+        expect(consoleLogSpy).not.toHaveBeenCalledWith("[AutoFetch] Added 0 episode(s) to playlist.");
+        consoleLogSpy.mockRestore();
+    });
+
+    it("logs newly confirmed unreleased auto-fetch targets without saying zero episodes were added", async () => {
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input.toString();
+            if (url.endsWith("/health")) {
+                return mockJsonResponse({ status: "ok" });
+            }
+            if (url.endsWith("/auto-fetch")) {
+                return mockJsonResponse({
+                    success: true,
+                    status: "no_released_episodes",
+                    added: 0,
+                    newlyNotFound: 2,
+                });
+            }
+            return mockJsonResponse({}, 404);
+        });
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(makeMpvData());
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            "[AutoFetch] No released episodes found on enabled providers; cached 2 missing target(s) for retry later.",
+        );
+        expect(consoleLogSpy).not.toHaveBeenCalledWith("[AutoFetch] Added 0 episode(s) to playlist.");
+        consoleLogSpy.mockRestore();
+    });
+
+    it("does not refire while playback stays above the threshold", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+
+        try {
+            const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+
+            fetchMock.mockClear();
+            vi.setSystemTime(new Date("2026-06-12T00:02:00.000Z"));
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 96 }));
+
+            expect(fetchMock).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("re-arms after playback drops below the threshold and crosses back above it", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+
+        try {
+            const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 50 }));
+            fetchMock.mockClear();
+
+            vi.setSystemTime(new Date("2026-06-12T00:01:01.000Z"));
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps a per-episode cooldown floor after bridge no-release responses", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
+        fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input.toString();
+            if (url.endsWith("/health")) {
+                return mockJsonResponse({ status: "ok" });
+            }
+            if (url.endsWith("/auto-fetch")) {
+                return mockJsonResponse({ success: true, status: "no_released_episodes", newlyNotFound: 2 });
+            }
+            return mockJsonResponse({}, 404);
+        });
+
+        try {
+            const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 50 }));
+            fetchMock.mockClear();
+
+            vi.setSystemTime(new Date("2026-06-12T00:00:30.000Z"));
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 95 }));
+
+            expect(fetchMock).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("uses Stremio metadata season and episode for split-part playback", async () => {
@@ -404,9 +546,10 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         expect(autoFetchCalls).toHaveLength(1);
     });
 
-    it("releases the in-flight slot on fetch failure so retries can proceed", async () => {
-        // Use fake timers to bypass the 30s cooldown between calls.
+    it("releases the in-flight slot on fetch failure so re-armed retries can proceed", async () => {
+        // Use fake timers to cross the re-arm and 60s cooldown gates deterministically.
         vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-12T00:00:00.000Z"));
         try {
             // First call: bridge health returns 500 → triggers nothing.
             fetchMock.mockImplementation(async () => mockJsonResponse({}, 500));
@@ -416,8 +559,9 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
             await checkAndTriggerAutoFetch(data);
             expect(fetchMock).toHaveBeenCalledTimes(1); // health only
 
-            // Advance past the 30s cooldown.
-            vi.advanceTimersByTime(31_000);
+            // Drop below the threshold to re-arm, then advance past the cooldown.
+            await checkAndTriggerAutoFetch(makeMpvData({ percent_pos: 50 }));
+            vi.setSystemTime(new Date("2026-06-12T00:01:01.000Z"));
 
             // Now mock a healthy bridge + successful auto-fetch.
             fetchMock.mockClear();

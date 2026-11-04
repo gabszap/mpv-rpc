@@ -23,6 +23,7 @@ Project progress and planned features for mpv-rpc.
 - [ ] Graphical interface (GUI) for configuration
 - [ ] Mini Mode (show only filename without metadata fetch)
 - [ ] Usage statistics dashboard
+- [ ] Semantic embedding search for fuzzy anime title matching (SBERT/all-MiniLM-L6-v2)
 
 ---
 

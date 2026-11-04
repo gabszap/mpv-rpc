@@ -6,7 +6,7 @@ Discord Rich Presence for MPV Media Player with anime metadata, optional watch s
   <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?style=for-the-badge&color=22c55e" alt="Version">
   <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?filename=stremio-mpv-bridge%2Fpackage.json&style=for-the-badge&label=bridge&color=8b5cf6" alt="Bridge Version">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white&style=for-the-badge" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white&style=for-the-badge" alt="Windows">
+  <img src="https://custom-icon-badges.demolab.com/badge/Windows-0078D6?logo=windows11&logoColor=white&style=for-the-badge" alt="Windows">
   <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" alt="Linux">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License">
 </p>
@@ -151,6 +151,8 @@ Full guide: [Stremio MPV Bridge Guide](docs/stremio-mpv-bridge.md)
 
 Tokens and Stremio context are stored under `.config/`, which is ignored by git.
 
+Some anime sync mappings use TheTVDB to safely convert aired/default season+episode numbers to absolute episode numbers, even when `METADATA_PROVIDER` is not `tvdb`. Set `TVDB_API_KEY` for those cases; without it, ambiguous syncs are skipped rather than guessed.
+
 ## Filename parsing
 
 The parser tries the safest available method in this order:
@@ -225,7 +227,7 @@ If you change `PORT`, update `CONFIG.SERVER_URL` inside `stremio-mpv-bridge/stre
 | Variable | Default | Description |
 | --- | --- | --- |
 | `METADATA_PROVIDER` | `jikan` | Metadata provider: `jikan`, `anilist`, `kitsu`, or `tvdb` |
-| `TVDB_API_KEY` | empty | TheTVDB API key, required when using `tvdb` as the primary provider |
+| `TVDB_API_KEY` | empty | TheTVDB API key, required when using `tvdb` as the primary provider and for safe sync episode order mapping |
 | `TVDB_LANG` | `eng` | TheTVDB language code for episode metadata |
 | `USE_GUESSIT_API` | `true` | Use HTTP GuessIt parsing before local CLI fallback |
 | `GUESSIT_API_URL` | empty in code, public endpoint in `.env.example` | GuessIt API endpoint |
@@ -262,6 +264,8 @@ The Auto-Fetch feature has two independent gates:
 
 Both must be `true` for auto-fetch to fire. The `.env` gate is the global kill switch; the bridge toggle is per-instance fine control.
 
+**TL;DR:** In practice, you usually only need to disable Auto-Fetch in the bridge settings. Set `AUTO_FETCH=false` only when you want a global kill switch.
+
 ## How it works
 
 ```text
@@ -290,6 +294,22 @@ Stremio Web userscript
 | Romaji title | English title | Filename fallback |
 | :---: | :---: | :---: |
 | ![Romaji title mode](assets/romaji.png) | ![English title mode](assets/english.png) | ![Filename mode](assets/filename.png) |
+
+> Filename means the anime title is taken from the filename (no metadata provider used)
+### Localized episode titles (TVDB)
+> Note: localized episode titles are only available for TVDB metadata provider
+
+| English | Portuguese | Spanish |
+| :---: | :---: | :---: |
+| ![English episode title](assets/english.png) | ![Portuguese episode title](assets/portuguese.png) | ![Spanish episode title](assets/spanish.png) |
+
+| French | German | Italian |
+| :---: | :---: | :---: |
+| ![French episode title](assets/french.png) | ![German episode title](assets/german.png) | ![Italian episode title](assets/italian.png) |
+
+| Russian | Chinese | Japanese |
+| :---: | :---: | :---: |
+| ![Russian episode title](assets/russian.png) | ![Chinese episode title](assets/chinese.png) | ![Japanese episode title](assets/japanese.png) |
 
 ### Privacy mode
 

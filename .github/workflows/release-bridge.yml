@@ -10,7 +10,7 @@ on:
             # runs when shared release tooling changes trigger the root pipeline.
             - "stremio-mpv-bridge/**"
             - "docs/stremio-mpv-bridge.md"
-            - "release.bridge.config.js"
+            - "semantic-release/release.bridge.config.js"
 
 permissions:
     contents: write

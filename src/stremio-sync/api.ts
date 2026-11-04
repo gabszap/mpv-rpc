@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import axios from "axios";
-import { config } from "../config";
+import { config } from "../core/config";
 
 const STREMIO_API_BASE_URL = "https://api.strem.io/api";
 const API_LOG_PATH = path.join(process.cwd(), ".anime_cache", "stremio_api_log.txt");

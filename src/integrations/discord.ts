@@ -3,9 +3,9 @@
  */
 
 import { Client } from "@xhayper/discord-rpc";
-import { config } from "./config";
-import { createEpisodeContext, resolveDisplayTitle } from "./console";
-import { ActivityType, Assets } from "./functions/types";
+import { createEpisodeContext, resolveDisplayTitle } from "../console";
+import { config } from "../core/config";
+import { ActivityType, Assets } from "../functions/types";
 import type { MpvData } from "./mpv";
 
 let client: Client | null = null;
@@ -136,7 +136,15 @@ export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}
     const displayEpisode = data.adjusted_episode ?? data.episode;
 
     // Create episode context for override resolution
-    const episodeContext = createEpisodeContext(data.filename, data.series_title, data.season, displayEpisode);
+    // Pass resolved S/E as the main id and parsed S/E as the anchor
+    const episodeContext = createEpisodeContext(
+        data.filename,
+        data.series_title,
+        data.season,
+        displayEpisode,
+        data.season,
+        data.episode,
+    );
 
     // Resolve episode title with potential manual override
     const { title: episodeTitle, isOverride } = resolveDisplayTitle(data.episode_title || "", episodeContext);
@@ -259,7 +267,15 @@ export async function setActivity(data: MpvData): Promise<void> {
     const displayEpisode = data.adjusted_episode ?? data.episode;
 
     // Create episode context and resolve any manual override
-    const episodeContext = createEpisodeContext(data.filename, data.series_title, data.season, displayEpisode);
+    // Pass resolved S/E as the main id and parsed S/E as the anchor
+    const episodeContext = createEpisodeContext(
+        data.filename,
+        data.series_title,
+        data.season,
+        displayEpisode,
+        data.season,
+        data.episode,
+    );
     const { title: resolvedEpisodeTitle } = resolveDisplayTitle(data.episode_title || "", episodeContext);
 
     // Build state string

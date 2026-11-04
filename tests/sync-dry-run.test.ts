@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MpvData } from "../src/mpv";
+import type { MpvData } from "../src/integrations/mpv";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -102,7 +102,7 @@ const SHARED_CONFIG = {
  * Set the config mock to a specific syncDryRun value.
  */
 function setConfigSyncDryRun(syncDryRun: boolean): void {
-    vi.doMock("../src/config", () => ({
+    vi.doMock("../src/core/config", () => ({
         config: {
             syncDryRun,
             stremio: {
@@ -126,7 +126,7 @@ function setConfigSyncDryRun(syncDryRun: boolean): void {
 }
 
 afterEach(() => {
-    vi.doUnmock("../src/config");
+    vi.doUnmock("../src/core/config");
     vi.resetModules();
 });
 
@@ -149,7 +149,9 @@ describe("Trakt scrobble dry-run", () => {
                     get: vi.fn(),
                     post: axiosPostMock,
                 }),
+                isAxiosError: () => false,
             },
+            isAxiosError: () => false,
         }));
 
         // Mock trakt-sync/auth so getAccessToken returns a valid token.
@@ -368,7 +370,7 @@ describe("Auto-Fetch dry-run", () => {
     it("checkAndTriggerAutoFetch with dry-run=true: auto-fetch POST is NOT called, log emitted", async () => {
         setConfigSyncDryRun(true);
         vi.resetModules();
-        const { checkAndTriggerAutoFetch } = await import("../src/auto-fetch");
+        const { checkAndTriggerAutoFetch } = await import("../src/core/auto-fetch");
 
         await checkAndTriggerAutoFetch(makeMpvData());
 
@@ -383,7 +385,7 @@ describe("Auto-Fetch dry-run", () => {
     it("checkAndTriggerAutoFetch with dry-run=false: auto-fetch POST IS called (control)", async () => {
         setConfigSyncDryRun(false);
         vi.resetModules();
-        const { checkAndTriggerAutoFetch } = await import("../src/auto-fetch");
+        const { checkAndTriggerAutoFetch } = await import("../src/core/auto-fetch");
 
         await checkAndTriggerAutoFetch(makeMpvData());
 

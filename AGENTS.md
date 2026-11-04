@@ -33,13 +33,19 @@ The intent of this file is to keep work safe, reproducible, and easy to troubles
 - **Parser fallback order (do not reorder):**
   - GuessIt API → local GuessIt CLI → regex fallback
 
-- **`.env` loading must remain compatible with `src/config.ts`:**
+- **`.env` loading must remain compatible with `src/core/config.ts`:**
   - use `dotenv` as the official loader
   - keep fallback behavior when `.env` is missing or partial
 
-- **MPV IPC defaults must remain platform‑correct (`src/config.ts`):**
+- **MPV IPC defaults must remain platform‑correct (`src/core/config.ts`):**
   - Windows: `\\.\pipe\mpv`
   - Unix (Linux/macOS): `/tmp/mpv-socket`
+
+- **Equivalent video quality aliases must remain consistent (`stremio-mpv-bridge/`):**
+  - Scoring and matching in both `server.js` and `stremio-mpv.user.js` must resolve equivalent terms (e.g., `4K` ↔ `2160p`, `2K` ↔ `1440p`, `FHD` ↔ `1080p`, `HD` ↔ `720p`) to prevent quality filtering from failing or falling back to lower resolution streams.
+
+- **Start script (`npm run start:all`) must bypass npm spawn overhead:**
+  - The script must execute the direct node commands (`node dist/index.js` and `node stremio-mpv-bridge/server.js`) without intermediate `npm run` task chaining, keeping boot time under ~6 seconds.
 
 ---
 
@@ -166,11 +172,11 @@ npm run bridge
 ### High-level runtime data flow
 
 1) **MPV → IPC**
-   - `src/mpv.ts` connects to MPV’s IPC server and fetches playback state.
+   - `src/integrations/mpv.ts` connects to MPV’s IPC server and fetches playback state.
    - IPC path defaults are OS-specific (see Non‑Negotiables).
 
 2) **Parser → episode context**
-   - `src/parser.ts` extracts:
+   - `src/core/parser.ts` extracts:
      - series title
      - season (optional)
      - episode (optional)
@@ -178,10 +184,10 @@ npm run bridge
      1. GuessIt API
      2. GuessIt CLI
      3. Regex fallback
-   - `src/parser.ts` also exposes parser availability checks.
+   - `src/core/parser.ts` also exposes parser availability checks.
 
 3) **Metadata resolution → providers + caching**
-   - `src/anime.ts` calls the configured provider (from `src/config.ts`).
+   - `src/core/anime.ts` calls the configured provider (from `src/core/config.ts`).
    - Providers implement `AnimeProvider` (`src/providers/types.ts`).
    - Resolution strategy:
      - Use primary provider for anime + episode titles.
@@ -197,7 +203,7 @@ npm run bridge
 4) **Discord + MAL sync**
    - `src/index.ts` orchestrates the periodic update loop:
      - pull MPV state
-     - update Discord activity (`src/discord.ts`)
+     - update Discord activity (`src/integrations/discord.ts`)
      - optionally trigger MAL sync (`src/mal-sync/`)
    - MAL sync triggers only when:
      - `MAL_SYNC=true`
@@ -213,17 +219,17 @@ npm run bridge
 ### Critical files by change type
 
 - **Parser changes / filename detection**
-  - edit: `src/parser.ts`
+  - edit: `src/core/parser.ts`
   - validate: `tests/parser.test.ts`
   - keep: GuessIt API → GuessIt CLI → regex fallback order
 
 - **Provider logic / search matching / resilience**
-  - edit: `src/anime.ts`, `src/providers/*`, `src/providers/types.ts`
+  - edit: `src/core/anime.ts`, `src/providers/*`, `src/providers/types.ts`
   - validate: provider/anime tests under `tests/`
   - note: caching can mask fixes; see Troubleshooting → Cache
 
 - **Env variables / defaults / configuration**
-  - edit: `src/config.ts`, `.env.example`
+  - edit: `src/core/config.ts`, `.env.example`
   - keep: `dotenv`-based `.env` loading behavior
   - keep: IPC default paths
 
@@ -236,6 +242,10 @@ npm run bridge
   - edit: `stremio-mpv-bridge/`
   - validate: bridge tests under `tests/` (if applicable)
   - keep: endpoint expectations `/health` + `/play` (see playbook)
+
+- **Semantic-Release configuration updates**
+  - edit: `semantic-release/`
+  - keep: explicit `-e ./semantic-release/release.config.js` configuration path in `package.json` release scripts
 
 ---
 
@@ -298,7 +308,7 @@ Symptoms:
 
 Expected behavior:
 
-- If the **primary provider** errors, `src/anime.ts` attempts other providers in order.
+- If the **primary provider** errors, `src/core/anime.ts` attempts other providers in order.
 - For **episode titles**, fallbacks are attempted when the primary returns no data or fails.
 
 Checklist:
@@ -337,10 +347,10 @@ Debug steps:
 
 Where to fix:
 
-- If the extracted title/season is wrong: `src/parser.ts`.
+- If the extracted title/season is wrong: `src/core/parser.ts`.
 - If the extracted title is correct but provider picks the wrong series:
   - provider search/ranking logic in `src/providers/*`
-  - resolution + fallback logic in `src/anime.ts`
+  - resolution + fallback logic in `src/core/anime.ts`
 
 ### C) MAL sync not triggering
 
@@ -369,7 +379,7 @@ Diagnostics flow (what to look for):
 If MAL ID is missing:
 
 - The metadata provider may not return MAL IDs (depending on provider and mapping).
-- `src/anime.ts` normalizes fields for Jikan so that `mal_id` is available.
+- `src/core/anime.ts` normalizes fields for Jikan so that `mal_id` is available.
 - Verify the configured provider and the resolved anime info.
 
 ### D) Stremio bridge expectations (no legacy scrobble)
@@ -408,6 +418,9 @@ Debug steps:
 - Imports:
   - external dependencies first
   - internal modules second
+- Commits:
+  - use Conventional Commits style
+  - provide high-quality and detailed descriptions in the commit body (not just the title) detailing all files affected and structural reasoning
 
 ---
 
@@ -415,6 +428,7 @@ Debug steps:
 
 - Project overview and setup: [README.md](README.md)
 - Portuguese overview: [README_PT.md](README_PT.md)
+- System Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - MAL OAuth and sync setup: [docs/mal-sync-setup.md](docs/mal-sync-setup.md)
 - Stremio bridge setup and usage: [docs/stremio-mpv-bridge.md](docs/stremio-mpv-bridge.md)
 - GuessIt API deployment and local dev: [guessit-api/README.md](guessit-api/README.md)

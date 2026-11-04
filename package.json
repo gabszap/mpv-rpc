@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "start:all": "concurrently -n \"rpc,bridge\" -c \"cyan,magenta\" --handle-input --default-input-target 0 --kill-others \"npm run start\" \"npm run bridge\"",
+    "start:all": "concurrently -n \"rpc,bridge\" -c \"cyan,magenta\" --handle-input --default-input-target 0 --kill-others \"node dist/index.js\" \"node stremio-mpv-bridge/server.js\"",
     "dev": "tsc && npm run start",
     "bridge": "npm run start --workspace=stremio-mpv-bridge",
     "test": "vitest run",
@@ -16,10 +16,10 @@
     "check:fix": "biome check --fix .",
     "format": "biome format .",
     "format:fix": "biome format --write",
-    "release": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release",
-    "release:dry": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release --dry-run",
-    "release:bridge": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release",
-    "release:bridge:dry": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release --dry-run"
+    "release": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release -e ./semantic-release/release.config.js -e ./semantic-release/release.config.js",
+    "release:dry": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release -e ./semantic-release/release.config.js -e ./semantic-release/release.config.js --dry-run",
+    "release:bridge": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release -e ./semantic-release/release.config.js -e ./semantic-release/release.config.js",
+    "release:bridge:dry": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release -e ./semantic-release/release.config.js -e ./semantic-release/release.config.js --dry-run"
   },
   "workspaces": [
     "stremio-mpv-bridge"

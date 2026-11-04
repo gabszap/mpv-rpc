@@ -12,7 +12,7 @@ const primaryJikanFindSeasonAnimeMock = vi.fn();
 const kitsuGetSequelInfoMock = vi.fn();
 const kitsuGetAnimeByIdMock = vi.fn();
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         metadataProvider: "jikan",
         tvdb: {
@@ -90,7 +90,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("returns null when episode fits within total_episodes", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -107,7 +107,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("returns null when total_episodes is undefined", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -123,7 +123,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("returns null when total_episodes is 0", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -140,7 +140,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("resolves single cour overflow: EP 12 of 11-episode anime → sequel EP 1", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -177,7 +177,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("resolves multi-cour overflow: EP 23 across 11+11 episode cours → third cour EP 1", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -233,7 +233,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("stops when cycle detected in sequel chain", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -294,7 +294,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("stops after max depth of 5", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -340,7 +340,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("returns null when no sequel exists", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -358,7 +358,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("returns best guess when sequel has no episode count", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -395,7 +395,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("seeds sequel lookup with sourceProviderName, preferring that provider first", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,
@@ -436,7 +436,7 @@ describe("resolveOverflowEpisode", () => {
     });
 
     it("sourceProviderName produces different cache keys, preventing cross-provider collisions", async () => {
-        const { resolveOverflowEpisode } = await import("../src/anime");
+        const { resolveOverflowEpisode } = await import("../src/core/anime");
 
         const animeInfo = {
             id: 1,

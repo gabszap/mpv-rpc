@@ -1,4 +1,4 @@
-import { config } from "../config";
+import { config } from "../core/config";
 
 export function formatStremioSkipReason(reason: string): string {
     if (reason === "missing-auth") {

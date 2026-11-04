@@ -10,7 +10,7 @@ vi.mock("axios", () => ({
     },
 }));
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         debug: true,
         jikan: {
@@ -63,7 +63,7 @@ describe("JikanProvider error logging", () => {
             "/anime",
             {
                 q: "Attack on Titan",
-                limit: 10,
+                limit: 20,
                 sfw: true,
             },
             "ERROR",
@@ -75,7 +75,7 @@ describe("JikanProvider error logging", () => {
             "/anime",
             {
                 q: "Attack on Titan",
-                limit: 10,
+                limit: 20,
                 sfw: true,
             },
             "ERROR_DETAIL",

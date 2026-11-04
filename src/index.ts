@@ -4,14 +4,14 @@
  * Connects MPV Media Player directly to Discord Rich Presence
  */
 
-import { providerName } from "./anime";
-import { checkAndTriggerAutoFetch } from "./auto-fetch";
-import { config } from "./config";
 import { ConsoleRepl, createEpisodeContext } from "./console";
-import * as discord from "./discord";
+import { getAnimeCacheFilePath, getProviderName, reloadProvider } from "./core/anime";
+import { checkAndTriggerAutoFetch } from "./core/auto-fetch";
+import { config, reloadConfig } from "./core/config";
+import { checkAvailability, parseFilename } from "./core/parser";
+import * as discord from "./integrations/discord";
+import * as mpv from "./integrations/mpv";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
-import * as mpv from "./mpv";
-import { checkAvailability, parseFilename } from "./parser";
 import { logStremioSkipDetail } from "./stremio-sync/logging";
 import { trySyncStremio } from "./stremio-sync/sync";
 import { getUser } from "./trakt-sync/api";
@@ -65,6 +65,96 @@ function logStremioDiagnostic(key: string, message: string): void {
     console.log(message);
 }
 
+async function performReload(arg: string): Promise<void> {
+    console.log("[Reload] Re-reading .env...");
+
+    const oldMpvPath = config.mpvPipePath;
+    const oldClientId = config.clientId;
+    const oldDiscordRpc = config.settings.discordRpc;
+    const oldInterval = config.updateInterval;
+    const oldMetadataProvider = config.metadataProvider;
+    const oldGuessitEnabled = config.guessitApi.enabled;
+    const oldGuessitUrl = config.guessitApi.url;
+
+    const changes = reloadConfig();
+
+    if (changes.length === 0) {
+        console.log("[Reload] No config changes detected.");
+    } else {
+        console.log("[Reload] Changed:");
+        for (const c of changes) {
+            console.log(`  - ${c}`);
+        }
+    }
+
+    // Clear cache if "all" was specified
+    if (arg === "all") {
+        try {
+            const fs = await import("node:fs");
+            const cachePath = getAnimeCacheFilePath();
+            if (fs.existsSync(cachePath)) {
+                fs.unlinkSync(cachePath);
+                console.log("[Reload] Cleared anime metadata cache.");
+            } else {
+                console.log("[Reload] No anime cache to clear.");
+            }
+        } catch (e) {
+            console.error("[Reload] Failed to clear cache:", e);
+        }
+    }
+
+    // Reload metadata provider if changed
+    if (config.metadataProvider !== oldMetadataProvider) {
+        console.log(`[Reload] Metadata provider changed, re-initializing...`);
+        reloadProvider();
+        console.log(`[Reload] Now using: ${getProviderName()}`);
+    }
+
+    // Reconnect MPV if path changed
+    if (config.mpvPipePath !== oldMpvPath) {
+        console.log("[Reload] MPV IPC path changed, reconnecting...");
+        mpv.disconnect();
+        await mpv.connect();
+    }
+
+    // Reconnect Discord if client ID or RPC toggle changed
+    if (config.clientId !== oldClientId || config.settings.discordRpc !== oldDiscordRpc) {
+        console.log("[Reload] Discord settings changed, reconnecting...");
+        await discord.disconnect();
+        if (config.settings.discordRpc) {
+            await discord.connect();
+        }
+    }
+
+    // Re-check GuessIt parser if its settings changed
+    if (config.guessitApi.enabled !== oldGuessitEnabled || config.guessitApi.url !== oldGuessitUrl) {
+        console.log("[Reload] GuessIt settings changed, re-checking parser...");
+        if (config.guessitApi.enabled && config.guessitApi.url) {
+            console.log(`[Reload] GuessIt API enabled: ${config.guessitApi.url}`);
+        } else {
+            const guessitAvailable = await checkAvailability();
+            if (guessitAvailable) {
+                console.log("[Reload] GuessIt CLI found! Advanced parsing enabled.");
+            } else {
+                console.warn("[Reload] WARNING: No GuessIt available. Using basic fallback parser.");
+            }
+        }
+    }
+
+    // Restart update interval if changed
+    if (config.updateInterval !== oldInterval) {
+        console.log(
+            `[Reload] Update interval changed (${oldInterval}ms -> ${config.updateInterval}ms), restarting loop...`,
+        );
+        if (updateInterval) {
+            clearInterval(updateInterval);
+        }
+        updateInterval = setInterval(update, config.updateInterval);
+    }
+
+    console.log("[Reload] Done.");
+}
+
 /**
  * Main update loop - fetches MPV data and updates Discord
  */
@@ -93,7 +183,17 @@ async function update(): Promise<void> {
 
         // Update episode context for the REPL (for manual override tracking)
         if (consoleRepl) {
-            const context = createEpisodeContext(data.filename, data.series_title, data.season, data.episode);
+            // Pass resolved S/E as the main id (for sync targets) and parsed S/E
+            // as the anchor (so overrides survive canonical remapping).
+            const resolvedEpisode = data.adjusted_episode ?? data.episode;
+            const context = createEpisodeContext(
+                data.filename,
+                data.series_title,
+                data.season,
+                resolvedEpisode,
+                data.season,
+                data.episode,
+            );
             consoleRepl.updateContext(context, data.filename);
         }
 
@@ -256,7 +356,7 @@ async function start(): Promise<void> {
     }
 
     // Show metadata provider
-    console.log(`[Main] Metadata provider: ${providerName}`);
+    console.log(`[Main] Metadata provider: ${getProviderName()}`);
 
     // Show MAL sync status
     if (config.mal.enabled) {
@@ -336,6 +436,22 @@ async function start(): Promise<void> {
     });
     consoleRepl.on("exit", () => {
         stop();
+    });
+    consoleRepl.on("reload", async (arg: string) => {
+        // Wait for any in-progress update to finish before reloading
+        while (isUpdating) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        // Acquire the mutex atomically to prevent update() from starting
+        // while performReload() is reconnecting services.
+        isUpdating = true;
+        try {
+            await performReload(arg);
+        } catch (e) {
+            console.error("[Reload] Error:", e);
+        } finally {
+            isUpdating = false;
+        }
     });
 
     // Start update loop

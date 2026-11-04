@@ -24,7 +24,7 @@ vi.mock("../src/trakt-sync/api", () => ({
     getHistory: vi.fn(),
 }));
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         syncDryRun: true,
         trakt: {

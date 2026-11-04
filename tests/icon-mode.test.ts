@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyIconMode, type IconMode } from "../src/bridge-config-migration";
+import { applyIconMode, type IconMode } from "../src/core/bridge-config-migration";
 
 describe("applyIconMode", () => {
     it("returns the default visibility state for mode 'default'", () => {

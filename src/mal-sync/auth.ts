@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 import axios from "axios";
-import { config } from "../config";
+import { config } from "../core/config";
 
 const MAL_AUTH_URL = "https://myanimelist.net/v1/oauth2/authorize";
 const MAL_TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";

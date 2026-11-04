@@ -6,7 +6,7 @@ import {
     getPendingBridgeConfig,
     setPendingBridgeConfig,
     wrapPlayWithFlush,
-} from "../src/userscript-config-sync";
+} from "../src/core/userscript-config-sync";
 
 describe("userscript-config-sync", () => {
     beforeEach(() => {

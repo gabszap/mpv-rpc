@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { config } from "../config";
-import type { MpvData } from "../mpv";
+import { config } from "../core/config";
+import type { MpvData } from "../integrations/mpv";
 import { getLibraryItem, type LibraryItem, type LibraryItemState, nowTimestamp, putLibraryItem } from "./api";
 import { getStremioAuthKey } from "./auth";
 import { isEpisodeWatched, markEpisodeWatched } from "./bitset";
@@ -11,6 +11,7 @@ import {
     type EpisodePosition,
     getCanonicalEpisodePosition,
     getCanonicalStremioIdentity,
+    resetPlaybackContextMismatchLogStateForTests,
 } from "./identity";
 import { fetchVideoIds } from "./meta";
 
@@ -658,4 +659,5 @@ export function resetStremioSyncStateForTests(): void {
     lastProgressIntervalSkipByPlaybackIdentity.clear();
     watchedMarkByLibraryVideoId.clear();
     dryRunContinueWatchingMilestonesByIdentity.clear();
+    resetPlaybackContextMismatchLogStateForTests();
 }

@@ -4,15 +4,15 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { AniListProvider } from "../providers/anilist";
+import { JikanProvider } from "../providers/jikan";
+import { KitsuProvider } from "../providers/kitsu";
+import { TvdbProvider } from "../providers/tvdb";
+import type { AnimeInfo, AnimeProvider, AnimeSearchResult, OverflowResult, SequelInfo } from "../providers/types";
 import { config, type MetadataProvider } from "./config";
-import { AniListProvider } from "./providers/anilist";
-import { JikanProvider } from "./providers/jikan";
-import { KitsuProvider } from "./providers/kitsu";
-import { TvdbProvider } from "./providers/tvdb";
-import type { AnimeInfo, AnimeProvider, AnimeSearchResult, OverflowResult, SequelInfo } from "./providers/types";
 
 // Re-export types for other modules
-export type { AnimeInfo, OverflowResult } from "./providers/types";
+export type { AnimeInfo, OverflowResult } from "../providers/types";
 
 /**
  * Result of anime info resolution that includes the source provider name.
@@ -38,7 +38,7 @@ function createProvider(metadataProvider: MetadataProvider): AnimeProvider {
     }
 }
 
-const provider = createProvider(config.metadataProvider);
+let provider = createProvider(config.metadataProvider);
 
 // Fallback providers for episode titles
 function createFallbackProviders(primaryProviderName: string): AnimeProvider[] {
@@ -63,26 +63,56 @@ function createFallbackProviders(primaryProviderName: string): AnimeProvider[] {
     return fallbackList;
 }
 
-const fallbackProviders = createFallbackProviders(provider.name);
+let fallbackProviders = createFallbackProviders(provider.name);
 
-// Export provider name for logging
-export const providerName = provider.name;
+/**
+ * Get the current provider name.
+ * Using a function instead of a const export so it stays in sync
+ * after reloadProvider() recreates the provider instance.
+ */
+export function getProviderName(): string {
+    return provider.name;
+}
+
+/**
+ * Re-create the provider and fallbacks based on the current config.
+ * Called by the reload system when METADATA_PROVIDER changes in .env.
+ */
+export function reloadProvider(): void {
+    provider = createProvider(config.metadataProvider);
+    fallbackProviders = createFallbackProviders(provider.name);
+}
 
 // Cache
 interface CacheEntry {
     data: AnimeInfo | null;
     timestamp: number;
     sourceProvider?: string;
+    cacheVersion?: number;
 }
 
 const cache: Map<string, CacheEntry> = new Map();
 const episodeCache: Map<string, string | null> = new Map();
 const overflowCache: Map<string, { result: OverflowResult; timestamp: number }> = new Map();
+const ANIME_INFO_CACHE_VERSION = 2;
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const NEGATIVE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for not-found results
 const OVERFLOW_CACHE_TTL = 30 * 60 * 1000; // 30 minutes for overflow resolution
+const DEFAULT_EPISODE_CACHE_SCOPE = "default";
+
+function readPositiveEpisode(value: number | null | undefined): number | undefined {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        return undefined;
+    }
+
+    return value;
+}
 
 function isCacheEntryValid(entry: CacheEntry, now = Date.now()): boolean {
+    if (entry.cacheVersion !== ANIME_INFO_CACHE_VERSION) {
+        return false;
+    }
+
     const ttl = entry.data === null ? NEGATIVE_CACHE_TTL : CACHE_TTL;
     return now - entry.timestamp < ttl;
 }
@@ -114,6 +144,11 @@ function getProvidersInResolutionOrder(): AnimeProvider[] {
     return providersInOrder;
 }
 
+function getEpisodeCacheScope(currentProvider: AnimeProvider | null): string {
+    const providerScope = currentProvider?.getEpisodeCacheKeyScope?.().trim();
+    return providerScope || DEFAULT_EPISODE_CACHE_SCOPE;
+}
+
 async function resolveAnimeInfoWithProvider(
     currentProvider: AnimeProvider,
     title: string,
@@ -125,10 +160,16 @@ async function resolveAnimeInfoWithProvider(
         const seasonSearchTitle = `${title} Season ${season}`;
         const seasonSearchResult = await currentProvider.searchAnime(seasonSearchTitle, season);
         if (seasonSearchResult) {
-            const animeInfo = await currentProvider.getAnimeById(seasonSearchResult.id);
+            const animeInfo = await currentProvider.getAnimeById(seasonSearchResult.id, season);
             if (animeInfo) {
                 return normalizeProviderFields(animeInfo, currentProvider.name);
             }
+        }
+
+        if (config.debug) {
+            console.log(
+                `[Anime] ${currentProvider.name} season query "${seasonSearchTitle}" did not resolve; retrying base title "${title}"`,
+            );
         }
     }
 
@@ -159,10 +200,11 @@ function buildAnimeInfoFromSearchResult(searchResult: AnimeSearchResult): AnimeI
         title_english: searchResult.title_english,
         title_romaji: searchResult.title,
         cover_url: searchResult.coverImage,
+        seasonValidation: searchResult.seasonValidation,
     };
 }
 
-function getCachePath(): string {
+export function getAnimeCacheFilePath(): string {
     const cacheDir = path.join(process.cwd(), ".anime_cache");
     if (!fs.existsSync(cacheDir)) {
         fs.mkdirSync(cacheDir, { recursive: true });
@@ -172,7 +214,7 @@ function getCachePath(): string {
 
 function loadCache(): void {
     try {
-        const cachePath = getCachePath();
+        const cachePath = getAnimeCacheFilePath();
         if (fs.existsSync(cachePath)) {
             const data = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
             const now = Date.now();
@@ -199,7 +241,7 @@ function loadCache(): void {
 
 function saveCache(): void {
     try {
-        const cachePath = getCachePath();
+        const cachePath = getAnimeCacheFilePath();
         const data: Record<string, CacheEntry> = {};
         const now = Date.now();
         // Only save entries that are still valid
@@ -456,6 +498,104 @@ export async function resolveOverflowEpisode(
 }
 
 /**
+ * Validate that a fallback provider's search result matches the expected
+ * season/episode before accepting its episode title.
+ *
+ * Title-based fallback searches can return the wrong season's anime
+ * (e.g. season 1 when the user expects season 4). This helper inspects
+ * the resolved anime to confirm the expected S/E exists.
+ *
+ * @returns true if the result is valid, false if it should be rejected
+ */
+export function validateEpisodeSE(
+    animeInfo: Pick<AnimeInfo, "total_episodes" | "seasonValidation">,
+    expectedEpisode: number,
+    expectedSeason: number | null = null,
+): boolean {
+    if (expectedEpisode < 1) {
+        return false;
+    }
+
+    if (expectedSeason !== null && expectedSeason > 1) {
+        const validation = animeInfo.seasonValidation;
+        if (!validation || validation.expectedSeason !== expectedSeason) {
+            return false;
+        }
+    }
+
+    if (!animeInfo.total_episodes || animeInfo.total_episodes <= 0) {
+        return true;
+    }
+
+    return expectedEpisode <= animeInfo.total_episodes;
+}
+
+async function resolveValidatedFallbackAnime(
+    fallback: AnimeProvider,
+    searchResult: AnimeSearchResult,
+    expectedSeason: number | null,
+    expectedEpisode: number,
+): Promise<AnimeInfo | null> {
+    if (expectedSeason !== null && expectedSeason > 1) {
+        if (searchResult.seasonValidation?.expectedSeason === expectedSeason) {
+            const animeInfo = await fallback.getAnimeById(searchResult.id);
+            const validatedAnimeInfo = {
+                ...(animeInfo ?? buildAnimeInfoFromSearchResult(searchResult)),
+                seasonValidation: searchResult.seasonValidation,
+            };
+
+            if (!validateEpisodeSE(validatedAnimeInfo, expectedEpisode, expectedSeason)) {
+                if (config.debug) {
+                    console.log(
+                        `[DETAIL] ${fallback.name} fallback: search result "${validatedAnimeInfo.title_romaji}" (ID: ${validatedAnimeInfo.id}) does not contain expected S${expectedSeason}E${expectedEpisode}, skipping`,
+                    );
+                }
+                return null;
+            }
+
+            return validatedAnimeInfo;
+        }
+
+        const seasonAnime = await fallback.findSeasonAnime(searchResult.id, expectedSeason);
+        if (!seasonAnime) {
+            if (config.debug) {
+                console.log(
+                    `[DETAIL] ${fallback.name} fallback: could not validate expected S${expectedSeason}E${expectedEpisode} from search result ID ${searchResult.id}, skipping`,
+                );
+            }
+            return null;
+        }
+
+        if (!validateEpisodeSE(seasonAnime, expectedEpisode, expectedSeason)) {
+            if (config.debug) {
+                console.log(
+                    `[DETAIL] ${fallback.name} fallback: anime "${seasonAnime.title_romaji}" (ID: ${seasonAnime.id}) does not contain expected S${expectedSeason}E${expectedEpisode}, skipping`,
+                );
+            }
+            return null;
+        }
+
+        return seasonAnime;
+    }
+
+    const animeInfo = await fallback.getAnimeById(searchResult.id);
+    if (!animeInfo) {
+        return buildAnimeInfoFromSearchResult(searchResult);
+    }
+
+    if (!validateEpisodeSE(animeInfo, expectedEpisode, expectedSeason)) {
+        if (config.debug) {
+            console.log(
+                `[DETAIL] ${fallback.name} fallback: anime "${animeInfo.title_romaji}" (ID: ${animeInfo.id}) does not contain expected episode ${expectedEpisode}, skipping`,
+            );
+        }
+        return null;
+    }
+
+    return animeInfo;
+}
+
+/**
  * Get anime info including cover and titles, along with the provider that resolved it.
  *
  * This is the preferred way to get anime info when overflow resolution will be
@@ -488,6 +628,7 @@ export async function getAnimeInfoWithProvider(
                     data: normalizedCached,
                     timestamp: cached.timestamp,
                     sourceProvider,
+                    cacheVersion: ANIME_INFO_CACHE_VERSION,
                 });
                 saveCache();
             }
@@ -511,6 +652,7 @@ export async function getAnimeInfoWithProvider(
                 data: animeInfo,
                 timestamp: Date.now(),
                 sourceProvider: currentProvider.name,
+                cacheVersion: ANIME_INFO_CACHE_VERSION,
             });
             saveCache();
 
@@ -532,6 +674,7 @@ export async function getAnimeInfoWithProvider(
         data: null,
         timestamp: Date.now(),
         sourceProvider: lastNotFoundProvider || "resolution-exhausted",
+        cacheVersion: ANIME_INFO_CACHE_VERSION,
     });
     saveCache();
     return null;
@@ -568,12 +711,10 @@ export async function getEpisodeTitle(
                 Boolean(value),
             ),
             allowSeasonInference: season === null || season <= 1,
+            sourceEpisode: readPositiveEpisode(episode),
+            sourceSeason: season,
+            effectiveEpisode: readPositiveEpisode(episode),
         };
-
-        const episodeCacheKey = `${sourceProvider || provider.name}:${animeInfo.id}:${season ?? 1}:${episode}`;
-        if (episodeCache.has(episodeCacheKey)) {
-            return episodeCache.get(episodeCacheKey) ?? null;
-        }
 
         // Only use the provider that owns the anime ID for direct lookups.
         // Other providers would need a title-based search first since IDs are provider-specific.
@@ -582,6 +723,12 @@ export async function getEpisodeTitle(
         const sourceProviderObj = sourceProvider
             ? getProvidersInResolutionOrder().find((p) => p.name === sourceProvider)
             : null;
+
+        const directEpisodeProvider = sourceProviderObj ?? (sourceProvider ? null : provider);
+        const episodeCacheKey = `${sourceProvider || provider.name}:${getEpisodeCacheScope(directEpisodeProvider)}:${animeInfo.id}:${season ?? 1}:${episode}`;
+        if (episodeCache.has(episodeCacheKey)) {
+            return episodeCache.get(episodeCacheKey) ?? null;
+        }
 
         // Only use the provider that owns the anime ID for direct lookups.
         // Other providers would need a title-based search first since IDs are provider-specific.
@@ -629,6 +776,11 @@ export async function getEpisodeTitle(
 
                 const overflowAnimeId = resolved.animeInfo.id;
                 const overflowEpisode = resolved.adjustedEpisode;
+                const overflowEpisodeLookupContext = {
+                    ...episodeLookupContext,
+                    sourceEpisode: resolved.originalEpisode,
+                    effectiveEpisode: overflowEpisode,
+                };
 
                 for (const overflowProvider of overflowProviders) {
                     try {
@@ -636,7 +788,7 @@ export async function getEpisodeTitle(
                             overflowAnimeId,
                             overflowEpisode,
                             season ?? undefined,
-                            episodeLookupContext,
+                            overflowEpisodeLookupContext,
                         );
                         if (title) break;
                     } catch {
@@ -661,6 +813,11 @@ export async function getEpisodeTitle(
         // Use overflow-adjusted info for fallback lookups if available
         const effectiveAnimeInfo = overflowResult?.animeInfo ?? animeInfo;
         const effectiveEpisode = overflowResult?.adjustedEpisode ?? episode;
+        const fallbackEpisodeLookupContext = {
+            ...episodeLookupContext,
+            sourceEpisode: overflowResult?.originalEpisode ?? episodeLookupContext.sourceEpisode,
+            effectiveEpisode,
+        };
 
         // Try fallback providers only if we don't know the source provider
         // (if source is known but unavailable, fallback IDs would be in the wrong namespace)
@@ -684,7 +841,7 @@ export async function getEpisodeTitle(
                                 effectiveAnimeInfo.mal_id,
                                 effectiveEpisode,
                                 season ?? undefined,
-                                episodeLookupContext,
+                                fallbackEpisodeLookupContext,
                             );
                         } else {
                             // Fallback: search by title if no MAL ID or not Jikan
@@ -699,17 +856,27 @@ export async function getEpisodeTitle(
                                     console.log(`[Anime] Trying ${fallback.name} fallback query: "${candidate}"`);
                                 }
 
-                                const searchResult = await fallback.searchAnime(candidate);
+                                const searchResult = await fallback.searchAnime(candidate, season ?? undefined);
                                 if (!searchResult) {
                                     continue;
                                 }
 
+                                const fallbackAnimeInfo = await resolveValidatedFallbackAnime(
+                                    fallback,
+                                    searchResult,
+                                    season,
+                                    effectiveEpisode,
+                                );
+                                if (!fallbackAnimeInfo) {
+                                    continue;
+                                }
+
                                 title = await fallback.getEpisodeTitle(
-                                    searchResult.id,
+                                    fallbackAnimeInfo.id,
                                     effectiveEpisode,
                                     season ?? undefined,
                                     {
-                                        ...episodeLookupContext,
+                                        ...fallbackEpisodeLookupContext,
                                         searchTitle: candidate,
                                     },
                                 );
@@ -725,7 +892,7 @@ export async function getEpisodeTitle(
                     }
 
                     if (title) {
-                        console.log(`[Anime] Found episode title via ${fallback.name}`);
+                        console.log(`[Anime] Found episode title via ${fallback.name}: "${title}"`);
                         break;
                     }
                 }

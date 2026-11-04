@@ -4,9 +4,9 @@
  */
 
 import axios from "axios";
-import { config } from "../config";
+import { config } from "../core/config";
 import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
-import { formatProviderErrorDetails, logApiCall } from "./types";
+import { formatProviderErrorDetails, logApiCall, markSeasonAnimeValidated } from "./types";
 
 const ANILIST_API = "https://graphql.anilist.co";
 
@@ -285,7 +285,8 @@ export class AniListProvider implements AnimeProvider {
 
     async findSeasonAnime(baseId: number, targetSeason: number): Promise<AnimeInfo | null> {
         if (targetSeason <= 1) {
-            return this.getAnimeById(baseId);
+            const anime = await this.getAnimeById(baseId);
+            return anime ? markSeasonAnimeValidated(anime, targetSeason, "base-season") : null;
         }
 
         const visited = new Set<number>();
@@ -322,7 +323,8 @@ export class AniListProvider implements AnimeProvider {
             const seasonInTitle =
                 extractSeasonNumber(sequel.title.romaji) || extractSeasonNumber(sequel.title.english || "");
             if (seasonInTitle === targetSeason) {
-                return this.getAnimeById(currentId);
+                const anime = await this.getAnimeById(currentId);
+                return anime ? markSeasonAnimeValidated(anime, targetSeason, "explicit-title") : null;
             }
 
             const isPart = isPartOfSameSeason(sequel.title.romaji) || isPartOfSameSeason(sequel.title.english || "");
@@ -331,7 +333,12 @@ export class AniListProvider implements AnimeProvider {
             }
         }
 
-        return this.getAnimeById(lastValidId);
+        if (currentSeason < targetSeason) {
+            return null;
+        }
+
+        const anime = await this.getAnimeById(lastValidId);
+        return anime ? markSeasonAnimeValidated(anime, targetSeason, "relation-chain") : null;
     }
 
     async getSequelInfo(animeId: number): Promise<SequelInfo | null> {

@@ -16,7 +16,7 @@ vi.mock("axios", () => ({
     },
 }));
 
-vi.mock("../src/config", () => ({
+vi.mock("../src/core/config", () => ({
     config: {
         debug: false,
         syncDryRun: false,

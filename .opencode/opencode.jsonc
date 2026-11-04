@@ -4,36 +4,33 @@
     "plan": {
       "temperature": 0.3,
       "reasoningEffort": "high",
-      "textVerbosity": "low",
       "permission": {
         "edit": "deny",
         "write": "deny",
         "bash": {
-          "*": "deny",
+          "*": "deny"
         },
         "task": "allow",
-        "worktree_*": "allow",
-      },
+        "worktree_*": "allow"
+      }
     },
     "build": {
       "temperature": 0.3,
       "reasoningEffort": "medium",
-      "textVerbosity": "low",
-      "prompt": "You are a **build orchestrator**. You coordinate implementation through delegation - you do NOT implement directly.\\\\\\\\n\\\\\\\\n## Your Role\\\\\\\\n- Delegate implementation to `coder`\\\\\\\\n- Delegate documentation to `scribe`\\\\\\\\n- Delegate codebase analysis to `explore`\\\\\\\\n- Delegate external research to `researcher`\\\\\\\\n- Interpret results and decide next steps\\\\\\\\n\\\\\\\\n## Critical Constraint\\\\\\\\nYou CANNOT edit files or run commands directly. For ALL implementation and verification, delegate to `coder`.",
+      "prompt": "You are a **build orchestrator**. You coordinate implementation through delegation - you do NOT implement directly.\\\\n\\\\n## Your Role\\\\n- Delegate implementation to `coder`\\\\n- Delegate documentation to `scribe`\\\\n- Delegate codebase analysis to `explore`\\\\n- Delegate external research to `researcher`\\\\n- Interpret results and decide next steps\\\\n\\\\n## Critical Constraint\\\\nYou CANNOT edit files or run commands directly. For ALL implementation and verification, delegate to `coder`.",
       "permission": {
         "edit": "deny",
         "write": "deny",
         "bash": {
-          "*": "deny",
+          "*": "deny"
         },
         "task": "allow",
-        "worktree_*": "allow",
-      },
+        "worktree_*": "allow"
+      }
     },
     "coder": {
       "temperature": 0.2,
       "reasoningEffort": "high",
-      "textVerbosity": "low",
       "permission": {
         "context7_*": "deny",
         "exa_*": "deny",
@@ -45,11 +42,11 @@
         "grep": "allow",
         "bash": "allow",
         "plan_read": "deny",
-        "todoread": "deny",
-      },
+        "todoread": "deny"
+      }
     },
     "explore": {
-      "model": "opencode/minimax-m3-free",
+      "model": "opencode/deepseek-v4-flash-free",
       "temperature": 0.2,
       "reasoningEffort": "low",
       "textVerbosity": "low",
@@ -83,15 +80,14 @@
           "hostname": "allow",
           "whoami": "allow",
           "which *": "allow",
-          "realpath *": "allow",
-        },
-      },
+          "realpath *": "allow"
+        }
+      }
     },
     "researcher": {
-      "model": "opencode/minimax-m3-free",
+      "model": "opencode/deepseek-v4-flash-free",
       "temperature": 0.4,
       "reasoningEffort": "high",
-      "textVerbosity": "medium",
       "permission": {
         "context7_*": "allow",
         "exa_*": "allow",
@@ -140,26 +136,26 @@
           "uniq *": "allow",
           "cut *": "allow",
           "awk *": "allow",
-          "tr *": "allow",
-        },
-      },
+          "tr *": "allow"
+        }
+      }
     },
     "scribe": {
-      "model": "openai/gpt-5.4",
+      "model": "google/gemini-3-1-flash-lite",
       "temperature": 1,
       "reasoningEffort": "low",
       "textVerbosity": "high",
       "permission": {
         "bash": {
-          "*": "deny",
+          "*": "deny"
         },
         "edit": "allow",
         "glob": "allow",
         "read": "allow",
         "write": "allow",
         "plan_read": "deny",
-        "todoread": "deny",
-      },
+        "todoread": "deny"
+      }
     },
     "reviewer": {
       "model": "google/gemma-4-31b-it",
@@ -176,13 +172,13 @@
           "git show*": "allow",
           "git blame*": "allow",
           "git status*": "allow",
-          "rg *": "allow",
+          "rg *": "allow"
         },
         "plan_read": "allow",
         "delegation_read": "allow",
-        "delegation_list": "allow",
-      },
-    },
+        "delegation_list": "allow"
+      }
+    }
   },
   "permission": {
     "task": "deny",
@@ -191,79 +187,30 @@
     "gh_grep_*": "deny",
     "kagi_*": "deny",
     "webfetch": "deny",
-    "worktree_*": "deny",
+    "worktree_*": "deny"
   },
   "mcp": {
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp",
-      "enabled": true,
+      "enabled": true
     },
     "exa": {
       "type": "remote",
       "url": "https://mcp.exa.ai/mcp",
-      "enabled": true,
+      "enabled": true
     },
     "gh_grep": {
       "type": "remote",
       "url": "https://mcp.grep.app",
-      "enabled": true,
-    },
+      "enabled": true
+    }
   },
-  "instructions": ["./tools/philosophy.md", "./tools/workflow.md"],
-  "plugin": ["@franlol/opencode-md-table-formatter@0.0.6"],
-  "provider": {
-    "nvidia": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "NVIDIA NIM",
-      "options": {
-        "baseURL": "https://integrate.api.nvidia.com/v1",
-        "apiKey": "",
-      },
-      "models": {
-        "z-ai/glm5": {
-          "name": "GLM-5",
-          "limit": {
-            "context": 128000,
-            "output": 16384,
-          },
-        },
-        "moonshotai/kimi-k2.6": {
-          "name": "Kimi K2.6",
-          "limit": {
-            "context": 262144,
-            "output": 262144,
-          },
-        },
-        "z-ai/glm-5.1": {
-          "name": "GLM-5.1",
-          "limit": {
-            "context": 202752,
-            "output": 131072,
-          },
-        },
-        "deepseek-ai/deepseek-v4-flash": {
-          "name": "DeepSeek V4 Flash",
-          "limit": {
-            "context": 1000000,
-            "output": 384000,
-          },
-        },
-        "minimaxai/minimax-m2.7": {
-          "name": "MiniMax-M2.7",
-          "limit": {
-            "context": 384000,
-            "output": 131072,
-          },
-        },
-        "google/gemma-4-31b-it": {
-          "name": "Gemma 4 31B IT",
-          "limit": {
-            "context": 262144,
-            "output": 32768,
-          },
-        },
-      },
-    },
-  },
+  "instructions": [
+    "./tools/philosophy.md",
+    "./tools/workflow.md"
+  ],
+  "plugin": [
+    "@franlol/opencode-md-table-formatter@0.0.6"
+  ]
 }

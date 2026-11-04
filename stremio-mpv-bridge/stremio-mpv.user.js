@@ -1042,6 +1042,7 @@
                             <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
                         </div>
 
+
                     </div>
 
                     <div class="mpv-tab-panel" data-tab-panel="advanced" role="tabpanel">
@@ -2880,6 +2881,15 @@
         return { url, title };
     }
 
+    function getQualityAliases(quality) {
+        const q = quality.toLowerCase();
+        if (q === "4k" || q === "2160p") return ["4k", "2160p"];
+        if (q === "2k" || q === "1440p") return ["2k", "1440p"];
+        if (q === "fhd" || q === "1080p") return ["fhd", "1080p"];
+        if (q === "hd" || q === "720p") return ["hd", "720p"];
+        return [q];
+    }
+
     function findBestStream(streams) {
         if (!streams?.length) return null;
 
@@ -2911,7 +2921,11 @@
                 }
 
                 if (selectedQualities.length > 0) {
-                    if (selectedQualities.some((q) => t.includes(q))) {
+                    const matched = selectedQualities.some((q) => {
+                        const aliases = getQualityAliases(q);
+                        return aliases.some((alias) => t.includes(alias));
+                    });
+                    if (matched) {
                         score += 1;
                     }
                 }
