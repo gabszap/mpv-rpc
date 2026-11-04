@@ -2,6 +2,12 @@
 
 This file is managed by semantic-release.
 
+## [2.3.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.2.0...mpv-rpc-v2.3.0) (2026-11-04)
+
+### Features
+
+* **auto-fetch:** add auto-detection and fetching of next episodes ([34b76ed](https://github.com/gabszap/mpv-rpc/commit/34b76edeed06a7775130b056b5bf38a7c18f0a4d))
+
 ## [2.2.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.1.1...mpv-rpc-v2.2.0) (2026-04-28)
 
 ### Features
