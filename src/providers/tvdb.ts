@@ -1454,6 +1454,140 @@ async function fetchSeriesTranslationName(
     }
 }
 
+function isPlaceholderEpisodeTitle(title: string | null | undefined): boolean {
+    if (!title) {
+        return true;
+    }
+
+    const normalized = title.trim().toLowerCase();
+    return (
+        normalized.length === 0 ||
+        normalized === "tba" ||
+        normalized === "tbd" ||
+        normalized === "to be announced" ||
+        normalized === "to be determined"
+    );
+}
+
+function hasNonLatinScript(title: string | null | undefined): boolean {
+    if (!title) {
+        return false;
+    }
+
+    return /[\u3000-\u9FFF\uAC00-\uD7AF\u0400-\u04FF]/u.test(title);
+}
+
+function normalizeTvdbSearchText(value: string | null | undefined): string {
+    if (!value) {
+        return "";
+    }
+
+    return value
+        .toLowerCase()
+        .replace(/['’`´]+/g, "")
+        .replace(/[^a-z0-9\u3000-\u9fff\uac00-\ud7af]+/giu, " ")
+        .trim()
+        .replace(/\s+/g, " ");
+}
+
+function stripTrailingYearFromSearchText(normalizedValue: string): string {
+    return normalizedValue.replace(/\s+(?:19|20)\d{2}$/, "").trim();
+}
+
+function selectBestTvdbSearchResult(results: any[], query: string, expectedSeason?: number): any {
+    if (results.length <= 1) {
+        return results[0];
+    }
+
+    const normalizedQuery = normalizeTvdbSearchText(query);
+    const queryHasYear = /\b(?:19|20)\d{2}\b/.test(normalizedQuery);
+    const querySlug = normalizedQuery.replace(/\s+/g, "-");
+    let bestResult = results[0];
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (let index = 0; index < results.length; index++) {
+        const candidate = results[index];
+        if (!isRecord(candidate)) {
+            continue;
+        }
+
+        let score = -index;
+        const rawName = readString(candidate.name) ?? "";
+        const normalizedName = normalizeTvdbSearchText(rawName);
+        const normalizedNameNoYear = queryHasYear ? normalizedName : stripTrailingYearFromSearchText(normalizedName);
+        const rawSlug = readString(candidate.slug)?.toLowerCase() ?? "";
+        const slugNoYear = queryHasYear ? rawSlug : rawSlug.replace(/-(?:19|20)\d{2}$/, "");
+        const translations = isRecord(candidate.translations) ? candidate.translations : null;
+        const englishTranslation = normalizeTvdbSearchText(readString(translations?.eng));
+        const englishTranslationNoYear = queryHasYear
+            ? englishTranslation
+            : stripTrailingYearFromSearchText(englishTranslation);
+
+        if (
+            normalizedName === normalizedQuery ||
+            englishTranslation === normalizedQuery ||
+            normalizedNameNoYear === normalizedQuery ||
+            englishTranslationNoYear === normalizedQuery
+        ) {
+            score += 100;
+        }
+
+        if (
+            rawSlug &&
+            (rawSlug === querySlug ||
+                rawSlug === `${querySlug}-anime` ||
+                slugNoYear === querySlug ||
+                slugNoYear === `${querySlug}-anime`)
+        ) {
+            score += 80;
+        }
+
+        if (Array.isArray(candidate.aliases)) {
+            const hasExactAlias = candidate.aliases.some((alias) => {
+                const aliasText = isRecord(alias) ? readString(alias.name) : readString(alias);
+                const normalizedAlias = normalizeTvdbSearchText(aliasText);
+                const normalizedAliasNoYear = queryHasYear
+                    ? normalizedAlias
+                    : stripTrailingYearFromSearchText(normalizedAlias);
+                return normalizedAlias === normalizedQuery || normalizedAliasNoYear === normalizedQuery;
+            });
+            if (hasExactAlias) {
+                score += 60;
+            }
+        }
+
+        if (Array.isArray(candidate.genres)) {
+            const hasAnimeGenre = candidate.genres.some((genre) => {
+                const genreText = (isRecord(genre) ? readString(genre.name) : readString(genre))?.toLowerCase() ?? "";
+                return genreText === "anime" || genreText === "animation";
+            });
+            if (hasAnimeGenre) {
+                score += 50;
+            }
+        }
+
+        if (expectedSeason && expectedSeason > 1) {
+            const statusText = (
+                isRecord(candidate.status) ? readString(candidate.status.name) : readString(candidate.status)
+            )?.toLowerCase();
+            if (statusText === "continuing") {
+                score += 15;
+            }
+        }
+
+        if (hasNonLatinScript(rawName) && /[a-z]/i.test(rawName) && normalizedName !== normalizedQuery) {
+            score -= 30;
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestResult = candidate;
+        }
+    }
+
+    return bestResult;
+}
+
 async function fetchLocalizedEpisodeTitle(
     episodeId: number | null,
     translationPlan: EpisodeTranslationLanguagePlan,
@@ -1473,14 +1607,32 @@ async function fetchLocalizedEpisodeTitle(
     }
 
     if (canonicalLanguage === "eng") {
-        logApiCall(
-            "TVDB",
-            "getEpisodeTranslation",
-            { episodeId, lang: canonicalLanguage },
-            "DETAIL",
-            `episode translation skipped: requested lang=${canonicalLanguage}; using default "${defaultTitle}"`,
-        );
-        return defaultTitle;
+        if (!isPlaceholderEpisodeTitle(defaultTitle) && !hasNonLatinScript(defaultTitle)) {
+            logApiCall(
+                "TVDB",
+                "getEpisodeTranslation",
+                { episodeId, lang: canonicalLanguage },
+                "DETAIL",
+                `episode translation skipped: requested lang=${canonicalLanguage}; using default "${defaultTitle}"`,
+            );
+            return defaultTitle;
+        }
+
+        if (episodeId !== null) {
+            const englishTitle = await fetchLocalizedEpisodeTitleCandidate(episodeId, "eng");
+            if (englishTitle) {
+                logApiCall(
+                    "TVDB",
+                    "getEpisodeTranslation",
+                    { episodeId, lang: "eng" },
+                    "DETAIL",
+                    `localized title found for episodeId=${episodeId}, lang=eng: "${englishTitle}"`,
+                );
+                return englishTitle;
+            }
+        }
+
+        return isPlaceholderEpisodeTitle(defaultTitle) ? null : defaultTitle;
     }
 
     if (episodeId === null) {
@@ -1491,7 +1643,7 @@ async function fetchLocalizedEpisodeTitle(
             "DETAIL",
             `episode translation skipped: missing episodeId for lang=${canonicalLanguage}; fallback default "${defaultTitle}"`,
         );
-        return defaultTitle;
+        return isPlaceholderEpisodeTitle(defaultTitle) ? null : defaultTitle;
     }
 
     logApiCall(
@@ -1519,6 +1671,37 @@ async function fetchLocalizedEpisodeTitle(
         }
     }
 
+    const shouldTryEnglishFallback =
+        availableLanguages.includes("eng") ||
+        isPlaceholderEpisodeTitle(defaultTitle) ||
+        hasNonLatinScript(defaultTitle);
+    if (shouldTryEnglishFallback) {
+        const englishFallbackTitle = await fetchLocalizedEpisodeTitleCandidate(episodeId, "eng");
+        if (englishFallbackTitle) {
+            logApiCall(
+                "TVDB",
+                "getEpisodeTranslation",
+                { episodeId, lang: "eng" },
+                "DETAIL",
+                `localized title found for episodeId=${episodeId}, lang=eng, canonical=${canonicalLanguage}: "${englishFallbackTitle}"`,
+            );
+            return englishFallbackTitle;
+        }
+    }
+
+    if (isPlaceholderEpisodeTitle(defaultTitle)) {
+        logApiCall(
+            "TVDB",
+            "getEpisodeTranslation",
+            { episodeId, lang: canonicalLanguage },
+            "DETAIL",
+            `no localized title found for episodeId=${episodeId}, langCandidates:${JSON.stringify(
+                candidates,
+            )}; rejecting placeholder default "${defaultTitle}"`,
+        );
+        return null;
+    }
+
     logApiCall(
         "TVDB",
         "getEpisodeTranslation",
@@ -1542,7 +1725,7 @@ async function fetchLocalizedEpisodeTitleCandidate(episodeId: number, lang: stri
         const translationData = isRecord(translationResponse?.data) ? translationResponse.data : null;
         const localizedTitle = readString(translationData?.name);
 
-        if (localizedTitle) {
+        if (localizedTitle && !isPlaceholderEpisodeTitle(localizedTitle)) {
             return localizedTitle;
         }
 
@@ -1551,7 +1734,7 @@ async function fetchLocalizedEpisodeTitleCandidate(episodeId: number, lang: stri
             "getEpisodeTranslation",
             { episodeId, lang },
             "DETAIL",
-            `candidate missing for episodeId=${episodeId}, lang=${lang}: no name`,
+            `candidate missing for episodeId=${episodeId}, lang=${lang}: ${localizedTitle ? "placeholder name" : "no name"}`,
         );
         return null;
     } catch (error) {
@@ -1575,7 +1758,7 @@ export class TvdbProvider implements AnimeProvider {
         return getTvdbLanguage();
     }
 
-    async searchAnime(title: string, _expectedSeason?: number): Promise<AnimeSearchResult | null> {
+    async searchAnime(title: string, expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
             const response = await tvdbRequest(
                 "/search",
@@ -1594,7 +1777,7 @@ export class TvdbProvider implements AnimeProvider {
             }
 
             // Find best match - prefer exact or closest title match
-            const result = results[0];
+            const result = selectBestTvdbSearchResult(results, title, expectedSeason);
             const tvdbId = parseInt(result.tvdb_id || result.id, 10);
 
             logApiCall("TVDB", "search", { query: title }, "DETAIL", `"${result.name}" (ID:${tvdbId})`);

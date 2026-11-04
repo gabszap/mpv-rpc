@@ -680,6 +680,139 @@ describe("TvdbProvider.getEpisodeTitle", () => {
             fs.rmSync(testCwd, { recursive: true, force: true });
         }
     });
+
+    it("falls back to English episode translation when Portuguese candidates are unavailable and default title is CJK or TBA", async () => {
+        await setTvdbLanguage("pt");
+
+        axiosGetMock.mockImplementation(async (url: string) => {
+            if (url.endsWith("/series/402033/episodes/official")) {
+                return {
+                    data: {
+                        data: {
+                            episodes: [
+                                {
+                                    id: 10862003,
+                                    seasonNumber: 3,
+                                    number: 5,
+                                    name: "过去",
+                                    nameTranslations: ["zho", "eng"],
+                                },
+                            ],
+                        },
+                    },
+                };
+            }
+
+            if (
+                url.endsWith("/episodes/10862003/translations/por") ||
+                url.endsWith("/episodes/10862003/translations/pt") ||
+                url.endsWith("/episodes/10862003/translations/pt-BR")
+            ) {
+                const error = new Error("Request failed with status code 404") as Error & {
+                    response?: { status: number };
+                };
+                error.response = { status: 404 };
+                throw error;
+            }
+
+            if (url.endsWith("/episodes/10862003/translations/eng")) {
+                return {
+                    data: {
+                        data: {
+                            name: "The Past",
+                        },
+                    },
+                };
+            }
+
+            throw new Error(`Unexpected URL: ${url}`);
+        });
+
+        const { TvdbProvider } = await import("../src/providers/tvdb");
+        const provider = new TvdbProvider();
+
+        await expect(provider.getEpisodeTitle(402033, 5, 3)).resolves.toBe("The Past");
+    });
+
+    it("rejects TBA placeholder default episode title when no translation is available", async () => {
+        await setTvdbLanguage("pt");
+
+        axiosGetMock.mockImplementation(async (url: string) => {
+            if (url.endsWith("/series/402033/episodes/official")) {
+                return {
+                    data: {
+                        data: {
+                            episodes: [
+                                {
+                                    id: 10862004,
+                                    seasonNumber: 3,
+                                    number: 6,
+                                    name: "TBA",
+                                },
+                            ],
+                        },
+                    },
+                };
+            }
+
+            if (
+                url.endsWith("/episodes/10862004/translations/por") ||
+                url.endsWith("/episodes/10862004/translations/pt") ||
+                url.endsWith("/episodes/10862004/translations/pt-BR") ||
+                url.endsWith("/episodes/10862004/translations/eng")
+            ) {
+                const error = new Error("Request failed with status code 404") as Error & {
+                    response?: { status: number };
+                };
+                error.response = { status: 404 };
+                throw error;
+            }
+
+            throw new Error(`Unexpected URL: ${url}`);
+        });
+
+        const { TvdbProvider } = await import("../src/providers/tvdb");
+        const provider = new TvdbProvider();
+
+        await expect(provider.getEpisodeTitle(402033, 6, 3)).resolves.toBeNull();
+    });
+
+    it("prefers exact anime translation match over mixed CJK live-action result in searchAnime", async () => {
+        axiosGetMock.mockImplementation(async (url: string) => {
+            if (url.endsWith("/search")) {
+                return {
+                    data: {
+                        data: [
+                            {
+                                id: "series-451468",
+                                tvdb_id: "451468",
+                                name: "时光代理人Link Click",
+                                slug: "shi-guang-dai-li-ren",
+                                type: "series",
+                            },
+                            {
+                                id: "series-402033",
+                                tvdb_id: "402033",
+                                name: "时光代理人",
+                                slug: "link-click",
+                                translations: { eng: "Link Click" },
+                                genres: ["Animation", "Anime"],
+                                type: "series",
+                            },
+                        ],
+                    },
+                };
+            }
+
+            throw new Error(`Unexpected URL: ${url}`);
+        });
+
+        const { TvdbProvider } = await import("../src/providers/tvdb");
+        const provider = new TvdbProvider();
+
+        const result = await provider.searchAnime("Link Click");
+        expect(result?.id).toBe(402033);
+    });
 });
 
 describe("TvdbProvider season artwork", () => {
@@ -808,6 +941,54 @@ describe("TvdbProvider season artwork", () => {
 
         expect(animeInfo?.cover_url).toBe("https://example.test/series-poster.jpg");
         expect(animeInfo?.season_cover_url).toBeNull();
+    });
+
+    it("prefers JoJo 2012 TV series (262954) over 1993 OVA (83950) when searching 'JoJos Bizarre Adventure'", async () => {
+        axiosGetMock.mockImplementation(async (url: string) => {
+            if (url.endsWith("/search")) {
+                return {
+                    data: {
+                        data: [
+                            {
+                                tvdb_id: "287074",
+                                name: "JoJo's Bizarre Adventure: The Abridged Series",
+                                slug: "jojos-bizarre-adventure-the-abridged-series",
+                                status: "Ended",
+                                translations: { eng: "JoJo's Bizarre Adventure: The Abridged Series" },
+                                aliases: ["JJBATAS"],
+                            },
+                            {
+                                tvdb_id: "262954",
+                                name: "ジョジョの奇妙な冒険 (2012)",
+                                slug: "jojos-bizarre-adventure-2012",
+                                status: "Continuing",
+                                translations: { eng: "JoJo's Bizarre Adventure (2012)" },
+                                aliases: [
+                                    "JoJo's Bizarre Adventure",
+                                    "JoJo's Bizarre Adventure: Steel Ball Run",
+                                ],
+                            },
+                            {
+                                tvdb_id: "83950",
+                                name: "ジョジョの奇妙な冒険",
+                                slug: "jojos-bizarre-adventure",
+                                status: "Ended",
+                                translations: { eng: "JoJo's Bizarre Adventure" },
+                                aliases: ["JoJo no Kimyou na Bouken"],
+                            },
+                        ],
+                    },
+                };
+            }
+
+            throw new Error(`Unexpected URL: ${url}`);
+        });
+
+        const { TvdbProvider } = await import("../src/providers/tvdb");
+        const provider = new TvdbProvider();
+
+        const searchResult = await provider.searchAnime("JoJos Bizarre Adventure", 6);
+        expect(searchResult?.id).toBe(262954);
     });
 });
 

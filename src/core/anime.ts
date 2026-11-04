@@ -829,9 +829,12 @@ export async function getEpisodeTitle(
                     );
                 }
             } else {
-                console.log(`[Anime] ${provider.name} has no episode data, trying fallbacks...`);
+                console.log(`[Anime] ${sourceProvider || provider.name} has no episode data, trying fallbacks...`);
 
                 for (const fallback of fallbackProviders) {
+                    if (fallback.name === sourceProvider) {
+                        continue;
+                    }
                     console.log(`[Anime] Trying ${fallback.name} fallback...`);
 
                     try {
