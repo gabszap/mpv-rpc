@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { levenshteinDistance, calculateTitleScore, computeAlternativeTitleScore } from "../src/providers/jikan";
+import { calculateTitleScore, computeAlternativeTitleScore, levenshteinDistance } from "../src/providers/jikan";
 
 describe("levenshteinDistance", () => {
     it("returns 0 for identical strings", () => {
@@ -90,12 +90,20 @@ describe("calculateTitleScore", () => {
     it("penalizes title much longer than query", () => {
         // Query "naruto" starts the title → gets 500 + 350 + 200 = 1050, then -100 penalty = 950
         // The length ratio is 6/48 = 0.125 < 0.3 so the -100 penalty is applied
-        const scoreLong = calculateTitleScore("naruto", "Naruto: Shippuden - The Movie 5: The Blood Prison", "Naruto Shipuden");
+        const scoreLong = calculateTitleScore(
+            "naruto",
+            "Naruto: Shippuden - The Movie 5: The Blood Prison",
+            "Naruto Shipuden",
+        );
         expect(scoreLong).toBeLessThan(1000); // penalty applied, without it would be 1050
 
         // A short non-matching query with length > 1 → ratio 3/48 = 0.0625 < 0.3 → -100 penalty
         // No word-match bonuses since "zzz" isn't in the title
-        const scoreShort = calculateTitleScore("zzz", "Naruto: Shippuden - The Movie 5: The Blood Prison", "Naruto Shipuden");
+        const scoreShort = calculateTitleScore(
+            "zzz",
+            "Naruto: Shippuden - The Movie 5: The Blood Prison",
+            "Naruto Shipuden",
+        );
         expect(scoreShort).toBeLessThan(0); // penalty alone with no bonuses
     });
 
@@ -138,9 +146,7 @@ describe("computeAlternativeTitleScore", () => {
     });
 
     it("returns correct weighted score for exact synonym match", () => {
-        const titles = [
-            { type: "Synonym", title: "AOT" },
-        ];
+        const titles = [{ type: "Synonym", title: "AOT" }];
         // "aot" accumulates all scoring: exact(1000) + starts-with(500) +
         // word-match(350) + substring(200) = 2050 → 50% weight = 1025
         const score = computeAlternativeTitleScore("aot", titles);
@@ -148,9 +154,7 @@ describe("computeAlternativeTitleScore", () => {
     });
 
     it("applies 50% weight to alternative title scores", () => {
-        const titles = [
-            { type: "Japanese", title: "進撃の巨人" },
-        ];
+        const titles = [{ type: "Japanese", title: "進撃の巨人" }];
         const score = computeAlternativeTitleScore("進撃の巨人", titles);
         // Accumulates: exact(1000) + starts-with(500) + word-match(350) +
         // substring(200) = 2050 → 50% weight = 1025

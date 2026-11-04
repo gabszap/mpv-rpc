@@ -506,7 +506,10 @@ export function calculateTitleScore(
  * Score the query against alternative titles (excluding "Default" and "English")
  * at 50% weight, returning the best alternative score (or 0 if none).
  */
-export function computeAlternativeTitleScore(normalizedQuery: string, titles: Array<{ type: string; title: string }>): number {
+export function computeAlternativeTitleScore(
+    normalizedQuery: string,
+    titles: Array<{ type: string; title: string }>,
+): number {
     let bestScore = 0;
 
     for (const entry of titles) {
@@ -571,12 +574,7 @@ function formatCompactJikanError(error: unknown): string {
 
     const status = typeof err.response?.status === "number" ? err.response.status : null;
     const apiError = err.response?.data?.error;
-    const code =
-        typeof err.code === "string"
-            ? err.code
-            : typeof apiError?.code === "string"
-              ? apiError.code
-              : null;
+    const code = typeof err.code === "string" ? err.code : typeof apiError?.code === "string" ? apiError.code : null;
     const message =
         typeof apiError?.message === "string" && apiError.message.trim().length > 0
             ? apiError.message
@@ -704,13 +702,7 @@ export class JikanProvider implements AnimeProvider {
             const malId = readJikanMalId(anime) ?? id;
             const englishTitle = anime.titleEnglish ?? anime.title_english ?? null;
 
-            logApiCall(
-                "Jikan",
-                `/anime/${id}`,
-                {},
-                "DETAIL",
-                `"${englishTitle || anime.title}" (${anime.type})`,
-            );
+            logApiCall("Jikan", `/anime/${id}`, {}, "DETAIL", `"${englishTitle || anime.title}" (${anime.type})`);
 
             return {
                 id: malId,
@@ -875,8 +867,7 @@ export class JikanProvider implements AnimeProvider {
         // Prefer non-movie/special anime entries in jikan-edge flat relations
         const nonMovieAnimeEntry = sequelEntries.find(
             (entry) =>
-                entry.type === "anime" &&
-                (!entry.title || !/\b(?:movie|ova|special|recap)\b/i.test(entry.title)),
+                entry.type === "anime" && (!entry.title || !/\b(?:movie|ova|special|recap)\b/i.test(entry.title)),
         );
         if (nonMovieAnimeEntry) return nonMovieAnimeEntry;
 

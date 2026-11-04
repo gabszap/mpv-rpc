@@ -583,7 +583,12 @@ function isPlayableStremioStream(stream) {
  * playability predicate (placeholder text, non-playable hosts and extensions).
  */
 function findBestStream(streams, config, targetSeason = null, targetEpisode = null) {
-    return findBestStreamShared(streams, { ...config, isPlayable: isPlayableStremioStream }, targetSeason, targetEpisode);
+    return findBestStreamShared(
+        streams,
+        { ...config, isPlayable: isPlayableStremioStream },
+        targetSeason,
+        targetEpisode,
+    );
 }
 
 /**
@@ -1213,7 +1218,6 @@ async function fetchStreams(baseUrl, id, season, episode) {
     const data = result.data;
     return data?.streams ? data.streams : [];
 }
-
 
 /**
  * Read a release status directly stated by addon metadata.
