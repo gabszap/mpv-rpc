@@ -1,0 +1,20 @@
+// ==UserScript==
+// @name         Stremio MPV Bridge
+// @namespace    https://github.com/gabszap/mpv-rpc
+// @version      1.11.0
+// @icon         https://www.stremio.com/website/stremio-purple-small.png
+// @description  Open Stremio Web streams directly in MPV with playlist support
+// @homepage     https://github.com/gabszap/mpv-rpc
+// @updateURL    https://github.com/gabszap/mpv-rpc/raw/refs/heads/main/stremio-mpv-bridge/stremio-mpv.user.js
+// @downloadURL  https://github.com/gabszap/mpv-rpc/raw/refs/heads/main/stremio-mpv-bridge/stremio-mpv.user.js
+// @author       gabszap
+// @match        https://web.stremio.com/*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_notification
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_registerMenuCommand
+// @connect      localhost
+// @connect      *
+// @run-at       document-idle
+// ==/UserScript==

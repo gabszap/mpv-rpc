@@ -9,6 +9,8 @@
     "start:all": "concurrently -n \"rpc,bridge\" -c \"cyan,magenta\" --handle-input --default-input-target 0 --kill-others \"node dist/index.js\" \"node stremio-mpv-bridge/server.js\"",
     "dev": "tsc && npm run start",
     "bridge": "npm run start --workspace=stremio-mpv-bridge",
+    "build:userscript": "node stremio-mpv-bridge/scripts/build-userscript.mjs",
+    "check:userscript": "node stremio-mpv-bridge/scripts/build-userscript.mjs --check",
     "test": "vitest run",
     "lint": "biome lint .",
     "lint:fix": "biome lint --fix .",
@@ -50,6 +52,7 @@
     "concurrently": "^9.2.1",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "dotenv-cli": "^11.0.0",
+    "esbuild": "^0.28.2",
     "semantic-release": "^25.0.3",
     "typescript": "^5.9.3",
     "vitest": "^4.0.16"
