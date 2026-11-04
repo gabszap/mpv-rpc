@@ -102,7 +102,50 @@ function extractSeasonNumber(title: string): number | null {
 }
 
 function isPartOfSameSeason(title: string): boolean {
-    return /\bpart\s*\d+/i.test(title) || /\bcour\s*\d+/i.test(title);
+    return /\bpart\s*\d+\b(?!\s*:)/i.test(title) || /\bcour\s*\d+\b(?!\s*:)/i.test(title);
+}
+
+function isSameSeasonContinuation(
+    currentTitle: string | null | undefined,
+    previousTitle: string | null | undefined,
+    currentSeason: number,
+): boolean {
+    if (!currentTitle) return false;
+    if (isPartOfSameSeason(currentTitle)) return true;
+
+    const seasonInTitle = extractSeasonNumber(currentTitle);
+    if (seasonInTitle !== null && seasonInTitle > 1 && seasonInTitle <= currentSeason) {
+        return true;
+    }
+
+    if (previousTitle) {
+        const currentPartPrefix = currentTitle.match(/\bpart\s*(\d+)\s*:/i)?.[1];
+        const previousPartPrefix = previousTitle.match(/\bpart\s*(\d+)\s*:/i)?.[1];
+        if (currentPartPrefix && previousPartPrefix && currentPartPrefix === previousPartPrefix) {
+            return true;
+        }
+
+        const colonIndex = previousTitle.indexOf(":");
+        if (colonIndex > 0) {
+            const prevSubtitledBase = previousTitle
+                .replace(/\s+(?:part|cour)\s*\d+.*$/i, "")
+                .trim()
+                .toLowerCase();
+            const prevSubtitle = prevSubtitledBase.slice(colonIndex + 1).trim();
+            const currNormalized = currentTitle.trim().toLowerCase();
+            if (
+                prevSubtitle.length >= 4 &&
+                !/^(?:season\s*\d+|\d+(?:st|nd|rd|th)\s*season)$/i.test(prevSubtitle) &&
+                currNormalized.length > prevSubtitledBase.length &&
+                currNormalized.startsWith(prevSubtitledBase) &&
+                /^[\s\-:]/i.test(currNormalized.slice(prevSubtitledBase.length))
+            ) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 export class KitsuProvider implements AnimeProvider {
@@ -231,12 +274,17 @@ export class KitsuProvider implements AnimeProvider {
             const isTvSeries = sequel.type === "TV" || sequel.type === "ONA";
 
             if (isTvSeries) {
+                const previousTvAnime = lastTvAnime;
                 lastTvAnime = sequel;
 
-                // Check if title contains target season number
+                // Check if title contains target season number or is a split-cour continuation
                 const seasonInTitle =
                     extractSeasonNumber(sequel.title_romaji) || extractSeasonNumber(sequel.title_english || "");
-                if (seasonInTitle === targetSeason) {
+                const isPart =
+                    isSameSeasonContinuation(sequel.title_romaji, previousTvAnime?.title_romaji, currentSeason) ||
+                    isSameSeasonContinuation(sequel.title_english, previousTvAnime?.title_english, currentSeason);
+
+                if (!isPart && seasonInTitle === targetSeason) {
                     logApiCall(
                         "Kitsu",
                         "findSeason",
@@ -247,9 +295,7 @@ export class KitsuProvider implements AnimeProvider {
                     return markSeasonAnimeValidated(sequel, targetSeason, "explicit-title");
                 }
 
-                // Skip "Part" entries that are same season
-                const isPart =
-                    isPartOfSameSeason(sequel.title_romaji) || isPartOfSameSeason(sequel.title_english || "");
+                // Skip "Part" / cour entries that are same season
                 if (!isPart) {
                     currentSeason++;
                 }
