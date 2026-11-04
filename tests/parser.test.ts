@@ -1,11 +1,23 @@
 import * as child_process from "node:child_process";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as parser from "../src/parser";
 
 // Mock execFile to simulate GuessIt responses
 vi.mock("node:child_process", async () => {
     return {
         execFile: vi.fn(),
+    };
+});
+
+// Mock axios so tests can control the GuessIt HTTP API path.
+// By default `post` rejects (so tests get the same null behavior as
+// when the API is unreachable). Tests that need a real GuessIt call
+// can override `axios.post` per-test with vi.mocked(axios.post).
+vi.mock("axios", async () => {
+    const post = vi.fn().mockRejectedValue(new Error("GuessIt API mocked to fail by default"));
+    return {
+        default: { post },
+        post,
     };
 });
 
@@ -16,6 +28,16 @@ vi.mock("node:child_process", async () => {
 // Let's rely on the fallback parser tests which are robust enough for our unit testing purposes.
 
 describe("Parser Fallback Logic", () => {
+    // The GuessIt HTTP API is mocked globally to reject. Reset the
+    // mock before every test in this block so per-test overrides
+    // (vi.mocked(axios.post).mockResolvedValue(...)) don't leak
+    // into later tests and pollute the parseCache.
+    beforeEach(async () => {
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockReset();
+        vi.mocked(axios.default.post).mockRejectedValue(new Error("GuessIt API mocked to fail by default"));
+    });
+
     // We can't easily export the non-exported fallbackParse from the module directly
     // unless we export it or use rewind.
     // However, if we force "GuessIt" to fail (by mocking it to throw or return null),
@@ -115,6 +137,14 @@ describe("Parser Fallback Logic", () => {
             return {} as any;
         });
 
+        // The HTTP GuessIt API is mocked globally to fail. This test
+        // exercises the URL-decode + GuessIt pipeline, so we need the
+        // API to return a realistic GuessIt payload here.
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockResolvedValue({
+            data: { title: "Oshi no Ko", season: 3, episode: 9 },
+        } as any);
+
         const filename = "%5BErai%20raws%5D%20Oshi%20no%20Ko%203rd%20Season%20-%2009.mkv";
         const result = await parser.parseFilename(filename);
 
@@ -132,6 +162,14 @@ describe("Parser Fallback Logic", () => {
             return {} as any;
         });
 
+        // The HTTP GuessIt API is mocked globally to fail. Route this
+        // test through the API so processGuessitResult sees the
+        // "language: Korean" payload that drives the Oshi-no-Ko fix.
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockResolvedValue({
+            data: { title: "Oshi no", language: "Korean", season: 3, episode: 9 },
+        } as any);
+
         const filename = "[Trix] Oshi no Ko S03E09 [WEBRip 1080p AV1] (Multi Subs).mkv";
         const result = await parser.parseFilename(filename);
 
@@ -148,6 +186,14 @@ describe("Parser Fallback Logic", () => {
             return {} as any;
         });
 
+        // The HTTP GuessIt API is mocked globally to fail. Route this
+        // test through the API so processGuessitResult sees the
+        // "language: Korean" payload that drives the Oshi-no-Ko fix.
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockResolvedValue({
+            data: { title: "OSHI NO", language: "Korean", season: 3, episode: 10 },
+        } as any);
+
         const filename = "OSHI.NO.KO.S03E10.Private.Audition.1080p.CR.WEB-DL.AAC2.0.H.264-VARYG.mkv";
         const result = await parser.parseFilename(filename);
 
@@ -163,6 +209,14 @@ describe("Parser Fallback Logic", () => {
             if (callback) callback(null, stdout, "");
             return {} as any;
         });
+
+        // The HTTP GuessIt API is mocked globally to fail. Route this
+        // test through the API so processGuessitResult is exercised
+        // with the partial GuessIt payload (title + episode_title only).
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockResolvedValue({
+            data: { title: "Dr Stone", episode_title: "New World" },
+        } as any);
 
         const filename = "[Erai-raws] Dr Stone - New World - 02 [1080p][HEVC][93028C2D].mkv";
         const result = await parser.parseFilename(filename);
@@ -212,6 +266,12 @@ describe("Parser Fallback Logic", () => {
 });
 
 describe("Invalid Title Validation", () => {
+    beforeEach(async () => {
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockReset();
+        vi.mocked(axios.default.post).mockRejectedValue(new Error("GuessIt API mocked to fail by default"));
+    });
+
     it('should mark "0" as unknown media type (streaming URL bug)', async () => {
         const execFileMock = vi.spyOn(child_process, "execFile");
         execFileMock.mockImplementation((_file, _args, _options, callback) => {
@@ -299,5 +359,103 @@ describe("Media Title Sanitization", () => {
 
         const title = "Jujutsu Kaisen S03E03 1080p NF WEB-DL (Multi Subs)";
         expect(sanitizeMediaTitle(title)).toBe("Jujutsu Kaisen S03E03 1080p NF WEB-DL");
+    });
+});
+
+describe("Anime Release Fallback", () => {
+    // The anime-release fallback sits AFTER GuessIt in the parseFilename
+    // pipeline, so each of these tests must make BOTH GuessIt paths
+    // (HTTP API and CLI) fail before the new fallback is exercised.
+    // The CLI is mocked via vi.spyOn on child_process.execFile (same
+    // pattern as the other test blocks). The HTTP API is mocked here
+    // locally with vi.mocked to keep this block self-contained and to
+    // avoid disrupting tests that depend on a real GuessIt API call.
+    beforeEach(async () => {
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockRejectedValue(new Error("GuessIt API disabled in test"));
+    });
+
+    it("should parse the Dr Stone Science Future Part 3 release", async () => {
+        const execFileMock = vi.spyOn(child_process, "execFile");
+        execFileMock.mockImplementation((_file, _args, _options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const filename = "[Erai-raws] Dr Stone - Science Future Part 3 - 06 [1080p CR WEBRip HEVC]";
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe("Dr Stone - Science Future Part 3");
+        expect(result.episode).toBe(6);
+        expect(result.media_type).toBe("anime");
+    });
+
+    it("should parse SubsPlease-style release with codec tag", async () => {
+        const execFileMock = vi.spyOn(child_process, "execFile");
+        execFileMock.mockImplementation((_file, _args, _options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const filename = "[SubsPlease] Jujutsu Kaisen - 05 [1080p][HEVC].mkv";
+        const result = await parser.parseFilename(filename);
+
+        expect(result.series_title).toBe("Jujutsu Kaisen");
+        expect(result.episode).toBe(5);
+        expect(result.media_type).toBe("anime");
+    });
+
+    it("should fall through to existing fallback for non-anime SxxExx patterns", async () => {
+        const execFileMock = vi.spyOn(child_process, "execFile");
+        execFileMock.mockImplementation((_file, _args, _options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const filename = "Breaking.Bad.S05E14.1080p.BluRay.x264.mkv";
+        const result = await parser.parseFilename(filename);
+
+        // Non-anime, SxxExx pattern: the anime release fallback returns null,
+        // so the existing fallbackParse must still do its job.
+        expect(result.series_title).toBe("Breaking Bad");
+        expect(result.season).toBe(5);
+        expect(result.episode).toBe(14);
+    });
+
+    it("should return N/A title and unknown media type for garbage input", async () => {
+        const execFileMock = vi.spyOn(child_process, "execFile");
+        execFileMock.mockImplementation((_file, _args, _options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const result = await parser.parseFilename("not a real filename");
+
+        // Garbage input: the anime release fallback returns null, the
+        // existing fallbackParse is used. isValidSearchTitle treats this
+        // as a valid search title (more than 2 letters), so series_title
+        // is the cleaned filename. media_type has no anime/series signals.
+        expect(result.series_title).toBe("not a real filename");
+        expect(result.media_type).toBe("unknown");
+        expect(result.season).toBeNull();
+        expect(result.episode).toBeNull();
+    });
+
+    it("parseAnimeReleaseFallback should return the expected structure for the Dr Stone case", () => {
+        // Direct call, no parseFilename indirection. Verifies the exported
+        // function's return shape and field extraction independently of
+        // the rest of the parser pipeline.
+        const result = parser.parseAnimeReleaseFallback(
+            "[Erai-raws] Dr Stone - Science Future Part 3 - 06 [1080p CR WEBRip HEVC]",
+        );
+
+        expect(result).not.toBeNull();
+        expect(result?.title).toBe("Dr Stone - Science Future Part 3");
+        expect(result?.episode).toBe(6);
+        expect(result?.releaseGroup).toBe("Erai-raws");
+        expect(result?.resolution).toBe("1080p");
+        expect(result?.source).toBe("CR WEBRip");
+        expect(result?.codec).toBe("HEVC");
+        expect(result?.confidence).toBe("high");
     });
 });

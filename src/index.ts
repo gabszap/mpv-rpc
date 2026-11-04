@@ -12,6 +12,7 @@ import * as discord from "./discord";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
 import * as mpv from "./mpv";
 import { checkAvailability } from "./parser";
+import { trySyncStremio } from "./stremio-sync/sync";
 import { getUser } from "./trakt-sync/api";
 import { authorize as traktAuthorize, isAuthenticated as traktIsAuthenticated } from "./trakt-sync/auth";
 import { stopCurrentScrobble, tryScrobble } from "./trakt-sync/sync";
@@ -23,6 +24,8 @@ let _isRunning = false;
 let isUpdating = false; // Mutex to prevent parallel updates
 let lastMalDiagnosticKey: string | null = null; // Avoid repeating MAL diagnostic logs
 let lastMalSyncSuccessKey: string | null = null; // Avoid repeated MAL success logs
+let lastStremioDiagnosticKey: string | null = null; // Avoid repeating Stremio diagnostic logs
+let lastStremioSyncSuccessKey: string | null = null; // Avoid repeated Stremio success logs
 
 function logMalDiagnostic(key: string, message: string): void {
     if (lastMalDiagnosticKey === key) {
@@ -31,6 +34,51 @@ function logMalDiagnostic(key: string, message: string): void {
 
     lastMalDiagnosticKey = key;
     console.log(message);
+}
+
+function logStremioDiagnostic(key: string, message: string): void {
+    if (lastStremioDiagnosticKey === key) {
+        return;
+    }
+
+    lastStremioDiagnosticKey = key;
+    console.log(message);
+}
+
+function formatStremioSkipReason(reason: string): string {
+    if (reason === "missing-auth") {
+        return "auth token not found; open something through the Stremio bridge to save .config/.stremio_tokens.json.";
+    }
+
+    if (reason === "missing-or-invalid-context") {
+        return "playback context not found, stale, or invalid; open the stream through the Stremio bridge again.";
+    }
+
+    if (reason === "invalid-playback-progress") {
+        return "MPV did not report valid time/duration yet.";
+    }
+
+    if (reason === "progress-too-low") {
+        return "playback is still near the start; waiting for at least 5 seconds and 1% before writing Continue Watching so a 0% offset is not saved.";
+    }
+
+    if (reason === "playback-context-mismatch") {
+        return "current MPV title/season/episode does not match saved .config/.stremio-mpv-config.json context.";
+    }
+
+    if (reason === "missing-video-id") {
+        return "saved context has no safe video_id for Continue Watching.";
+    }
+
+    if (reason === "progress-interval") {
+        return `waiting for STREMIO_PROGRESS_INTERVAL_MS (${config.stremio.progressIntervalMs}ms); Continue Watching is not gated by the ${config.stremio.syncThreshold}% watched threshold.`;
+    }
+
+    if (reason === "library-item-not-found") {
+        return "Stremio datastore returned no library item for the saved libraryItemId; Continue Watching can only update an existing library item.";
+    }
+
+    return reason;
 }
 
 /**
@@ -50,6 +98,8 @@ async function update(): Promise<void> {
             await discord.clearActivity();
             lastMalDiagnosticKey = null;
             lastMalSyncSuccessKey = null;
+            lastStremioDiagnosticKey = null;
+            lastStremioSyncSuccessKey = null;
 
             // Stop Trakt scrobble if active
             if (config.trakt.enabled && traktIsAuthenticated()) {
@@ -142,6 +192,40 @@ async function update(): Promise<void> {
             }
         }
 
+        // Stremio sync - conservative Continue Watching progress only
+        if (config.stremio.enabled) {
+            try {
+                const result = await trySyncStremio(data);
+                if (result.status === "error") {
+                    logStremioDiagnostic(
+                        `${data.filename}:error:${result.reason}`,
+                        `[Stremio] Continue Watching sync failed: ${result.reason}`,
+                    );
+                } else if (result.status === "skipped") {
+                    logStremioDiagnostic(
+                        `${data.filename}:skip:${result.reason}`,
+                        `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${formatStremioSkipReason(result.reason)}`,
+                    );
+                } else if (result.status === "synced") {
+                    const syncKey = `${data.filename}:${result.libraryItemId}`;
+                    if (lastStremioSyncSuccessKey !== syncKey) {
+                        console.log(
+                            `[Stremio] Continue Watching synced: ${data.series_title} (${Math.round(data.percent_pos)}%, libraryItemId: ${result.libraryItemId}). Watched badges are not updated by the MVP.`,
+                        );
+                        lastStremioSyncSuccessKey = syncKey;
+                    }
+                    lastStremioDiagnosticKey = null;
+                }
+            } catch (e) {
+                console.error("[Stremio] Sync error:", e);
+            }
+        } else {
+            logStremioDiagnostic(
+                "disabled",
+                "[Stremio] Sync disabled. Set STREMIO_SYNC=true to enable Continue Watching progress sync.",
+            );
+        }
+
         // Auto-fetch: check if we should fetch next episodes
         await checkAndTriggerAutoFetch(data);
     } catch (e) {
@@ -228,6 +312,12 @@ async function start(): Promise<void> {
     } else {
         console.log("[Main] Trakt sync: disabled");
     }
+
+    console.log(
+        config.stremio.enabled
+            ? `[Main] Stremio sync: enabled (Continue Watching MVP; writes every ${config.stremio.progressIntervalMs}ms, not gated by ${config.stremio.syncThreshold}% threshold)`
+            : "[Main] Stremio sync: disabled",
+    );
 
     // Try to connect to MPV
     console.log("[Main] Looking for MPV...");

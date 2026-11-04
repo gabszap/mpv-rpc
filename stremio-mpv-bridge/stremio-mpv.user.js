@@ -222,6 +222,7 @@
         { id: "custom", name: "Custom", url: "", enabled: true },
     ];
 
+    // Default to 2 episodes (unified with bridge + RPC); user can override 1..25
     let extraEpisodes = GM_getValue("extraEpisodes", 2);
     let playlistMode = GM_getValue("playlistMode", "batch");
     let mpvShortcut = GM_getValue("mpvShortcut", "v");
@@ -1665,6 +1666,10 @@
     }
 
     // ==================== URL PARSER ====================
+    function isRealImdbId(id) {
+        return typeof id === "string" && /^tt\d+$/.test(id);
+    }
+
     function parseCurrentURL() {
         const hash = window.location.hash;
         log("Parsing URL:", `${hash.substring(0, 80)}...`);
@@ -1686,10 +1691,14 @@
 
         const imdbMatch = decodedHash.match(/(tt\d+):(\d+):(\d+)/);
         if (imdbMatch) {
+            const videoId = imdbMatch[0];
             const result = {
                 type: "series",
+                libraryItemId: seriesId || imdbMatch[1],
                 imdbId: imdbMatch[1],
                 seriesId: seriesId || imdbMatch[1],
+                streamId: imdbMatch[1],
+                videoId,
                 name: uiMeta.seriesName,
                 season: parseInt(imdbMatch[2], 10),
                 episode: parseInt(imdbMatch[3], 10),
@@ -1701,10 +1710,14 @@
 
         const kitsuMatch = decodedHash.match(/kitsu[:%]3A(\d+)[:%]3A(\d+)/i) || decodedHash.match(/kitsu:(\d+):(\d+)/i);
         if (kitsuMatch) {
+            const streamId = `kitsu:${kitsuMatch[1]}`;
             const result = {
                 type: "series",
-                imdbId: `kitsu:${kitsuMatch[1]}`,
-                seriesId: seriesId || `kitsu:${kitsuMatch[1]}`,
+                libraryItemId: seriesId || streamId,
+                imdbId: null,
+                seriesId: seriesId || streamId,
+                streamId,
+                videoId: `${streamId}:${kitsuMatch[2]}`,
                 name: uiMeta.seriesName,
                 episodeTitle: uiMeta.episodeTitle,
                 season: uiMeta.season || 1,
@@ -1719,10 +1732,15 @@
             decodedHash.match(/(\w+)[:%]3A(\d+)[:%]3A(\d+)[:%]3A(\d+)/i) ||
             decodedHash.match(/(\w+):(\d+):(\d+):(\d+)/i);
         if (genericMatch) {
+            const streamId = `${genericMatch[1]}:${genericMatch[2]}`;
+            const videoId = `${streamId}:${genericMatch[3]}:${genericMatch[4]}`;
             const result = {
                 type: "series",
-                imdbId: `${genericMatch[1]}:${genericMatch[2]}`,
-                seriesId: seriesId || `${genericMatch[1]}:${genericMatch[2]}`,
+                libraryItemId: seriesId || streamId,
+                imdbId: isRealImdbId(streamId) ? streamId : null,
+                seriesId: seriesId || streamId,
+                streamId,
+                videoId,
                 name: uiMeta.seriesName,
                 season: parseInt(genericMatch[3], 10),
                 episode: parseInt(genericMatch[4], 10),
@@ -1736,8 +1754,11 @@
         if (imdbIdMatch) {
             return {
                 type: "series",
+                libraryItemId: seriesId || imdbIdMatch[1],
                 imdbId: imdbIdMatch[1],
                 seriesId: seriesId || imdbIdMatch[1],
+                streamId: imdbIdMatch[1],
+                videoId: null,
                 name: uiMeta.seriesName,
                 season: parseInt(decodedHash.match(/season=(\d+)/)?.[1], 10) || uiMeta.season || null,
                 episode: null,
@@ -1986,13 +2007,17 @@
             for (const p of providers) {
                 if (!p.enabled || !p.url) continue;
                 log(`Trying ${p.name || p.id} for S${season}E${ep}...`);
-                const streams = await fetchStreams(p.url, content.imdbId, season, ep);
+                const providerSeriesId = content.streamId || content.imdbId || content.seriesId;
+                if (!providerSeriesId) continue;
+
+                const streams = await fetchStreams(p.url, providerSeriesId, season, ep);
                 const streamItem = findBestStream(streams);
                 if (streamItem) {
                     log(`Found on ${p.name || p.id}`);
                     return {
                         ...streamItem,
                         imdbId: content.imdbId,
+                        streamId: providerSeriesId,
                         season: season,
                         episode: ep,
                         type: content.type,
@@ -2012,7 +2037,10 @@
 
             for (const p of providers) {
                 if (!p.enabled || !p.url) continue;
-                const episodes = await fetchSeriesMeta(p.url, content.imdbId);
+                const providerSeriesId = content.streamId || content.imdbId || content.seriesId;
+                if (!providerSeriesId) continue;
+
+                const episodes = await fetchSeriesMeta(p.url, providerSeriesId);
                 if (episodes.length > 0) {
                     discoveredEpisodes = episodes;
                     log(`Discovered ${episodes.length} episodes from ${p.name || p.id} meta`);
@@ -2021,6 +2049,11 @@
             }
 
             if (discoveredEpisodes.length > 0) {
+                const sameSeasonEpisodes = discoveredEpisodes.filter((ep) => ep.season === content.season);
+                if (sameSeasonEpisodes.length > 0) {
+                    content.episodesInSeason = sameSeasonEpisodes.length;
+                }
+
                 // Filter to episodes after the current one
                 const nextEpisodes = discoveredEpisodes
                     .filter((ep) => {
@@ -2198,9 +2231,10 @@
         return new Promise((resolve, reject) => {
             const profile = JSON.parse(localStorage.getItem("profile") || "{}");
             const authKey = profile.auth?.key;
+            const realImdbId = isRealImdbId(title.imdbId) ? title.imdbId : null;
 
             log(
-                `Bridge: Sending payload with authKey: ${authKey ? "Found" : "MISSING"} | seriesId: ${title.seriesId} | imdbId: ${title.imdbId}`,
+                `Bridge: Sending payload with authKey: ${authKey ? "Found" : "MISSING"} | libraryItemId: ${title.libraryItemId || title.seriesId} | imdbId: ${realImdbId || "none"}`,
             );
 
             GM_xmlhttpRequest({
@@ -2209,16 +2243,19 @@
                 headers: { "Content-Type": "application/json" },
                 data: JSON.stringify({
                     playlist,
-                    contentTitle: title.imdbId,
+                    contentTitle: title.videoId || title.streamId || realImdbId || title.seriesId,
                     args: mpvArgsStr,
                     stremioAuth: authKey,
                     stremioContext: {
+                        libraryItemId: title.libraryItemId || title.seriesId,
                         seriesId: title.seriesId,
-                        imdbId: title.imdbId,
+                        imdbId: realImdbId,
+                        videoId: title.videoId || null,
                         name: title.name,
                         episodeTitle: title.episodeTitle,
                         season: title.season,
                         episode: title.episode,
+                        episodesInSeason: title.episodesInSeason || null,
                         type: title.type,
                     },
                 }),

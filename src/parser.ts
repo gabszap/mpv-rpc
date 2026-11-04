@@ -16,6 +16,32 @@ export interface ParsedFilename {
     media_type: "anime" | "series" | "unknown";
 }
 
+/**
+ * Result of `parseAnimeReleaseFallback` — a partial parse of an anime release
+ * filename shaped like "[Group] Title - Episode [Tags]".
+ *
+ * Fields mirror the structural data the existing parse flow needs to build a
+ * `ParsedFilename` without re-running the more expensive GuessIt pipeline.
+ * Optional fields stay `undefined` when the corresponding tag is absent
+ * from the release's tags block; the caller decides what to do with them.
+ */
+export type AnimeReleaseParseResult = {
+    title: string;
+    episode?: number;
+    releaseGroup?: string;
+    resolution?: string;
+    source?: string;
+    codec?: string;
+    confidence: "low" | "medium" | "high";
+};
+
+/**
+ * Primary regex for anime release filenames shaped like
+ * "[Group] Title - Episode [Tags]".
+ * Captures: group, title, episode, tags block.
+ */
+const ANIME_RELEASE_REGEX = /^\[(?<group>[^\]]+)\]\s+(?<title>.+?)\s+-\s+(?<episode>\d{1,4})\s+\[(?<tags>[^\]]+)\]/i;
+
 const execFileAsync = promisify(execFile);
 
 // Cache for parsed filenames to avoid repeated API calls
@@ -149,6 +175,7 @@ function extractEpisodeFromFilename(filename: string): number | null {
 
 const loggedInvalidTitles: Set<string> = new Set();
 const loggedTorrentExtractions: Set<string> = new Set();
+const loggedAnimeFallbackMatches: Set<string> = new Set();
 
 /**
  * Check if a title is valid for API searches
@@ -321,6 +348,70 @@ function processGuessitResult(
 }
 
 /**
+ * Emit a debug-level log at most once per unique key.
+ * Uses `console.debug` when available, falling back to `console.log`.
+ * Intended to remain quiet; can be enabled later via DEBUG=true plumbing.
+ */
+function logDebugOnce(key: string, message: string): void {
+    if (loggedAnimeFallbackMatches.has(key)) {
+        return;
+    }
+    loggedAnimeFallbackMatches.add(key);
+    if (typeof console.debug === "function") {
+        console.debug(message);
+    } else {
+        console.log(message);
+    }
+}
+
+/**
+ * Anime-release fallback parser for filenames like
+ * "[Erai-raws] Dr Stone - Science Future Part 3 - 06 [1080p CR WEBRip HEVC]".
+ *
+ * GuessIt misinterprets the subtitle ("Science Future Part 3") as the
+ * episode title for these releases; this parser extracts the fields the
+ * existing flow needs (title, episode, release metadata) and returns
+ * null when the pattern does not match.
+ *
+ * The returned `title` is the raw matched group so the caller can
+ * apply the existing `cleanTitle` for normalization.
+ */
+export function parseAnimeReleaseFallback(filename: string): AnimeReleaseParseResult | null {
+    const match = ANIME_RELEASE_REGEX.exec(filename);
+    if (!match?.groups) {
+        return null;
+    }
+
+    const group = match.groups.group?.trim();
+    const title = match.groups.title?.trim();
+    const episodeRaw = match.groups.episode;
+    const tags = match.groups.tags ?? "";
+
+    if (!title) {
+        return null;
+    }
+
+    const episode = episodeRaw ? parseInt(episodeRaw, 10) : NaN;
+    if (!Number.isFinite(episode)) {
+        return null;
+    }
+
+    const resolutionMatch = tags.match(/(?<!\w)(720p|1080p|2160p|4K)(?!\w)/i);
+    const sourceMatch = tags.match(/(CR\s*WEBRip|WEB-DL|WEBRip|BluRay|BDRip)/i);
+    const codecMatch = tags.match(/\b(HEVC|H\.?264|H\.?265|AV1)\b/i);
+
+    return {
+        title,
+        episode,
+        releaseGroup: group,
+        resolution: resolutionMatch ? resolutionMatch[1] : undefined,
+        source: sourceMatch ? sourceMatch[1].replace(/\s+/g, " ") : undefined,
+        codec: codecMatch ? codecMatch[1] : undefined,
+        confidence: "high",
+    };
+}
+
+/**
  * Parse a filename using GuessIt API with CLI fallback
  */
 export async function parseFilename(filename: string): Promise<ParsedFilename> {
@@ -413,6 +504,36 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             parseCache.set(cacheKey, result);
             return result;
         }
+    }
+
+    // Anime-release fallback: handles filenames like
+    // "[Group] Title - Episode [Tags]" where GuessIt misclassifies
+    // the subtitle as the episode title. Only consulted when GuessIt
+    // produced nothing useful.
+    const animeFallback = parseAnimeReleaseFallback(filename);
+    if (animeFallback?.title && typeof animeFallback.episode === "number") {
+        const rawTitle = animeFallback.title;
+        const episode = animeFallback.episode;
+        const seriesTitle = cleanTitle(rawTitle);
+        const paddedEpisode = String(episode).padStart(2, "0");
+        const fullTitle = `${seriesTitle} - S00E${paddedEpisode}`;
+        const mediaType = detectMediaType(filename);
+
+        logDebugOnce(
+            `anime-fallback:${filename}`,
+            `[Parser][debug] Anime release fallback matched: ${seriesTitle} - E${paddedEpisode}`,
+        );
+
+        const animeResult: ParsedFilename = {
+            full_title: fullTitle,
+            series_title: seriesTitle,
+            season: null,
+            episode,
+            episode_title: null,
+            media_type: mediaType,
+        };
+        parseCache.set(cacheKey, animeResult);
+        return animeResult;
     }
 
     // Final fallback: regex parsing
