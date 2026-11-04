@@ -38,12 +38,67 @@ function sanitizeProxyUrl(url: string): string {
     }
 }
 
-/**
- * Log Trakt API call for debugging when config.debug is true.
- * Appends to .anime_cache/api_log.txt to keep consistent with provider logging.
- */
-function logApiCall(method: string, url: string, status: number | string, detail?: string): void {
-    if (!config.debug) return;
+const SENSITIVE_QUERY_KEYS = new Set([
+    "access_token",
+    "refresh_token",
+    "client_secret",
+    "client_id",
+    "trakt-api-key",
+    "authorization",
+    "auth",
+    "token",
+    "api_key",
+    "apikey",
+]);
+
+function formatTraktLogTimestamp(): string {
+    const now = new Date();
+    return (
+        now.getFullYear() +
+        "-" +
+        String(now.getMonth() + 1).padStart(2, "0") +
+        "-" +
+        String(now.getDate()).padStart(2, "0") +
+        " " +
+        String(now.getHours()).padStart(2, "0") +
+        ":" +
+        String(now.getMinutes()).padStart(2, "0") +
+        ":" +
+        String(now.getSeconds()).padStart(2, "0")
+    );
+}
+
+function redactSensitiveLogText(value: string): string {
+    return value
+        .replace(/(Authorization\s*[:=]\s*Bearer\s+)[^\s,|}]+/gi, "$1[REDACTED]")
+        .replace(
+            /((?:access_token|refresh_token|client_secret|client_id|trakt-api-key|token|api_key|apikey)["']?\s*[:=]\s*["']?)[^"'\s,|}&]+/gi,
+            "$1[REDACTED]",
+        )
+        .replace(/((?:authorization|auth)["']?\s*=\s*["']?)[^"'\s,|}&]+/gi, "$1[REDACTED]");
+}
+
+function sanitizeUrlForLog(url: string): string {
+    try {
+        const parsed = new URL(url);
+        if (parsed.username || parsed.password) {
+            parsed.username = "[REDACTED]";
+            parsed.password = "";
+        }
+        for (const key of [...parsed.searchParams.keys()]) {
+            if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+                parsed.searchParams.set(key, "[REDACTED]");
+            }
+        }
+        return parsed.toString();
+    } catch {
+        return redactSensitiveLogText(url);
+    }
+}
+
+function appendTraktApiLog(message: string): void {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) return;
 
     try {
         const cacheDir = path.join(process.cwd(), ".anime_cache");
@@ -51,26 +106,32 @@ function logApiCall(method: string, url: string, status: number | string, detail
             fs.mkdirSync(cacheDir, { recursive: true });
         }
         const logPath = path.join(cacheDir, "api_log.txt");
-
-        const now = new Date();
-        const timestamp =
-            now.getFullYear() +
-            "-" +
-            String(now.getMonth() + 1).padStart(2, "0") +
-            "-" +
-            String(now.getDate()).padStart(2, "0") +
-            " " +
-            String(now.getHours()).padStart(2, "0") +
-            ":" +
-            String(now.getMinutes()).padStart(2, "0") +
-            ":" +
-            String(now.getSeconds()).padStart(2, "0");
-
-        const line = `[${timestamp}] [Trakt] ${method} ${url} → ${status}${detail ? ` | ${detail}` : ""}\n`;
-        fs.appendFileSync(logPath, line, "utf-8");
+        fs.appendFileSync(
+            logPath,
+            `[${formatTraktLogTimestamp()}] ${redactSensitiveLogText(trimmedMessage)}\n`,
+            "utf-8",
+        );
     } catch {
         // Silently ignore logging failures
     }
+}
+
+/**
+ * Log Trakt resolution diagnostics to .anime_cache/api_log.txt regardless of DEBUG.
+ */
+export function logTraktDiagnostic(message: string): void {
+    const prefixedMessage = message.trim().startsWith("[Trakt]") ? message : `[Trakt] ${message}`;
+    appendTraktApiLog(prefixedMessage);
+}
+
+/**
+ * Log Trakt API calls to .anime_cache/api_log.txt regardless of DEBUG.
+ * Headers and request bodies are intentionally omitted to avoid leaking secrets.
+ */
+function logApiCall(method: string, url: string, status: number | string, detail?: string): void {
+    logTraktDiagnostic(
+        `${method} ${sanitizeUrlForLog(url)} → ${status}${detail ? ` | ${redactSensitiveLogText(detail)}` : ""}`,
+    );
 }
 
 // Create axios instance with IPv4 forcing and optional Tor proxy
@@ -353,7 +414,7 @@ export async function getShowSeasons(showId: number): Promise<TraktSeasonEpisode
         );
 
         const seasonCount = response.data.length;
-        const totalEps = response.data.reduce((sum, s) => sum + s.episodes.length, 0);
+        const totalEps = response.data.reduce((sum, s) => sum + (s.episodes?.length ?? 0), 0);
         logApiCall(
             "GET",
             `${TRAKT_API}/shows/${showId}/seasons`,
@@ -443,6 +504,12 @@ async function scrobbleAction(
  * Start scrobbling an episode
  */
 export async function scrobbleStart(episode: TraktEpisode, show: TraktShow, progress: number): Promise<boolean> {
+    if (config.syncDryRun) {
+        console.log(
+            `[Trakt][dry-run] Would start: ${show.title} S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} (${progress}%)`,
+        );
+        return true;
+    }
     return scrobbleAction("start", episode, show, progress);
 }
 
@@ -450,6 +517,12 @@ export async function scrobbleStart(episode: TraktEpisode, show: TraktShow, prog
  * Stop scrobbling an episode (mark as watched)
  */
 export async function scrobbleStop(episode: TraktEpisode, show: TraktShow, progress: number): Promise<boolean> {
+    if (config.syncDryRun) {
+        console.log(
+            `[Trakt][dry-run] Would stop: ${show.title} S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} (${progress}%)`,
+        );
+        return true;
+    }
     return scrobbleAction("stop", episode, show, progress);
 }
 
@@ -457,6 +530,12 @@ export async function scrobbleStop(episode: TraktEpisode, show: TraktShow, progr
  * Pause scrobbling an episode
  */
 export async function scrobblePause(episode: TraktEpisode, show: TraktShow, progress: number): Promise<boolean> {
+    if (config.syncDryRun) {
+        console.log(
+            `[Trakt][dry-run] Would pause: ${show.title} S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")} (${progress}%)`,
+        );
+        return true;
+    }
     return scrobbleAction("pause", episode, show, progress);
 }
 

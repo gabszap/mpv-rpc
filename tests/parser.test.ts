@@ -458,4 +458,64 @@ describe("Anime Release Fallback", () => {
         expect(result?.codec).toBe("HEVC");
         expect(result?.confidence).toBe("high");
     });
+
+    it("recovers full title from anime regex when GuessIt returns truncated title", async () => {
+        // The default beforeEach in this block rejects the GuessIt API; override
+        // it so processGuessitResult sees a partial (truncated) GuessIt payload.
+        // This is the user-reported bug: GuessIt returns {title:"Dr Stone",
+        // episode:6, release_group:"Erai-raws"} and the parser used to stop
+        // there instead of consulting the anime regex fallback.
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockResolvedValue({
+            data: {
+                title: "Dr Stone",
+                episode: 6,
+                release_group: "Erai-raws",
+                source: "CR WEBRip",
+            },
+        } as any);
+
+        const execFileMock = vi.spyOn(child_process, "execFile");
+        execFileMock.mockImplementation((_file, _args, _options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const result = await parser.parseFilename(
+            "[Erai-raws] Dr Stone - Science Future Part 3 - 06 [1080p CR WEBRip HEVC]",
+        );
+
+        expect(result.series_title).toBe("Dr Stone - Science Future Part 3");
+        expect(result.episode).toBe(6);
+        expect(result.season).toBeNull();
+        expect(result.media_type).toBe("anime");
+    });
+
+    it("does not extend non-anime titles when GuessIt returns a clean result", async () => {
+        // Override the default beforeEach: GuessIt API returns a real payload
+        // for a non-anime SxxExx release. The post-processor must not touch
+        // the title because the anime regex won't match this shape.
+        const axios = await import("axios");
+        vi.mocked(axios.default.post).mockResolvedValue({
+            data: {
+                title: "Dr STONE",
+                season: 4,
+                episode: 33,
+                episode_title: "Wanting Everything",
+            },
+        } as any);
+
+        const execFileMock = vi.spyOn(child_process, "execFile");
+        execFileMock.mockImplementation((_file, _args, _options, callback) => {
+            if (callback) callback(new Error("Generic error"), "", "");
+            return {} as any;
+        });
+
+        const result = await parser.parseFilename(
+            "Dr.STONE.S04E33.Wanting.Everything.1080p.CR.WEB-DL.MULTi.AAC2.0.H.264-VARYG.mkv",
+        );
+
+        // Title should remain "Dr STONE" (not extended by anime regex)
+        expect(result.series_title).toBe("Dr STONE");
+    });
 });

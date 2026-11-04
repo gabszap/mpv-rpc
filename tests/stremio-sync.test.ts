@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { config } from "../src/config";
 import type { MpvData } from "../src/mpv";
 import * as api from "../src/stremio-sync/api";
 import * as auth from "../src/stremio-sync/auth";
 import { encodeWatched } from "../src/stremio-sync/bitset";
 import * as context from "../src/stremio-sync/context";
+import { logStremioSkipDetail } from "../src/stremio-sync/logging";
 import * as meta from "../src/stremio-sync/meta";
 import { resetStremioSyncStateForTests, trySyncStremio } from "../src/stremio-sync/sync";
 
 vi.mock("../src/config", () => ({
     config: {
+        debug: false,
+        syncDryRun: false,
         stremio: {
             enabled: true,
             syncThreshold: 85,
@@ -62,6 +66,8 @@ describe("Stremio sync MVP", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         resetStremioSyncStateForTests();
+        config.debug = false;
+        config.syncDryRun = false;
         vi.mocked(auth.getStremioAuthKey).mockReturnValue("auth-key");
         vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
             libraryItemId: "tt1234567",
@@ -124,17 +130,160 @@ describe("Stremio sync MVP", () => {
         expect(api.putLibraryItem).toHaveBeenCalledTimes(1);
     });
 
-    it("returns a controlled interval skip after a successful progress write", async () => {
+    it("returns a controlled interval skip for changed progress after a successful progress write", async () => {
         await expect(trySyncStremio(createMpvData())).resolves.toEqual({
             status: "synced",
             libraryItemId: "tt1234567",
         });
-        await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+        await expect(trySyncStremio(createMpvData({ percent_pos: 51, time_pos: 130 }))).resolves.toEqual({
             status: "skipped",
             reason: "progress-interval",
         });
 
         expect(api.putLibraryItem).toHaveBeenCalledTimes(1);
+    });
+
+    it("silently skips repeated unchanged progress after a successful progress write", async () => {
+        await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+
+        for (const _ of [1, 2, 3]) {
+            await expect(trySyncStremio(createMpvData({ pause: true }))).resolves.toEqual({
+                status: "skipped",
+                reason: "unchanged-progress",
+                silent: true,
+            });
+        }
+
+        expect(api.getLibraryItem).toHaveBeenCalledTimes(1);
+        expect(api.putLibraryItem).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows changed progress to use interval gating and sync again after the interval", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-07T10:00:00.000Z"));
+
+        try {
+            await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+                status: "synced",
+                libraryItemId: "tt1234567",
+            });
+            await expect(trySyncStremio(createMpvData({ percent_pos: 51, time_pos: 130 }))).resolves.toEqual({
+                status: "skipped",
+                reason: "progress-interval",
+            });
+
+            vi.setSystemTime(new Date("2026-06-07T10:00:31.000Z"));
+
+            await expect(trySyncStremio(createMpvData({ percent_pos: 51, time_pos: 130 }))).resolves.toEqual({
+                status: "synced",
+                libraryItemId: "tt1234567",
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(api.putLibraryItem).toHaveBeenCalledTimes(2);
+    });
+
+    it("silently skips repeated unchanged interval-gated progress after the first interval skip", async () => {
+        await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+        await expect(trySyncStremio(createMpvData({ percent_pos: 51, time_pos: 130 }))).resolves.toEqual({
+            status: "skipped",
+            reason: "progress-interval",
+        });
+        await expect(trySyncStremio(createMpvData({ percent_pos: 51, time_pos: 130 }))).resolves.toEqual({
+            status: "skipped",
+            reason: "progress-interval",
+            silent: true,
+        });
+
+        expect(api.getLibraryItem).toHaveBeenCalledTimes(1);
+        expect(api.putLibraryItem).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks watched at the threshold even when Continue Watching is interval-throttled", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-06-07T10:00:00.000Z"));
+        vi.mocked(meta.fetchVideoIds).mockResolvedValue(["tt1234567:1:1", "tt1234567:1:2", "tt1234567:1:3"]);
+        vi.mocked(api.getLibraryItem).mockResolvedValue({
+            _id: "tt1234567",
+            _mtime: "2026-03-15T10:00:00.000Z",
+            state: {
+                flagged_watched: 0,
+                times_watched: 0,
+            },
+        });
+
+        try {
+            await expect(trySyncStremio(createMpvData({ percent_pos: 10, time_pos: 60 }))).resolves.toEqual({
+                status: "synced",
+                libraryItemId: "tt1234567",
+            });
+            await expect(trySyncStremio(createMpvData({ percent_pos: 90, time_pos: 1350 }))).resolves.toEqual({
+                status: "synced",
+                libraryItemId: "tt1234567",
+            });
+            await expect(trySyncStremio(createMpvData({ percent_pos: 90, time_pos: 1350 }))).resolves.toEqual({
+                status: "skipped",
+                reason: "progress-interval",
+                silent: true,
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(api.putLibraryItem).toHaveBeenCalledTimes(2);
+        const [watchedOnlyItem] = vi.mocked(api.putLibraryItem).mock.calls[1];
+        expect(typeof watchedOnlyItem.state?.watched).toBe("string");
+        expect(watchedOnlyItem.state?.flagged_watched).toBe(1);
+        expect(watchedOnlyItem.state?.times_watched).toBe(1);
+        expect(watchedOnlyItem.state?.timeOffset).toBeUndefined();
+    });
+
+    it("does not silently suppress unchanged progress after a playback file change", async () => {
+        await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+
+        await expect(trySyncStremio(createMpvData({ filename: "Example S01E02 alternate.mkv" }))).resolves.toEqual({
+            status: "skipped",
+            reason: "progress-interval",
+        });
+
+        expect(api.getLibraryItem).toHaveBeenCalledTimes(1);
+        expect(api.putLibraryItem).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not silently suppress unchanged progress after a Stremio context change", async () => {
+        await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt1234567",
+        });
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt7654321",
+            imdbId: "tt7654321",
+            videoId: "tt7654321:1:2",
+            name: "Example",
+            type: "series",
+            season: 1,
+            episode: 2,
+            episodesInSeason: 12,
+        });
+
+        await expect(trySyncStremio(createMpvData({ imdb_id: "tt7654321" }))).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt7654321",
+        });
+
+        expect(api.getLibraryItem).toHaveBeenCalledTimes(2);
+        expect(api.putLibraryItem).toHaveBeenCalledTimes(2);
     });
 
     it("skips without datastore calls when progress is at zero percent", async () => {
@@ -207,6 +356,542 @@ describe("Stremio sync MVP", () => {
             status: "skipped",
             reason: "playback-context-mismatch",
         });
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("logs canonical Stremio identity in dry-run when parser season is missing", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:30",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 30,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("S04E30"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("S00E06"));
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+        consoleLogSpy.mockRestore();
+    });
+
+    it("logs deterministic split-part canonical identity in dry-run without Stremio context", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue(null);
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone: Science Future Part 3",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("S04E30"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("S00E06"));
+        consoleLogSpy.mockRestore();
+    });
+
+    it("does not log placeholder dry-run identity or debug detail when debug is disabled", async () => {
+        config.syncDryRun = true;
+        config.debug = false;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        const consoleDebugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue(null);
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "N/A",
+                    series_title: "N/A",
+                    season: 0,
+                    episode: 0,
+                    filename: "stremio-playlist.m3u8",
+                    percent_pos: 0,
+                    time_pos: 0,
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+        logStremioSkipDetail("dry-run");
+
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("N/A S00E00"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("S00E00"));
+        expect(consoleDebugSpy).not.toHaveBeenCalledWith(expect.stringContaining("[Stremio][debug]"));
+        consoleLogSpy.mockRestore();
+        consoleDebugSpy.mockRestore();
+    });
+
+    it("allows Stremio skip detail when debug is enabled", () => {
+        config.debug = true;
+        const consoleDebugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+
+        logStremioSkipDetail("dry-run");
+
+        expect(consoleDebugSpy).toHaveBeenCalledWith(expect.stringContaining("[Stremio][debug] Skip detail: dry-run"));
+        consoleDebugSpy.mockRestore();
+    });
+
+    it("keeps first useful dry-run log when canonical identity exists", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:33",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 33,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E33.Wanting.Everything",
+                    series_title: "Dr Stone: Science Future",
+                    season: 4,
+                    episode: 33,
+                    filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 85,
+                }),
+            ),
+        ).resolves.toEqual({ status: "skipped", reason: "dry-run" });
+
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 85%"));
+        consoleLogSpy.mockRestore();
+    });
+
+    it("dedupes dry-run continue-watching logs by identity and coarse milestone", async () => {
+        config.syncDryRun = true;
+        const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:33",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 33,
+            episodesInSeason: 35,
+        });
+
+        const createDryRunData = (percent_pos: number): MpvData =>
+            createMpvData({
+                media_title: "Dr.STONE.S04E33.Wanting.Everything",
+                series_title: "Dr Stone: Science Future",
+                season: 4,
+                episode: 33,
+                filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+                imdb_id: "tt9679542",
+                percent_pos,
+                time_pos: percent_pos * 15,
+            });
+
+        for (const percent of [0, 0, 5, 12, 15, 20, 25, 25, 86, 86, 90, 90, 100, 100]) {
+            await expect(trySyncStremio(createDryRunData(percent))).resolves.toEqual({
+                status: "skipped",
+                reason: "dry-run",
+            });
+        }
+
+        expect(consoleLogSpy).toHaveBeenCalledTimes(5);
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(1, expect.stringContaining("Dr. Stone S04E33 0%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(2, expect.stringContaining("Dr. Stone S04E33 25%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(3, expect.stringContaining("Dr. Stone S04E33 80%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(4, expect.stringContaining("Dr. Stone S04E33 90%"));
+        expect(consoleLogSpy).toHaveBeenNthCalledWith(5, expect.stringContaining("Dr. Stone S04E33 100%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 5%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 12%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 15%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 20%"));
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining("Dr. Stone S04E33 86%"));
+        expect(
+            consoleLogSpy.mock.calls.filter(([message]) => String(message).includes("Dr. Stone S04E33 80%")),
+        ).toHaveLength(1);
+        consoleLogSpy.mockRestore();
+    });
+
+    it("syncs canonical Stremio identity when parser has local split-part episode", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:30",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 30,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt9679542",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 4,
+            episode: 30,
+            video_id: "tt9679542:4:30",
+        });
+    });
+
+    it("accepts Dr. Stone split-part context when canonical video id and position match despite arc title", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:48549",
+            seriesId: "mal:48549",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:34",
+            name: "Dr. STONE",
+            type: "series",
+            season: 4,
+            episode: 34,
+            episodesInSeason: null,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr Stone - Science Future Part 3 - Countdown",
+                    series_title: "Dr Stone - Science Future Part 3",
+                    season: null,
+                    episode: 10,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 10.mkv",
+                    imdb_id: undefined,
+                    mal_id: 62568,
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "mal:48549",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 4,
+            episode: 34,
+            video_id: "tt9679542:4:34",
+        });
+    });
+
+    it("syncs bridge canonical identity for Jujutsu Kaisen split-entry playback", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:5",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 5,
+            episodesInSeason: null,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E05",
+                    series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+                    season: null,
+                    episode: 5,
+                    filename:
+                        "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+                    imdb_id: undefined,
+                    mal_id: 57658,
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "mal:57658",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 3,
+            episode: 5,
+            video_id: "tt12343534:3:5",
+        });
+        expect(updatedItem.state).not.toMatchObject({
+            season: 1,
+            episode: 5,
+        });
+    });
+
+    it("syncs older same-episode Stremio context when secure IDs and position still match", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:5",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 5,
+            episodesInSeason: null,
+            isFresh: false,
+            savedAtMs: Date.parse("2026-06-05T23:58:21.008Z"),
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E05",
+                    series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+                    season: null,
+                    episode: 5,
+                    filename:
+                        "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+                    imdb_id: undefined,
+                    mal_id: 57658,
+                    percent_pos: 13,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "mal:57658",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 3,
+            episode: 5,
+            video_id: "tt12343534:3:5",
+        });
+    });
+
+    it("rejects stale Jujutsu Kaisen context when the bridge episode differs", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:6",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 6,
+            episodesInSeason: null,
+            isFresh: false,
+            savedAtMs: Date.parse("2026-06-05T23:58:21.008Z"),
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - E05",
+                    series_title: "Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen",
+                    season: null,
+                    episode: 5,
+                    filename:
+                        "[Erai-raws] Jujutsu Kaisen - Shimetsu Kaiyuu - Zenpen - 05 [1080p CR WEB-DL AVC AAC][MultiSub][FDCB43F3].mkv",
+                    imdb_id: undefined,
+                    mal_id: 57658,
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("rejects older same-position context without secure matching identifiers", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt7654321",
+            imdbId: null,
+            videoId: "tt7654321:1:2",
+            name: "Example",
+            type: "series",
+            season: 1,
+            episode: 2,
+            episodesInSeason: 12,
+            isFresh: false,
+            savedAtMs: Date.parse("2026-06-05T23:58:21.008Z"),
+        });
+
+        await expect(trySyncStremio(createMpvData())).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("keeps explicit canonical filename position when MAL overflow data is local to a split part", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:33",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 33,
+            episodesInSeason: 35,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Dr.STONE.S04E33.Wanting.Everything",
+                    series_title: "Dr Stone: Science Future",
+                    season: 4,
+                    episode: 9,
+                    filename: "Dr.STONE.S04E33.Wanting.Everything.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 80,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt9679542",
+        });
+
+        const [updatedItem] = vi.mocked(api.putLibraryItem).mock.calls[0];
+        expect(updatedItem.state).toMatchObject({
+            season: 4,
+            episode: 33,
+            video_id: "tt9679542:4:33",
+        });
+    });
+
+    it("skips stale same-title split-part context when canonical episode differs", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: "tt9679542",
+            videoId: "tt9679542:4:29",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 29,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("skips canonical mismatch when title and IMDb identity are stale", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt9679542",
+            imdbId: null,
+            videoId: "tt9679542:4:30",
+            name: "Dr. Stone",
+            type: "series",
+            season: 4,
+            episode: 30,
+            episodesInSeason: 30,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "Another Show - 06",
+                    series_title: "Another Show",
+                    season: null,
+                    episode: 6,
+                    filename: "Another Show - 06.mkv",
+                    imdb_id: undefined,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+        expect(api.getLibraryItem).not.toHaveBeenCalled();
+        expect(api.putLibraryItem).not.toHaveBeenCalled();
+    });
+
+    it("rejects stale Jujutsu Kaisen context during Dr. Stone playback", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "mal:57658",
+            seriesId: "mal:57658",
+            imdbId: "tt12343534",
+            videoId: "tt12343534:3:5",
+            name: "Jujutsu Kaisen",
+            type: "series",
+            season: 3,
+            episode: 5,
+            episodesInSeason: null,
+            isFresh: false,
+            savedAtMs: Date.parse("2026-06-05T23:58:21.008Z"),
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[Erai-raws] Dr Stone - Science Future Part 3 - 06",
+                    series_title: "Dr. Stone",
+                    season: null,
+                    episode: 6,
+                    filename: "[Erai-raws] Dr Stone - Science Future Part 3 - 06.mkv",
+                    imdb_id: "tt9679542",
+                    mal_id: 62568,
+                    percent_pos: 10,
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "skipped",
+            reason: "playback-context-mismatch",
+        });
+
         expect(api.getLibraryItem).not.toHaveBeenCalled();
         expect(api.putLibraryItem).not.toHaveBeenCalled();
     });

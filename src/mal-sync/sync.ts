@@ -107,6 +107,13 @@ export async function syncEpisodeDetailed(
         // Record sync attempt timestamp
         recordSyncAttempt(malId, episode);
 
+        if (config.syncDryRun) {
+            const intendedStatus = totalEpisodes && episode >= totalEpisodes ? "completed" : "watching";
+            const episodeDisplay = totalEpisodes ? `${episode}/${totalEpisodes}` : String(episode);
+            console.log(`[MAL][dry-run] Would update MAL:${malId} to Episode ${episodeDisplay} (${intendedStatus})`);
+            return "skipped";
+        }
+
         // Get current progress to avoid going backwards
         // (Wait status also acts as a check to see if we really need to update)
         const currentProgress = await getWatchStatus(malId);

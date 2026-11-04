@@ -11,7 +11,8 @@ import { ConsoleRepl, createEpisodeContext } from "./console";
 import * as discord from "./discord";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
 import * as mpv from "./mpv";
-import { checkAvailability } from "./parser";
+import { checkAvailability, parseFilename } from "./parser";
+import { logStremioSkipDetail } from "./stremio-sync/logging";
 import { trySyncStremio } from "./stremio-sync/sync";
 import { getUser } from "./trakt-sync/api";
 import { authorize as traktAuthorize, isAuthenticated as traktIsAuthenticated } from "./trakt-sync/auth";
@@ -26,6 +27,25 @@ let lastMalDiagnosticKey: string | null = null; // Avoid repeating MAL diagnosti
 let lastMalSyncSuccessKey: string | null = null; // Avoid repeated MAL success logs
 let lastStremioDiagnosticKey: string | null = null; // Avoid repeating Stremio diagnostic logs
 let lastStremioSyncSuccessKey: string | null = null; // Avoid repeated Stremio success logs
+let stopPromise: Promise<void> | null = null;
+
+async function clearPlaybackSession(reason: "disconnect" | "no-media"): Promise<void> {
+    await discord.clearActivity();
+    lastMalDiagnosticKey = null;
+    lastMalSyncSuccessKey = null;
+    lastStremioDiagnosticKey = null;
+    lastStremioSyncSuccessKey = null;
+
+    if (!config.trakt.enabled || !traktIsAuthenticated()) {
+        return;
+    }
+
+    try {
+        await stopCurrentScrobble();
+    } catch (e) {
+        console.error(`[Trakt] Error stopping scrobble on ${reason}:`, e);
+    }
+}
 
 function logMalDiagnostic(key: string, message: string): void {
     if (lastMalDiagnosticKey === key) {
@@ -45,42 +65,6 @@ function logStremioDiagnostic(key: string, message: string): void {
     console.log(message);
 }
 
-function formatStremioSkipReason(reason: string): string {
-    if (reason === "missing-auth") {
-        return "auth token not found; open something through the Stremio bridge to save .config/.stremio_tokens.json.";
-    }
-
-    if (reason === "missing-or-invalid-context") {
-        return "playback context not found, stale, or invalid; open the stream through the Stremio bridge again.";
-    }
-
-    if (reason === "invalid-playback-progress") {
-        return "MPV did not report valid time/duration yet.";
-    }
-
-    if (reason === "progress-too-low") {
-        return "playback is still near the start; waiting for at least 5 seconds and 1% before writing Continue Watching so a 0% offset is not saved.";
-    }
-
-    if (reason === "playback-context-mismatch") {
-        return "current MPV title/season/episode does not match saved .config/.stremio-mpv-config.json context.";
-    }
-
-    if (reason === "missing-video-id") {
-        return "saved context has no safe video_id for Continue Watching.";
-    }
-
-    if (reason === "progress-interval") {
-        return `waiting for STREMIO_PROGRESS_INTERVAL_MS (${config.stremio.progressIntervalMs}ms); Continue Watching is not gated by the ${config.stremio.syncThreshold}% watched threshold.`;
-    }
-
-    if (reason === "library-item-not-found") {
-        return "Stremio datastore returned no library item for the saved libraryItemId; Continue Watching can only update an existing library item.";
-    }
-
-    return reason;
-}
-
 /**
  * Main update loop - fetches MPV data and updates Discord
  */
@@ -95,20 +79,15 @@ async function update(): Promise<void> {
 
         if (!data) {
             // MPV not connected, clear Discord activity and stop Trakt scrobble
-            await discord.clearActivity();
-            lastMalDiagnosticKey = null;
-            lastMalSyncSuccessKey = null;
-            lastStremioDiagnosticKey = null;
-            lastStremioSyncSuccessKey = null;
+            await clearPlaybackSession("disconnect");
+            return;
+        }
 
-            // Stop Trakt scrobble if active
-            if (config.trakt.enabled && traktIsAuthenticated()) {
-                try {
-                    await stopCurrentScrobble();
-                } catch (e) {
-                    console.error("[Trakt] Error stopping scrobble on disconnect:", e);
-                }
-            }
+        if (data.filename === "N/A" || data.playlistCount <= 0) {
+            // MPV can briefly stay connected after playback ends while all
+            // media properties are already empty. Treat that the same as a
+            // disconnect so active Trakt scrobbles are explicitly finalized.
+            await clearPlaybackSession("no-media");
             return;
         }
 
@@ -202,15 +181,18 @@ async function update(): Promise<void> {
                         `[Stremio] Continue Watching sync failed: ${result.reason}`,
                     );
                 } else if (result.status === "skipped") {
-                    logStremioDiagnostic(
-                        `${data.filename}:skip:${result.reason}`,
-                        `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${formatStremioSkipReason(result.reason)}`,
-                    );
+                    if (!config.syncDryRun && !result.silent) {
+                        logStremioDiagnostic(
+                            `${data.filename}:skip:${result.reason}`,
+                            `[Stremio] Continue Watching skipped at ${Math.round(data.percent_pos)}%: ${result.reason}`,
+                        );
+                    }
+                    logStremioSkipDetail(result.reason);
                 } else if (result.status === "synced") {
                     const syncKey = `${data.filename}:${result.libraryItemId}`;
                     if (lastStremioSyncSuccessKey !== syncKey) {
                         console.log(
-                            `[Stremio] Continue Watching synced: ${data.series_title} (${Math.round(data.percent_pos)}%, libraryItemId: ${result.libraryItemId}). Watched badges are not updated by the MVP.`,
+                            `[Stremio] Continue Watching synced: ${data.series_title} (${Math.round(data.percent_pos)}%)`,
                         );
                         lastStremioSyncSuccessKey = syncKey;
                     }
@@ -220,10 +202,7 @@ async function update(): Promise<void> {
                 console.error("[Stremio] Sync error:", e);
             }
         } else {
-            logStremioDiagnostic(
-                "disabled",
-                "[Stremio] Sync disabled. Set STREMIO_SYNC=true to enable Continue Watching progress sync.",
-            );
+            logStremioDiagnostic("disabled", "[Stremio] Sync disabled");
         }
 
         // Auto-fetch: check if we should fetch next episodes
@@ -315,7 +294,7 @@ async function start(): Promise<void> {
 
     console.log(
         config.stremio.enabled
-            ? `[Main] Stremio sync: enabled (Continue Watching MVP; writes every ${config.stremio.progressIntervalMs}ms, not gated by ${config.stremio.syncThreshold}% threshold)`
+            ? `[Main] Stremio sync: enabled (writes every ${config.stremio.progressIntervalMs}ms)`
             : "[Main] Stremio sync: disabled",
     );
 
@@ -370,6 +349,15 @@ async function start(): Promise<void> {
  * Stop the RPC service
  */
 async function stop(): Promise<void> {
+    if (stopPromise) {
+        return stopPromise;
+    }
+
+    stopPromise = stopOnce();
+    return stopPromise;
+}
+
+async function stopOnce(): Promise<void> {
     console.log("\n[Main] Shutting down...");
     _isRunning = false;
 
@@ -393,7 +381,6 @@ async function stop(): Promise<void> {
     }
 
     if (config.settings.discordRpc) {
-        await discord.clearActivity();
         await discord.disconnect();
     }
     // Clear forced title before disconnecting so MPV returns to normal titles
@@ -433,6 +420,24 @@ if (args.includes("mal-auth")) {
         }
         process.exit(success ? 0 : 1);
     });
+} else if (args[0] === "parse") {
+    // Parser diagnostic mode: parse a filename and print the result as JSON.
+    // Useful for debugging parser fallbacks and verifying filename heuristics
+    // without opening MPV or connecting to Discord.
+    const filename = args[1];
+    if (!filename) {
+        console.error('Usage: npm start -- parse "<filename>"');
+        process.exit(1);
+    }
+    parseFilename(filename)
+        .then((result) => {
+            console.log(JSON.stringify(result, null, 2));
+            process.exit(0);
+        })
+        .catch((e) => {
+            console.error("[parse] error:", e);
+            process.exit(1);
+        });
 } else {
     start().catch((e) => {
         console.error("[Main] Fatal error:", e);

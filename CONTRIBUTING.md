@@ -99,6 +99,36 @@ npx vitest run -t "test name"
 
 ---
 
+## Development Tools
+
+### Parse Diagnostics
+
+Test filename parsing without starting MPV or requiring network dependencies:
+
+```bash
+npm start -- parse "[Erai-raws] Dr Stone - Science Future Part 3 - 06 [1080p].mkv"
+```
+
+This runs the parser pipeline (GuessIt API → CLI → regex fallback) and prints the extracted title, season, episode, and other metadata. Useful for debugging parsing issues during development.
+
+### Dry-Run Mode
+
+Set `SYNC_DRY_RUN=true` in your `.env` file to run the app without affecting any external services:
+
+- ✅ Discord Rich Presence still works (read-only — no writing)
+- ✅ MPV monitoring and filename parsing work
+- ✅ Logs show what WOULD be synced
+- ❌ Trakt scrobbles are skipped (logged)
+- ❌ Stremio Continue Watching and watched marking are skipped (logged)
+- ❌ Auto-Fetch requests are skipped (logged)
+- ❌ MAL sync operations are skipped (logged)
+
+Useful for testing parser results, provider resolution, or configuration changes without leaving traces on external services during development.
+
+> **Note:** The `SYNC_DRY_RUN` env var is also listed in the main [README](README.md) configuration table — this section explains its development use case.
+
+---
+
 ## Commit Messages
 
 This project follows **[Conventional Commits](https://www.conventionalcommits.org/)** for automated versioning and changelog generation via `semantic-release`.

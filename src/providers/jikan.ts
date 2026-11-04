@@ -48,7 +48,59 @@ const circuitBreaker = {
 /**
  * Make a request to Jikan API with rate limiting
  */
-async function jikanRequest(endpoint: string, params?: Record<string, any>, retryCount = 0): Promise<any> {
+type JikanEpisodeData = {
+    mal_id?: unknown;
+    episode?: unknown;
+    number?: unknown;
+    title?: unknown;
+    title_romanji?: unknown;
+    title_romaji?: unknown;
+};
+
+type JikanAnimeData = {
+    mal_id: number;
+    title?: string;
+    title_english?: string | null;
+    type?: string;
+    episodes?: number | null;
+    images?: {
+        jpg?: {
+            large_image_url?: string | null;
+            image_url?: string | null;
+        };
+    };
+    titles?: Array<{ type: string; title: string }>;
+};
+
+type JikanRelationEntry = {
+    mal_id: number;
+    type: string;
+};
+
+type JikanRelationData = {
+    relation?: string;
+    entry?: JikanRelationEntry[];
+};
+
+type JikanResponse<T> = {
+    data?: T;
+};
+
+function readJikanEpisodeNumber(episodeData: JikanEpisodeData): number | null {
+    const candidate = episodeData.mal_id ?? episodeData.episode ?? episodeData.number;
+    return typeof candidate === "number" && Number.isInteger(candidate) ? candidate : null;
+}
+
+function readJikanEpisodeTitle(episodeData: JikanEpisodeData): string | null {
+    const candidate = episodeData.title ?? episodeData.title_romanji ?? episodeData.title_romaji;
+    return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : null;
+}
+
+async function jikanRequest<T = unknown>(
+    endpoint: string,
+    params?: Record<string, unknown>,
+    retryCount = 0,
+): Promise<JikanResponse<T>> {
     if (circuitBreaker.isOpen()) {
         logApiCall("Jikan", endpoint, params, "CIRCUIT_OPEN", "blocked");
         throw new Error(`Circuit breaker open`);
@@ -62,15 +114,16 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
     lastRequestTime = Date.now();
 
     try {
-        const response = await axios.get(`${config.jikan.baseUrl}${endpoint}`, {
+        const response = await axios.get<JikanResponse<T>>(`${config.jikan.baseUrl}${endpoint}`, {
             params,
             timeout: 15000,
         });
         circuitBreaker.recordSuccess();
         logApiCall("Jikan", endpoint, params, `${response.status} OK`, "");
         return response.data;
-    } catch (e: any) {
-        if (e.response?.status === 429) {
+    } catch (e: unknown) {
+        const error = e as { code?: unknown; message?: unknown; response?: { status?: unknown } };
+        if (error.response?.status === 429) {
             logApiCall("Jikan", endpoint, params, "429 RATE_LIMITED", "retrying in 1s");
             console.log("[Jikan] Rate limited, waiting 1s...");
             circuitBreaker.recordFailure();
@@ -78,13 +131,13 @@ async function jikanRequest(endpoint: string, params?: Record<string, any>, retr
             return jikanRequest(endpoint, params, retryCount);
         }
 
-        if ((e.code === "ECONNABORTED" || e.code === "ETIMEDOUT") && retryCount < 3) {
+        if ((error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") && retryCount < 3) {
             logApiCall("Jikan", endpoint, params, "TIMEOUT", `retrying... (attempt ${retryCount + 2}/4)`);
             await new Promise((resolve) => setTimeout(resolve, 1000 * (retryCount + 1))); // Exponential backoff
             return jikanRequest(endpoint, params, retryCount + 1);
         }
 
-        logApiCall("Jikan", endpoint, params, "ERROR", e.message || "unknown");
+        logApiCall("Jikan", endpoint, params, "ERROR", typeof error.message === "string" ? error.message : "unknown");
         if (config.debug) {
             logApiCall("Jikan", endpoint, params, "ERROR_DETAIL", formatProviderErrorDetails("Jikan", endpoint, e));
         }
@@ -223,27 +276,26 @@ export class JikanProvider implements AnimeProvider {
 
     async searchAnime(title: string, expectedSeason?: number): Promise<AnimeSearchResult | null> {
         try {
-            const response = await jikanRequest("/anime", {
+            const response = await jikanRequest<JikanAnimeData[]>("/anime", {
                 q: title,
                 limit: 10,
                 sfw: true,
             });
 
-            if (!response.data || response.data.length === 0) {
+            const results = Array.isArray(response.data) ? response.data : [];
+            if (results.length === 0) {
                 logApiCall("Jikan", "/anime", { q: title }, "DETAIL", "0 results");
                 return null;
             }
 
-            const results = response.data;
-
             // Filter spin-offs first
             const spinoffPatterns = /chibi|theatre|theater|special|tebie|caidan|petit|mini/i;
-            const mainResults = results.filter((a: any) => !spinoffPatterns.test(a.title || ""));
+            const mainResults = results.filter((anime) => !spinoffPatterns.test(anime.title || ""));
             const candidates = mainResults.length > 0 ? mainResults : results;
 
             // Score each candidate by title similarity
-            const scoredCandidates = candidates.map((anime: any) => {
-                let score = calculateTitleScore(title, anime.title || "", anime.title_english);
+            const scoredCandidates = candidates.map((anime) => {
+                let score = calculateTitleScore(title, anime.title || "", anime.title_english || null);
 
                 // 2FA: Check synonyms for season match when expectedSeason is provided
                 if (expectedSeason && expectedSeason > 1) {
@@ -264,7 +316,7 @@ export class JikanProvider implements AnimeProvider {
             });
 
             // Sort by score (descending), then prefer TV/ONA types
-            scoredCandidates.sort((a: any, b: any) => {
+            scoredCandidates.sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
                 const aIsTV = a.anime.type === "TV" || a.anime.type === "ONA";
                 const bIsTV = b.anime.type === "TV" || b.anime.type === "ONA";
@@ -291,7 +343,7 @@ export class JikanProvider implements AnimeProvider {
 
     async getAnimeById(id: number): Promise<AnimeInfo | null> {
         try {
-            const response = await jikanRequest(`/anime/${id}`);
+            const response = await jikanRequest<JikanAnimeData>(`/anime/${id}`);
             const anime = response.data;
             if (!anime) return null;
 
@@ -306,8 +358,8 @@ export class JikanProvider implements AnimeProvider {
             return {
                 id: anime.mal_id,
                 mal_id: anime.mal_id,
-                title_english: anime.title_english,
-                title_romaji: anime.title,
+                title_english: anime.title_english || null,
+                title_romaji: anime.title || "",
                 cover_url: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
                 total_episodes: anime.episodes || undefined,
             };
@@ -322,16 +374,36 @@ export class JikanProvider implements AnimeProvider {
         _season?: number,
         _context?: EpisodeLookupContext,
     ): Promise<string | null> {
+        const episodeEndpoint = `/anime/${animeId}/episodes/${episode}`;
         try {
-            const response = await jikanRequest(`/anime/${animeId}/episodes/${episode}`);
+            const response = await jikanRequest<JikanEpisodeData>(episodeEndpoint);
             if (response.data) {
-                const title = response.data.title || response.data.title_romanji || null;
+                const title = readJikanEpisodeTitle(response.data);
                 if (title) {
-                    logApiCall("Jikan", `/anime/${animeId}/episodes/${episode}`, {}, "DETAIL", `"${title}"`);
+                    logApiCall("Jikan", episodeEndpoint, {}, "DETAIL", `"${title}"`);
+                    return title;
                 }
+            }
+        } catch {
+            logApiCall("Jikan", episodeEndpoint, {}, "DETAIL", "falling back to episode list");
+        }
+
+        const listEndpoint = `/anime/${animeId}/episodes`;
+        try {
+            const response = await jikanRequest<JikanEpisodeData[]>(listEndpoint);
+            const matchingEpisode = response.data?.find((entry) => readJikanEpisodeNumber(entry) === episode);
+            if (!matchingEpisode) {
+                logApiCall("Jikan", listEndpoint, {}, "DETAIL", `episode ${episode} not found in list`);
+                return null;
+            }
+
+            const title = readJikanEpisodeTitle(matchingEpisode);
+            if (title) {
+                logApiCall("Jikan", listEndpoint, {}, "DETAIL", `episode ${episode}: "${title}"`);
                 return title;
             }
-            logApiCall("Jikan", `/anime/${animeId}/episodes/${episode}`, {}, "DETAIL", "no episode data");
+
+            logApiCall("Jikan", listEndpoint, {}, "DETAIL", `episode ${episode} has no title in list`);
             return null;
         } catch {
             return null;
@@ -380,25 +452,25 @@ export class JikanProvider implements AnimeProvider {
         return this.getAnimeById(lastValidId);
     }
 
-    private async getRelations(malId: number): Promise<any[]> {
+    private async getRelations(malId: number): Promise<JikanRelationData[]> {
         try {
-            const response = await jikanRequest(`/anime/${malId}/relations`);
-            return response.data || [];
+            const response = await jikanRequest<JikanRelationData[]>(`/anime/${malId}/relations`);
+            return Array.isArray(response.data) ? response.data : [];
         } catch {
             return [];
         }
     }
 
-    private findSequel(relations: any[]): { mal_id: number; type: string } | null {
+    private findSequel(relations: JikanRelationData[]): { mal_id: number; type: string } | null {
         for (const relation of relations) {
             if (relation.relation === "Sequel") {
                 // Prefer TV sequels
-                const tvEntry = relation.entry?.find((e: any) => e.type === "TV");
+                const tvEntry = relation.entry?.find((entry) => entry.type === "TV");
                 if (tvEntry) return tvEntry;
 
                 // Fallback to any anime
                 const anyEntry = relation.entry?.find(
-                    (e: any) => e.type === "Movie" || e.type === "OVA" || e.type === "anime",
+                    (entry) => entry.type === "Movie" || entry.type === "OVA" || entry.type === "anime",
                 );
                 if (anyEntry) return anyEntry;
             }
@@ -431,12 +503,12 @@ export class JikanProvider implements AnimeProvider {
         }
     }
 
-    private mapSearchResult(anime: any): AnimeSearchResult {
+    private mapSearchResult(anime: JikanAnimeData): AnimeSearchResult {
         return {
             id: anime.mal_id,
-            title: anime.title,
-            title_english: anime.title_english,
-            type: anime.type,
+            title: anime.title || "",
+            title_english: anime.title_english || null,
+            type: anime.type || "Unknown",
             coverImage: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
             titles: anime.titles || [],
         };

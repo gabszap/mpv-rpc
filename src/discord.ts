@@ -11,6 +11,24 @@ import type { MpvData } from "./mpv";
 let client: Client | null = null;
 let isConnected = false;
 let lastStatusLog = ""; // Avoid duplicate status logs
+const loggedInternalTitles = new Set<string>(); // One-shot log per unique internal title
+
+/**
+ * Returns true when a title looks like an internal Stremio page or a raw URL.
+ * Such titles should not be displayed in Discord presence or terminal status logs.
+ */
+export function isInternalNavigationTitle(title: string): boolean {
+    if (typeof title !== "string") return true;
+    const normalized = title.trim().toLowerCase();
+    if (normalized.length === 0) return true;
+    return (
+        normalized.includes("settings?") ||
+        normalized.includes("integration-settings") ||
+        normalized.startsWith("http://") ||
+        normalized.startsWith("https://") ||
+        normalized.startsWith("/")
+    );
+}
 
 /**
  * Initialize and connect to Discord
@@ -50,15 +68,24 @@ export async function connect(): Promise<boolean> {
  * Disconnect from Discord
  */
 export async function disconnect(): Promise<void> {
-    if (client) {
+    if (!client) return;
+    if (isConnected) {
+        // Clear activity first so it does not race with the connection close
         try {
-            await client.destroy();
+            await client.user?.clearActivity();
+            console.log("[Discord] Activity cleared");
         } catch (_e) {
-            // Ignore errors on disconnect
+            console.debug?.("[Discord] Skipped activity clear: connection already closed.");
         }
-        client = null;
-        isConnected = false;
     }
+    try {
+        await client.destroy();
+    } catch (_e) {
+        // Ignore errors on disconnect
+    }
+    client = null;
+    isConnected = false;
+    console.log("[Discord] Disconnected");
 }
 
 /**
@@ -89,6 +116,16 @@ export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}
 
     // Don't log if title is invalid (just numbers, too short, or N/A)
     if (title === "N/A" || /^[\d.\-_\s]+$/.test(title) || title.length < 2) {
+        return;
+    }
+
+    // Don't log internal Stremio navigation titles (settings pages, raw URLs, etc.)
+    if (isInternalNavigationTitle(title)) {
+        if (!loggedInternalTitles.has(title)) {
+            console.log(`[Status] Ignored non-media title: ${title}`);
+            loggedInternalTitles.add(title);
+        }
+        console.debug?.(`[Status][debug] Ignored internal navigation title: ${title}`);
         return;
     }
 
@@ -177,6 +214,26 @@ export async function setActivity(data: MpvData): Promise<void> {
     // Treat as idle to avoid showing meaningless titles like "0"
     const isInvalidTitle = fullTitle === "N/A" || /^[\d.\-_\s]+$/.test(fullTitle) || fullTitle.length < 2;
     if (isInvalidTitle) {
+        if (config.settings.hideIdling) {
+            await clearActivity();
+            return;
+        }
+        try {
+            await client?.user?.setActivity({
+                type: ActivityType.Playing,
+                details: "Watching something...",
+                state: "Unknown media",
+                largeImageKey: config.mpvIcon,
+                largeImageText: "MPV Media Player",
+            });
+        } catch (e) {
+            console.error("[Discord] Error setting activity:", e);
+        }
+        return;
+    }
+
+    // Filter out internal Stremio navigation pages
+    if (isInternalNavigationTitle(fullTitle)) {
         if (config.settings.hideIdling) {
             await clearActivity();
             return;

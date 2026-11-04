@@ -49,7 +49,7 @@
       },
     },
     "explore": {
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode/minimax-m3-free",
       "temperature": 0.2,
       "reasoningEffort": "low",
       "textVerbosity": "low",
@@ -88,7 +88,7 @@
       },
     },
     "researcher": {
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode/minimax-m3-free",
       "temperature": 0.4,
       "reasoningEffort": "high",
       "textVerbosity": "medium",
@@ -145,7 +145,7 @@
       },
     },
     "scribe": {
-      "model": "github-copilot/gpt-5.2",
+      "model": "openai/gpt-5.4",
       "temperature": 1,
       "reasoningEffort": "low",
       "textVerbosity": "high",
@@ -162,7 +162,7 @@
       },
     },
     "reviewer": {
-      "model": "github-copilot/gpt-5.2-codex",
+      "model": "google/gemma-4-31b-it",
       "temperature": 0.1,
       "reasoningEffort": "high",
       "textVerbosity": "medium",
@@ -175,6 +175,7 @@
           "git log*": "allow",
           "git show*": "allow",
           "git blame*": "allow",
+          "git status*": "allow",
           "rg *": "allow",
         },
         "plan_read": "allow",
@@ -211,4 +212,58 @@
   },
   "instructions": ["./tools/philosophy.md", "./tools/workflow.md"],
   "plugin": ["@franlol/opencode-md-table-formatter@0.0.6"],
+  "provider": {
+    "nvidia": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "NVIDIA NIM",
+      "options": {
+        "baseURL": "https://integrate.api.nvidia.com/v1",
+        "apiKey": "",
+      },
+      "models": {
+        "z-ai/glm5": {
+          "name": "GLM-5",
+          "limit": {
+            "context": 128000,
+            "output": 16384,
+          },
+        },
+        "moonshotai/kimi-k2.6": {
+          "name": "Kimi K2.6",
+          "limit": {
+            "context": 262144,
+            "output": 262144,
+          },
+        },
+        "z-ai/glm-5.1": {
+          "name": "GLM-5.1",
+          "limit": {
+            "context": 202752,
+            "output": 131072,
+          },
+        },
+        "deepseek-ai/deepseek-v4-flash": {
+          "name": "DeepSeek V4 Flash",
+          "limit": {
+            "context": 1000000,
+            "output": 384000,
+          },
+        },
+        "minimaxai/minimax-m2.7": {
+          "name": "MiniMax-M2.7",
+          "limit": {
+            "context": 384000,
+            "output": 131072,
+          },
+        },
+        "google/gemma-4-31b-it": {
+          "name": "Gemma 4 31B IT",
+          "limit": {
+            "context": 262144,
+            "output": 32768,
+          },
+        },
+      },
+    },
+  },
 }

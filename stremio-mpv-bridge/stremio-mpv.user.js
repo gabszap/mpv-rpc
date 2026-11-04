@@ -13,6 +13,7 @@
 // @grant        GM_notification
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_registerMenuCommand
 // @connect      localhost
 // @connect      *
 // @run-at       document-idle
@@ -34,9 +35,37 @@
         ],
         debrid: [
             { id: "torbox", name: "Torbox" },
+            { id: "stremthru-store", name: "StremThru Store" },
+            { id: "intell-debridsearch", name: "Intell Debrid Search" },
             { id: "real-debrid", name: "Real Debrid" },
         ],
     };
+
+    /**
+     * Get defaults (URL, placeholder, tooltip) for specific providers
+     */
+    function getProviderDefaults(id) {
+        if (id === "stremthru-store") {
+            return {
+                url: "",
+                tooltip:
+                    "Supported StremThru Store providers:\n- dev 'muniftanjim': https://stremthru.13377001.xyz/stremio/store/\n- elfhosted: https://stremthru.elfhosted.com/stremio/store/\n- midnight: https://stremthrufortheweebs.midnightignite.me/stremio/store/",
+                placeholder: "Paste StremThru Store manifest.json link here",
+            };
+        }
+        if (id === "intell-debridsearch") {
+            return {
+                url: "",
+                tooltip: "Intell Debrid Search (store-like addon):\nhttps://intell-debridsearch.nepiraw.com/",
+                placeholder: "Paste Intell Debrid Search manifest.json link here",
+            };
+        }
+        return {
+            url: "",
+            tooltip: "",
+            placeholder: "Paste manifest.json link here",
+        };
+    }
 
     // Cache for custom provider names (from manifest.json)
     const providerNameCache = new Map();
@@ -222,7 +251,127 @@
         { id: "custom", name: "Custom", url: "", enabled: true },
     ];
 
+    // Bridge config schema version. Mirrors CURRENT_CONFIG_VERSION in
+    // stremio-mpv-bridge/server.js and src/bridge-config-migration.ts.
+    // Bumped whenever the GM_setValue / disk shape changes.
+    const CURRENT_CONFIG_VERSION = 2;
+
+    /**
+     * Derive the v2 `iconMode` enum from legacy v1 booleans.
+     * Mirrors `inferIconMode` in src/bridge-config-migration.ts and
+     * server.js. Any change here MUST be applied to the other two.
+     */
+    function inferIconMode(legacy) {
+        if (!legacy || typeof legacy !== "object") {
+            return "default";
+        }
+        const showMpvIcon = legacy.showMpvIcon;
+        const showConfigIcon = legacy.showConfigIcon;
+        const compactMode = legacy.compactMode;
+
+        if (showMpvIcon === false && showConfigIcon === true && compactMode === true) {
+            return "compact";
+        }
+        if (showMpvIcon === false && showConfigIcon === true) {
+            return "config-only";
+        }
+        if (compactMode === true) {
+            return "compact";
+        }
+        if (showMpvIcon === false && showConfigIcon === false) {
+            return "disabled";
+        }
+        return "default";
+    }
+
+    /**
+     * Resolve the visibility state for the floating button container given an
+     * `iconMode` string. Pure function — callers mutate the DOM based on the
+     * returned flags.
+     *
+     * Mirrors src/bridge-config-migration.ts — keep in sync.
+     */
+    function applyIconMode(iconMode) {
+        const mode = iconMode || "default";
+        switch (mode) {
+            case "config-only":
+                return {
+                    containerVisible: true,
+                    mpvButtonVisible: false,
+                    configButtonVisible: true,
+                    configButtonEnlarged: true,
+                    configButtonSize: "large",
+                    containerPosition: "bottom-right",
+                };
+            case "compact":
+                return {
+                    containerVisible: true,
+                    mpvButtonVisible: false,
+                    configButtonVisible: true,
+                    configButtonEnlarged: false,
+                    configButtonSize: "small",
+                    containerPosition: "top-right",
+                };
+            case "disabled":
+                return {
+                    containerVisible: false,
+                    mpvButtonVisible: false,
+                    configButtonVisible: false,
+                    configButtonEnlarged: false,
+                    configButtonSize: "small",
+                    containerPosition: "bottom-right",
+                };
+            default:
+                return {
+                    containerVisible: true,
+                    mpvButtonVisible: true,
+                    configButtonVisible: true,
+                    configButtonEnlarged: false,
+                    configButtonSize: "small",
+                    containerPosition: "bottom-right",
+                };
+        }
+    }
+
+    /**
+     * Migrate the userscript-side GM_setValue mirror from v1 (or unversioned)
+     * to v2. Mirrors `migrateV1ToV2` in server.js and
+     * src/bridge-config-migration.ts. Persists the migrated values back to
+     * GM_setValue so subsequent reads are fast.
+     */
+    function migrateLocalConfigToV2() {
+        const storedVersion = GM_getValue("configVersion", null);
+        if (storedVersion === CURRENT_CONFIG_VERSION) {
+            return;
+        }
+
+        const legacy = {
+            autoFetch: GM_getValue("autoFetchEnabled", undefined),
+            extraEpisodes: GM_getValue("extraEpisodes", undefined),
+            showMpvIcon: GM_getValue("showMpvIcon", undefined),
+            showConfigIcon: GM_getValue("showConfigIcon", undefined),
+            compactMode: GM_getValue("compactMode", undefined),
+        };
+        const hasLegacyValue = Object.values(legacy).some((v) => v !== undefined);
+
+        if (hasLegacyValue) {
+            const autoFetch = legacy.autoFetch !== false;
+            const extraEpisodes = typeof legacy.extraEpisodes === "number" ? legacy.extraEpisodes : 2;
+            const iconMode = inferIconMode(legacy);
+            GM_setValue("autofetch", autoFetch);
+            GM_setValue("extraEpisodes", extraEpisodes);
+            GM_setValue("iconMode", iconMode);
+        }
+
+        GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+    }
+
+    // Apply any pending migration before reading other values so the rest
+    // of the script sees a v2 mirror.
+    migrateLocalConfigToV2();
+
     // Default to 2 episodes (unified with bridge + RPC); user can override 1..25
+    let autoFetch = GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true));
     let extraEpisodes = GM_getValue("extraEpisodes", 2);
     let playlistMode = GM_getValue("playlistMode", "batch");
     let mpvShortcut = GM_getValue("mpvShortcut", "v");
@@ -233,9 +382,109 @@
     let providers;
 
     if (storedProviders.length > 0) {
-        providers = [...storedProviders];
+        providers = storedProviders.filter((p) => p.id !== "torbox");
+        if (providers.length !== storedProviders.length) {
+            GM_setValue("providers", providers);
+        }
     } else {
         providers = [...DEFAULT_ACTIVE];
+    }
+
+    // Mirrors src/userscript-config-sync.ts — keep in sync.
+    // The userscript is the source of truth for user-facing configuration.
+    // The bridge is treated as a synchronized runtime cache. `pendingBridgeConfig`
+    // holds the most recent config that has not yet been acknowledged by the bridge
+    // and is flushed (re-posted to /config) before any /play call.
+    let pendingBridgeConfig = null;
+
+    function postBridgeConfig(config) {
+        return new Promise((resolve, reject) => {
+            try {
+                GM_xmlhttpRequest({
+                    method: "POST",
+                    url: "http://localhost:9632/config",
+                    headers: { "Content-Type": "application/json" },
+                    data: JSON.stringify(config),
+                    onload: (r) => {
+                        if (r.status >= 200 && r.status < 300) {
+                            resolve();
+                            return;
+                        }
+
+                        const responseBody = (r.responseText || "").trim();
+                        const detail = responseBody ? `: ${responseBody}` : "";
+                        reject(new Error(`Config sync failed (HTTP ${r.status})${detail}`));
+                    },
+                    onerror: () => reject(new Error("Config sync failed: connection failed")),
+                    ontimeout: () => reject(new Error("Config sync failed: request timed out")),
+                });
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    async function flushPendingBridgeConfig() {
+        const configToFlush = pendingBridgeConfig;
+        if (!configToFlush) {
+            return true;
+        }
+        try {
+            await postBridgeConfig(configToFlush);
+        } catch (_) {
+            return false;
+        }
+        if (pendingBridgeConfig === configToFlush) {
+            pendingBridgeConfig = null;
+        }
+        return true;
+    }
+
+    function getNonEmptyString(value) {
+        if (typeof value !== "string") {
+            return null;
+        }
+
+        const trimmedValue = value.trim();
+        return trimmedValue.length > 0 ? trimmedValue : null;
+    }
+
+    function getPositiveInteger(value) {
+        return Number.isInteger(value) && value > 0 ? value : null;
+    }
+
+    function buildBridgeStremioMeta(content) {
+        if (!content || typeof content !== "object") {
+            return null;
+        }
+
+        const meta = {};
+        const stringFields = ["seriesId", "libraryItemId", "videoId", "name", "episodeTitle", "type"];
+        const numberFields = ["season", "episode", "episodesInSeason"];
+
+        for (const field of stringFields) {
+            const value = getNonEmptyString(content[field]);
+            if (value) {
+                meta[field] = value;
+            }
+        }
+
+        const imdbId = getNonEmptyString(content.imdbId);
+        if (imdbId && isRealImdbId(imdbId)) {
+            meta.imdbId = imdbId;
+        } else if (content.imdbId === null) {
+            meta.imdbId = null;
+        }
+
+        for (const field of numberFields) {
+            const value = getPositiveInteger(content[field]);
+            if (value) {
+                meta[field] = value;
+            }
+        }
+
+        const hasIdentity = Boolean(meta.seriesId || meta.libraryItemId || meta.videoId || meta.imdbId || meta.name);
+        return hasIdentity ? meta : null;
     }
 
     function log(...args) {
@@ -362,6 +611,10 @@
 
         const modal = document.createElement("div");
         modal.id = "stremio-mpv-modal";
+        const storedIconMode = GM_getValue("iconMode", "default");
+        const selectedIconMode = ["default", "config-only", "compact", "disabled"].includes(storedIconMode)
+            ? storedIconMode
+            : "default";
 
         const providersHTML = providers
             .map((p, _index) => {
@@ -370,6 +623,11 @@
                     isCustom && p.url
                         ? '<span class="mpv-loading-name" style="font-size: 10px; opacity: 0.6; margin-left: 4px;"></span>'
                         : "";
+                const defaults = getProviderDefaults(p.id);
+                const placeholder = defaults.placeholder;
+                const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, "&quot;")}"` : "";
+                const helpSpan = defaults.tooltip ? `<span class="mpv-tooltip-help" ${tooltipAttr}>?</span>` : "";
+
                 return `
             <div class="mpv-form-group mpv-provider-item ${p.enabled ? "" : "mpv-provider-disabled"}" data-id="${p.id}" data-url="${p.url || ""}" draggable="true" style="transition: transform 0.2s, opacity 0.2s;">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
@@ -378,14 +636,14 @@
                         <div class="mpv-toggle-track mpv-provider-toggle" data-id="${p.id}" data-enabled="${p.enabled ? "true" : "false"}" role="switch" aria-checked="${p.enabled ? "true" : "false"}" tabindex="0" title="${p.enabled ? "Enabled" : "Disabled"}">
                             <div class="mpv-toggle-thumb"></div>
                         </div>
-                        <label class="mpv-label mpv-provider-label" data-id="${p.id}" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}${loadingIndicator}</label>
+                        <label class="mpv-label mpv-provider-label" data-id="${p.id}" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}${helpSpan}${loadingIndicator}</label>
                     </div>
                     <div style="display: flex; gap: 4px; flex-shrink: 0;">
                         <button type="button" class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">🗑</button>
                     </div>
                 </div>
                 <input type="text" data-id="${p.id}" class="mpv-input mpv-provider-input"
-                       placeholder="Paste manifest.json link here" value="${p.url}"
+                       placeholder="${placeholder}" value="${p.url}"
                        style="${!p.enabled ? "opacity: 0.5; pointer-events: none;" : ""}">
             </div>
         `;
@@ -394,6 +652,11 @@
 
         modal.innerHTML = `
             <style>
+                #stremio-mpv-modal,
+                #stremio-mpv-modal * {
+                    box-sizing: border-box;
+                }
+
                 #stremio-mpv-modal {
                     position: fixed; inset: 0; z-index: 100000;
                     background: rgba(0,0,0,0.25);
@@ -418,56 +681,78 @@
                 #stremio-mpv-modal.active .mpv-modal-content { transform: scale(1); }
 
                 .mpv-modal-header {
-                    font-size: 22px; font-weight: bold; margin-bottom: 24px;
+                    font-size: 22px; font-weight: bold; margin-bottom: 24px !important;
                     display: flex; align-items: center;
+                    flex-shrink: 0 !important;
+                    line-height: 1.2 !important;
                 }
                 .mpv-modal-title {
                     background: linear-gradient(45deg, #a78bfa, #8b5cf6);
                     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
                 }
-                .mpv-tab-nav {
-                    display: flex; gap: 8px;
-                    margin: -6px 0 16px;
-                    padding: 5px;
-                    border-radius: 12px;
-                    background: rgba(255, 255, 255, 0.03);
-                    border: 1px solid rgba(255, 255, 255, 0.08);
+                #stremio-mpv-modal .mpv-tab-nav {
+                    display: flex !important;
+                    align-items: center !important;
+                    width: 100% !important;
+                    height: 50px !important;
+                    max-height: 50px !important;
+                    flex-shrink: 0 !important;
+                    box-sizing: border-box !important;
+                    gap: 8px !important;
+                    margin: -6px 0 16px !important;
+                    padding: 5px !important;
+                    border-radius: 12px !important;
+                    background: rgba(255, 255, 255, 0.03) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.08) !important;
                 }
-                .mpv-tab-btn {
-                    flex: 1;
-                    border: 1px solid transparent;
-                    border-radius: 8px;
-                    background: transparent;
-                    color: #b8b8c2;
-                    font-size: 13px;
-                    font-weight: 600;
-                    padding: 10px 8px;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    line-height: 1;
-                    margin: 0;
+                #stremio-mpv-modal .mpv-tab-btn {
+                    appearance: none !important;
+                    -webkit-appearance: none !important;
+                    box-sizing: border-box !important;
+                    flex: 1 1 0% !important;
+                    width: 100% !important;
+                    min-width: 0 !important;
+                    height: 38px !important;
+                    max-height: 38px !important;
+                    border: 1px solid transparent !important;
+                    border-radius: 8px !important;
+                    background: transparent !important;
+                    color: #b8b8c2 !important;
+                    font-size: 14px !important;
+                    font-weight: 600 !important;
+                    padding: 0 8px !important;
+                    cursor: pointer !important;
+                    transition: all 0.2s ease !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    line-height: 1 !important;
+                    margin: 0 !important;
                 }
-                .mpv-tab-btn:hover {
-                    color: #fff;
-                    background: rgba(139, 92, 246, 0.15);
+                #stremio-mpv-modal .mpv-tab-btn:first-child,
+                #stremio-mpv-modal .mpv-tab-btn:first-of-type {
+                    margin-left: 0 !important;
                 }
-                .mpv-tab-btn.active {
-                    color: #fff;
-                    background: linear-gradient(135deg, rgba(139, 92, 246, 0.35), rgba(124, 58, 237, 0.2));
-                    border-color: rgba(139, 92, 246, 0.45);
-                    box-shadow: 0 6px 16px rgba(139, 92, 246, 0.25);
+                #stremio-mpv-modal .mpv-tab-btn:hover {
+                    color: #fff !important;
+                    background: rgba(139, 92, 246, 0.15) !important;
+                }
+                #stremio-mpv-modal .mpv-tab-btn.mpv-active {
+                    color: #fff !important;
+                    background: linear-gradient(135deg, rgba(139, 92, 246, 0.35), rgba(124, 58, 237, 0.2)) !important;
+                    border-color: rgba(139, 92, 246, 0.45) !important;
+                    box-shadow: 0 6px 16px rgba(139, 92, 246, 0.25) !important;
                 }
                 .mpv-modal-body {
                     flex: 1;
+                    width: 100%;
                     min-height: 0;
                     overflow-y: auto;
                     padding-right: 2px;
+                    scrollbar-gutter: stable;
                 }
-                .mpv-tab-panel { display: none; animation: tabFade 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
-                .mpv-tab-panel.active { display: block; }
+                .mpv-tab-panel { display: none; width: 100%; animation: tabFade 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+                .mpv-tab-panel.mpv-active { display: block !important; }
                 @keyframes tabFade {
                     from { opacity: 0; transform: translateY(8px); }
                     to { opacity: 1; transform: translateY(0); }
@@ -566,7 +851,8 @@
                     display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #eee;
                 }
                 .mpv-dropdown-item:hover { background: linear-gradient(90deg, rgba(139, 92, 246, 0.2), rgba(139, 92, 246, 0.05)); color: #fff; padding-left: 20px; }
-                .mpv-dropdown-item.disabled { opacity: 0.4; cursor: not-allowed; text-decoration: line-through; }
+                .mpv-dropdown-item.disabled { opacity: 0.4; cursor: not-allowed; }
+                .mpv-dropdown-item.disabled .mpv-dropdown-item-name { text-decoration: line-through; }
                 .mpv-radio {
                     appearance: none; -webkit-appearance: none;
                     width: 18px; height: 18px; border: 2px solid rgba(139, 92, 246, 0.4);
@@ -607,6 +893,27 @@
                 #mpv-release-groups-dropdown .mpv-group-option:hover {
                     background: rgba(139, 92, 246, 0.2) !important;
                 }
+                .mpv-tooltip-help {
+                    display: inline-block !important;
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.15);
+                    color: #ccc;
+                    font-size: 10px;
+                    font-weight: bold;
+                    cursor: help;
+                    margin-left: 6px;
+                    transition: all 0.2s ease;
+                    vertical-align: middle;
+                    line-height: 14px;
+                    text-align: center;
+                    text-decoration: none !important;
+                }
+                .mpv-tooltip-help:hover {
+                    background: rgba(139, 92, 246, 0.4);
+                    color: #fff;
+                }
             </style>
             <div class="mpv-modal-content">
                 <div class="mpv-modal-header">
@@ -616,13 +923,13 @@
                 </div>
 
                 <div class="mpv-tab-nav" role="tablist" aria-label="Settings Tabs">
-                    <button type="button" class="mpv-tab-btn active" data-tab="providers" role="tab" aria-selected="true">Providers</button>
+                    <button type="button" class="mpv-tab-btn mpv-active" data-tab="providers" role="tab" aria-selected="true">Providers</button>
                     <button type="button" class="mpv-tab-btn" data-tab="playback" role="tab" aria-selected="false">Playback</button>
                     <button type="button" class="mpv-tab-btn" data-tab="advanced" role="tab" aria-selected="false">Advanced</button>
                 </div>
 
                 <div class="mpv-modal-body">
-                    <div class="mpv-tab-panel active" data-tab-panel="providers" role="tabpanel">
+                    <div class="mpv-tab-panel mpv-active" data-tab-panel="providers" role="tabpanel">
                         <div id="mpv-providers-container">
                             ${providersHTML}
                         </div>
@@ -633,9 +940,21 @@
                             <div class="mpv-dropdown-content" id="mpv-provider-dropdown">
                                 <div class="mpv-dropdown-title">Select Provider</div>
                                 <div class="mpv-dropdown-category">Providers</div>
-                                ${AVAILABLE_PROVIDERS.providers.map((p) => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}">${p.name}</div>`).join("")}
+                                ${AVAILABLE_PROVIDERS.providers.map((p) => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}"><span class="mpv-dropdown-item-name">${p.name}</span></div>`).join("")}
                                 <div class="mpv-dropdown-category">Debrid Services</div>
-                                ${AVAILABLE_PROVIDERS.debrid.map((p) => `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}">${p.name}</div>`).join("")}
+                                ${AVAILABLE_PROVIDERS.debrid
+                                    .map((p) => {
+                                        if (p.id === "torbox") {
+                                            return `<div class="mpv-dropdown-item disabled" data-id="${p.id}" data-name="${p.name}" style="opacity: 0.4; cursor: not-allowed;"><span class="mpv-dropdown-item-name">${p.name}</span> <span class="mpv-tooltip-help" title="Disabled in May 2026 by Torbox">?</span></div>`;
+                                        }
+                                        const defaults = getProviderDefaults(p.id);
+                                        let tooltipSpan = "";
+                                        if (defaults.tooltip) {
+                                            tooltipSpan = ` <span class="mpv-tooltip-help" title="${defaults.tooltip.replace(/"/g, "&quot;")}">?</span>`;
+                                        }
+                                        return `<div class="mpv-dropdown-item" data-id="${p.id}" data-name="${p.name}"><span class="mpv-dropdown-item-name">${p.name}</span>${tooltipSpan}</div>`;
+                                    })
+                                    .join("")}
                                 <div style="margin-top: 16px; padding: 12px 16px; font-size: 12px; color: #666; text-align: center; border-top: 1px solid rgba(255,255,255,0.08);">
                                     Missing your favorite service? <a href="https://github.com/gabszap/mpv-rpc/issues" target="_blank" style="color: #8b7bba; text-decoration: underline; font-size: 13px;">open an issue</a>
                                 </div>
@@ -680,6 +999,17 @@
                         </div>
 
                         <div class="mpv-form-group">
+                            <label class="mpv-label">Auto-Fetch Episodes</label>
+                            <div class="mpv-checkbox-group" style="justify-content: space-between;">
+                                <span style="font-size: 13px; color: #ccc;">Automatically request the next episodes near playlist end</span>
+                                <div class="mpv-toggle-track mpv-auto-fetch-toggle" data-enabled="${autoFetch ? "true" : "false"}" role="switch" aria-checked="${autoFetch ? "true" : "false"}" tabindex="0" title="${autoFetch ? "Enabled" : "Disabled"}">
+                                    <div class="mpv-toggle-thumb"></div>
+                                </div>
+                            </div>
+                            <div class="mpv-help" style="margin-top: 6px;">Bridge setting controls Stremio bridge auto-fetch requests; .env AUTO_FETCH=false still disables RPC-side triggering globally.</div>
+                        </div>
+
+                        <div class="mpv-form-group">
                             <label class="mpv-label">Preferred Release Group</label>
                             <div style="position: relative;">
                                 <input type="text" id="mpv-preferred-group" class="mpv-input" placeholder="e.g. subsplease, judas" value="${preferredGroup}">
@@ -711,6 +1041,7 @@
                             <input type="hidden" id="mpv-shortcut" value="${mpvShortcut}">
                             <div class="mpv-help" style="margin-top: 4px;">Click and press a key</div>
                         </div>
+
                     </div>
 
                     <div class="mpv-tab-panel" data-tab-panel="advanced" role="tabpanel">
@@ -722,6 +1053,18 @@
                                     <div class="mpv-toggle-thumb"></div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div class="mpv-form-group">
+                            <label class="mpv-label">Floating Icons</label>
+                            <div class="mpv-icon-mode-pills" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "default" ? "active" : ""}" data-mode="default" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Show Both Icons</button>
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "config-only" ? "active" : ""}" data-mode="config-only" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Config Icon Only</button>
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "compact" ? "active" : ""}" data-mode="compact" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Compact Mode</button>
+                                <button type="button" class="mpv-pill-btn ${selectedIconMode === "disabled" ? "active" : ""}" data-mode="disabled" style="flex: 1 1 calc(50% - 4px); font-size: 12px; padding: 10px 8px; text-align: center;">Hide All Icons</button>
+                            </div>
+                            <input type="hidden" id="mpv-icon-mode" value="${selectedIconMode}">
+                            <div class="mpv-help" style="margin-top: 6px;">Controls the floating MPV / config buttons. Hide all icons can be reverted from the Violentmonkey/Tampermonkey menu: Open MPV Bridge Settings.</div>
                         </div>
 
                         <div class="mpv-form-group">
@@ -904,12 +1247,12 @@
         const switchTab = (tabName) => {
             tabButtons.forEach((button) => {
                 const isActive = button.dataset.tab === tabName;
-                button.classList.toggle("active", isActive);
+                button.classList.toggle("mpv-active", isActive);
                 button.setAttribute("aria-selected", isActive ? "true" : "false");
             });
 
             tabPanels.forEach((panel) => {
-                panel.classList.toggle("active", panel.dataset.tabPanel === tabName);
+                panel.classList.toggle("mpv-active", panel.dataset.tabPanel === tabName);
             });
 
             providerDropdown?.classList.remove("show");
@@ -938,6 +1281,21 @@
                 }
             });
         });
+
+        // Icon Mode Pills logic
+        const iconModePills = modal.querySelectorAll(".mpv-icon-mode-pills .mpv-pill-btn");
+        const iconModeInput = modal.querySelector("#mpv-icon-mode");
+        if (iconModePills && iconModeInput) {
+            iconModePills.forEach((pill) => {
+                pill.addEventListener("click", () => {
+                    iconModePills.forEach((p) => {
+                        p.classList.remove("active");
+                    });
+                    pill.classList.add("active");
+                    iconModeInput.value = pill.dataset.mode;
+                });
+            });
+        }
 
         const countGroup = modal.querySelector("#mpv-group-count");
         const radioButtons = modal.querySelectorAll('input[name="mpv-stream-mode"]');
@@ -972,14 +1330,14 @@
         });
 
         // Quality Pill Buttons
-        const pillBtns = modal.querySelectorAll(".mpv-pill-btn");
+        const pillBtns = modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn");
         const qualityInput = modal.querySelector("#mpv-preferred-quality");
         pillBtns.forEach((btn) => {
             btn.addEventListener("click", () => {
                 btn.classList.toggle("active");
-                const activeQualities = Array.from(modal.querySelectorAll(".mpv-pill-btn.active")).map(
-                    (b) => b.dataset.quality,
-                );
+                const activeQualities = Array.from(
+                    modal.querySelectorAll(".mpv-quality-pills .mpv-pill-btn.active"),
+                ).map((b) => b.dataset.quality);
                 qualityInput.value = activeQualities.join(",");
             });
         });
@@ -1052,8 +1410,13 @@
                     GM_setValue("mpvArgsStr", "");
 
                     GM_setValue("debug", false);
+                    GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+                    GM_setValue("autofetch", true);
+                    GM_setValue("iconMode", "default");
+                    updateButtonInfo();
 
                     providers = [...DEFAULT_ACTIVE];
+                    autoFetch = true;
                     playlistMode = "batch";
                     extraEpisodes = 2;
                     mpvShortcut = "v";
@@ -1237,6 +1600,23 @@
             });
         }
 
+        const autoFetchToggle = modal.querySelector(".mpv-auto-fetch-toggle");
+        if (autoFetchToggle) {
+            autoFetchToggle.addEventListener("click", () => {
+                const isEnabled = autoFetchToggle.dataset.enabled === "true";
+                const newEnabled = !isEnabled;
+                autoFetchToggle.dataset.enabled = newEnabled ? "true" : "false";
+                autoFetchToggle.setAttribute("aria-checked", newEnabled ? "true" : "false");
+                autoFetchToggle.title = newEnabled ? "Enabled" : "Disabled";
+            });
+            autoFetchToggle.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    autoFetchToggle.click();
+                }
+            });
+        }
+
         // Update provider name when URL input changes (on blur)
         modal.querySelectorAll(".mpv-provider-input").forEach((input) => {
             input.addEventListener("blur", (e) => {
@@ -1287,11 +1667,16 @@
 
         providerDropdown.addEventListener("click", (e) => {
             const item = e.target.closest(".mpv-dropdown-item");
-            if (!item || item.classList.contains("disabled")) return;
+            if (!item || item.classList.contains("disabled") || item.dataset.id === "torbox") return;
 
             const id = item.dataset.id;
             const name = item.dataset.name;
             const container = modal.querySelector("#mpv-providers-container");
+            const defaults = getProviderDefaults(id);
+            const initialUrl = defaults.url;
+            const tooltipAttr = defaults.tooltip ? `title="${defaults.tooltip.replace(/"/g, "&quot;")}"` : "";
+            const helpSpan = defaults.tooltip ? `<span class="mpv-tooltip-help" ${tooltipAttr}>?</span>` : "";
+            const placeholder = defaults.placeholder;
 
             const newProviderHTML = `
                 <div class="mpv-form-group mpv-provider-item" data-id="${id}" draggable="true" style="transition: transform 0.2s, opacity 0.2s;">
@@ -1301,13 +1686,13 @@
                             <div class="mpv-toggle-track mpv-provider-toggle" data-id="${id}" data-enabled="true" role="switch" aria-checked="true" tabindex="0" title="Enabled">
                                 <div class="mpv-toggle-thumb"></div>
                             </div>
-                            <label class="mpv-label" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</label>
+                            <label class="mpv-label mpv-provider-label" data-id="${id}" style="margin: 0; cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}${helpSpan}</label>
                         </div>
                         <div style="display: flex; gap: 4px; flex-shrink: 0;">
                             <button type="button" class="mpv-btn mpv-btn-remove mpv-remove-provider" title="Remove">🗑</button>
                         </div>
                     </div>
-                    <input type="text" data-id="${id}" class="mpv-input mpv-provider-input" placeholder="Paste manifest.json link here" value="">
+                    <input type="text" data-id="${id}" class="mpv-input mpv-provider-input" placeholder="${placeholder}" value="${initialUrl}">
                 </div>
             `;
 
@@ -1318,6 +1703,40 @@
             } else {
                 container.insertAdjacentHTML("beforeend", newProviderHTML);
             }
+
+            // Add toggle listener to newly added provider
+            const newToggle = container.querySelector(`[data-id="${id}"].mpv-provider-toggle`);
+            newToggle?.addEventListener("click", (ev) => {
+                const track = ev.currentTarget;
+                const isEnabled = track.dataset.enabled === "true";
+                const newEnabled = !isEnabled;
+                track.dataset.enabled = newEnabled ? "true" : "false";
+                track.setAttribute("aria-checked", newEnabled ? "true" : "false");
+                track.title = newEnabled ? "Enabled" : "Disabled";
+                const pItem = track.closest(".mpv-provider-item");
+                if (pItem) pItem.classList.toggle("mpv-provider-disabled", !newEnabled);
+                const input = container.querySelector(`.mpv-provider-input[data-id="${track.dataset.id}"]`);
+                if (input) {
+                    input.style.opacity = newEnabled ? "1" : "0.5";
+                    input.style.pointerEvents = newEnabled ? "auto" : "none";
+                }
+            });
+            newToggle?.addEventListener("keydown", (ev) => {
+                if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    newToggle.click();
+                }
+            });
+
+            // Update provider name when URL input changes (on blur)
+            const newInput = container.querySelector(`.mpv-provider-input[data-id="${id}"]`);
+            newInput?.addEventListener("blur", (ev) => {
+                const providerId = ev.target.dataset.id;
+                const url = ev.target.value.trim();
+                if (providerId.startsWith("custom") && url) {
+                    updateSingleProviderLabel(modal, providerId, url);
+                }
+            });
 
             providerDropdown.classList.remove("show");
             dropdownOverlay?.classList.remove("show");
@@ -1524,33 +1943,67 @@
         const debugEnabled = debugToggle ? debugToggle.dataset.enabled === "true" : GM_getValue("debug", false);
         GM_setValue("debug", debugEnabled);
 
+        const autoFetchToggle = modal.querySelector(".mpv-auto-fetch-toggle");
+        autoFetch = autoFetchToggle
+            ? autoFetchToggle.dataset.enabled === "true"
+            : GM_getValue("autofetch", GM_getValue("autoFetchEnabled", true));
+        GM_setValue("autofetch", autoFetch);
+
+        // Persist the v2 marker on the localStorage mirror so the next startup
+        // skips migration. The on-disk file is also marked when the bridge
+        // accepts the /config POST and migrates it.
+        GM_setValue("configVersion", CURRENT_CONFIG_VERSION);
+
+        // Phase 5B: read the iconMode from the modal's <select> (default
+        // "default" if absent) and persist it. Unknown values are coerced
+        // to "default" at read time by `applyIconMode`.
+        const iconModeSelect = modal.querySelector("#mpv-icon-mode");
+        const validIconModes = ["default", "config-only", "compact", "disabled"];
+        const selectedIconMode = iconModeSelect ? iconModeSelect.value : "default";
+        const iconMode = validIconModes.includes(selectedIconMode) ? selectedIconMode : "default";
+        GM_setValue("iconMode", iconMode);
+        updateButtonInfo();
+
         showToast("Settings saved!", "success");
 
-        // Sync config to bridge
+        // Sync the complete bridge config immediately on Save. Keep the same
+        // object pending until the bridge acknowledges it so /play can retry
+        // if the Save-time POST fails or the bridge is offline.
         try {
             const bridgeConfig = {
-                providers: providers,
+                configVersion: CURRENT_CONFIG_VERSION,
+                autoFetch: { enabled: autoFetch },
                 extraEpisodes: extraEpisodes,
+                providers: providers,
                 playlistMode: playlistMode,
                 mpvShortcut: mpvShortcut,
                 preferredGroup: preferredGroup,
                 preferredQuality: preferredQuality,
                 mpvArgsStr: mpvArgsStr,
                 debug: debugEnabled,
+                iconMode: iconMode,
             };
             const stremioMeta = parseCurrentURL();
-            if (stremioMeta && typeof stremioMeta === "object") {
-                bridgeConfig.stremioMeta = stremioMeta;
+            const bridgeStremioMeta = buildBridgeStremioMeta(stremioMeta);
+            if (bridgeStremioMeta) {
+                bridgeConfig.stremioMeta = bridgeStremioMeta;
             }
-            GM_xmlhttpRequest({
-                method: "POST",
-                url: "http://localhost:9632/config",
-                headers: { "Content-Type": "application/json" },
-                data: JSON.stringify(bridgeConfig),
-                onload: () => log("Config synced to bridge"),
-                onerror: () => log("Failed to sync config to bridge"),
-            });
-        } catch (_) {}
+            // Mirrors src/userscript-config-sync.ts — keep in sync.
+            // Mark this config as pending so /play can flush it first.
+            pendingBridgeConfig = bridgeConfig;
+            postBridgeConfig(bridgeConfig)
+                .then(() => {
+                    if (pendingBridgeConfig === bridgeConfig) {
+                        pendingBridgeConfig = null;
+                    }
+                    log("Config synced to bridge");
+                })
+                .catch((error) => {
+                    log("Failed to sync config to bridge:", error.message);
+                });
+        } catch (error) {
+            log("Failed to build bridge config:", error.message);
+        }
     }
 
     // ==================== UI SCRAPER ====================
@@ -1670,6 +2123,19 @@
         return typeof id === "string" && /^tt\d+$/.test(id);
     }
 
+    function getRouteText() {
+        return `${window.location.pathname || ""}${window.location.hash || ""}`.toLowerCase();
+    }
+
+    function isPlayerRoute() {
+        const route = getRouteText();
+        return /(?:^|[#/])player(?:$|[/?#])/.test(route);
+    }
+
+    function isDetailRoute() {
+        return getRouteText().includes("/detail/");
+    }
+
     function parseCurrentURL() {
         const hash = window.location.hash;
         log("Parsing URL:", `${hash.substring(0, 80)}...`);
@@ -1774,6 +2240,205 @@
     const MPV_ICON = `<svg viewBox="0 0 64 64" width="48" height="48" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="o" x1="13" y1="0" x2="53" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f9f9f9"/><stop offset="1" stop-color="#b9b9b9"/></linearGradient><linearGradient id="m" x1="44" y1="43" x2="18" y2="-2" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#451b4c"/><stop offset="1" stop-color="#6c3c76"/></linearGradient><linearGradient id="i" x1="25" y1="5" x2="49" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2f0e35"/><stop offset="1" stop-color="#732e7d"/></linearGradient><linearGradient id="c" x1="24" y1="12" x2="42" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f1f0f1"/><stop offset="1" stop-color="#ada7af"/></linearGradient><linearGradient id="p" x1="29" y1="18" x2="33" y2="23" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#66386f"/><stop offset="1" stop-color="#461d4d"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#o)"/><circle cx="33" cy="31" r="28" fill="url(#m)"/><circle cx="35" cy="29" r="21" fill="url(#i)"/><circle cx="32" cy="32" r="14" fill="url(#c)"/><path d="M28 25v12l10-6z" fill="url(#p)"/></svg>`;
     const GEAR_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" style="fill: currentColor;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0 .59-.22L2.74 8.87c-.04.17 0 .42.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`;
 
+    function getVisibleChild(wrapper) {
+        if (!wrapper?.firstElementChild) {
+            return wrapper;
+        }
+        for (const child of wrapper.children) {
+            const rect = child.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                return child;
+            }
+        }
+        return wrapper;
+    }
+
+    function findFullscreenButton() {
+        const matches = Array.from(
+            document.querySelectorAll(
+                '[title*="fullscreen" i], [title*="tela cheia" i], [title*="pantalla" i], [title*="plein" i], [title*="vollbild" i]',
+            ),
+        );
+        for (const match of matches) {
+            const child = getVisibleChild(match);
+            const rect = child.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                return child;
+            }
+        }
+
+        const navButtonsContainer = document.querySelector('[class*="buttons-container-"]');
+        if (navButtonsContainer) {
+            const scopedTitleElements = Array.from(navButtonsContainer.querySelectorAll("[title]"));
+            for (const element of scopedTitleElements) {
+                const title = element.getAttribute("title")?.toLowerCase() || "";
+                if (
+                    title.includes("fullscreen") ||
+                    title.includes("tela cheia") ||
+                    title.includes("pantalla") ||
+                    title.includes("plein") ||
+                    title.includes("vollbild")
+                ) {
+                    const child = getVisibleChild(element);
+                    const rect = child.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        return child;
+                    }
+                }
+            }
+
+            const visibleChildren = Array.from(navButtonsContainer.children)
+                .filter((element) => {
+                    const rect = element.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                })
+                .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+
+            if (visibleChildren.length > 0) {
+                return getVisibleChild(visibleChildren[0]);
+            }
+            return navButtonsContainer;
+        }
+
+        const docFullscreen = Array.from(document.querySelectorAll("[title]")).find((element) => {
+            const title = element.getAttribute("title")?.toLowerCase() || "";
+            if (
+                title.includes("fullscreen") ||
+                title.includes("tela cheia") ||
+                title.includes("pantalla") ||
+                title.includes("plein") ||
+                title.includes("vollbild")
+            ) {
+                const child = getVisibleChild(element);
+                const rect = child.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }
+            return false;
+        });
+        return docFullscreen ? getVisibleChild(docFullscreen) : null;
+    }
+
+    function clampToViewport(value, minimum, maximum) {
+        return Math.min(Math.max(value, minimum), maximum);
+    }
+
+    function getCompactConfigButtonPosition() {
+        const fullscreenButton = findFullscreenButton();
+        if (!fullscreenButton) {
+            return null;
+        }
+
+        const rect = fullscreenButton.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+            return null;
+        }
+
+        const buttonSize = 32;
+        const gap = 8;
+        const viewportPadding = 8;
+        const centeredTop = rect.top + (rect.height - buttonSize) / 2;
+        const leftOfFullscreen = rect.left - buttonSize - gap;
+        const rightOfFullscreen = rect.right + gap;
+        let left = leftOfFullscreen;
+        let top = centeredTop;
+
+        if (
+            leftOfFullscreen < viewportPadding &&
+            rightOfFullscreen + buttonSize <= window.innerWidth - viewportPadding
+        ) {
+            left = rightOfFullscreen;
+        } else if (leftOfFullscreen < viewportPadding) {
+            left = rect.left + (rect.width - buttonSize) / 2;
+            top = rect.bottom + gap;
+        }
+
+        return {
+            left: clampToViewport(left, viewportPadding, window.innerWidth - buttonSize - viewportPadding),
+            top: clampToViewport(top, viewportPadding, window.innerHeight - buttonSize - viewportPadding),
+        };
+    }
+
+    function positionFloatingContainer(container, state, precomputedCompactPosition) {
+        container.style.left = "auto";
+        container.style.right = "20px";
+        container.style.bottom = "100px";
+        container.style.top = "auto";
+        container.style.zIndex = "99999";
+        container.style.alignItems = "flex-end";
+        container.style.flexDirection = "column";
+
+        if (state.containerPosition !== "top-right") {
+            return;
+        }
+
+        const compactPosition = precomputedCompactPosition ?? getCompactConfigButtonPosition();
+        container.style.bottom = "auto";
+        container.style.zIndex = "999999";
+
+        if (!compactPosition) {
+            container.style.top = "16px";
+            container.style.right = "70px";
+            return;
+        }
+
+        container.style.top = `${compactPosition.top}px`;
+        container.style.left = `${compactPosition.left}px`;
+        container.style.right = "auto";
+        container.style.alignItems = "flex-start";
+    }
+
+    let updateButtonFrame = null;
+    let compactPositionFrame = null;
+
+    function scheduleUpdateButtonInfo() {
+        if (updateButtonFrame !== null) {
+            return;
+        }
+
+        updateButtonFrame = requestAnimationFrame(() => {
+            updateButtonFrame = null;
+            updateButtonInfo();
+        });
+    }
+
+    const COMPACT_RETRY_MAX = 5;
+    const COMPACT_RETRY_DELAY = 250;
+    let compactRetryCount = 0;
+
+    function positionCompactConfigButton(isRetry = false) {
+        const container = document.getElementById("stremio-mpv-floating");
+        if (!container || isPlayerRoute() || GM_getValue("iconMode", "default") !== "compact") {
+            return;
+        }
+
+        if (!isRetry) {
+            compactRetryCount = 0;
+        }
+
+        const compactPosition = getCompactConfigButtonPosition();
+        positionFloatingContainer(container, applyIconMode("compact"), compactPosition);
+
+        if (compactPosition === null && compactRetryCount < COMPACT_RETRY_MAX) {
+            compactRetryCount++;
+            setTimeout(() => {
+                schedulePositionCompactConfigButton(true);
+            }, COMPACT_RETRY_DELAY);
+        } else if (compactPosition !== null) {
+            compactRetryCount = 0;
+        }
+    }
+
+    function schedulePositionCompactConfigButton(isRetry = false) {
+        if (compactPositionFrame !== null) {
+            return;
+        }
+
+        compactPositionFrame = requestAnimationFrame(() => {
+            compactPositionFrame = null;
+            positionCompactConfigButton(isRetry);
+        });
+    }
+
     function createFloatingButton() {
         if (document.getElementById("stremio-mpv-floating")) return;
 
@@ -1816,24 +2481,51 @@
         const container = document.getElementById("stremio-mpv-floating");
         if (!container) return;
 
-        const hash = window.location.hash;
-        const isDetail = hash.includes("/detail/");
-        const isAddons = hash.includes("/addons");
-
-        if (!isDetail && !isAddons) {
+        if (isPlayerRoute()) {
             container.style.display = "none";
             return;
         }
 
-        container.style.display = "flex";
+        const route = getRouteText();
+        const isDetail = route.includes("/detail/");
+        const isAddons = route.includes("/addons");
+
+        let state;
+        if (isDetail) {
+            const iconMode = GM_getValue("iconMode", "default");
+            state = applyIconMode(iconMode);
+        } else if (isAddons) {
+            state = {
+                containerVisible: true,
+                mpvButtonVisible: false,
+                configButtonVisible: true,
+                configButtonEnlarged: true,
+                configButtonSize: "large",
+                containerPosition: "bottom-right",
+            };
+        } else {
+            state = {
+                containerVisible: false,
+                mpvButtonVisible: false,
+                configButtonVisible: false,
+                configButtonEnlarged: false,
+                configButtonSize: "small",
+                containerPosition: "bottom-right",
+            };
+        }
+
+        container.style.display = state.containerVisible ? "flex" : "none";
+        positionFloatingContainer(container, state);
 
         const playBtn = document.getElementById("stremio-mpv-btn");
-        if (playBtn) playBtn.style.display = isDetail ? "flex" : "none";
+        if (playBtn) playBtn.style.display = state.mpvButtonVisible ? "flex" : "none";
 
         const configBtn = document.getElementById("stremio-mpv-config");
         if (configBtn) {
             const svg = configBtn.querySelector("svg");
-            if (isAddons) {
+            configBtn.style.display = state.configButtonVisible ? "flex" : "none";
+            configBtn.style.order = state.containerPosition === "top-right" ? "0" : "";
+            if (state.configButtonSize === "large") {
                 configBtn.style.width = "48px";
                 configBtn.style.height = "48px";
                 configBtn.style.opacity = "1";
@@ -1852,17 +2544,29 @@
             }
         }
 
+        // Episode-pill display is independent of `iconMode` — it still shows
+        // S##E## on detail pages. The pill is hidden by default; only flip
+        // it on when we have a parsed episode to show.
         const info = document.getElementById("stremio-mpv-info");
-        if (isDetail) {
-            const content = parseCurrentURL();
-            if (content?.episode) {
-                info.textContent = `S${content.season}E${content.episode}`;
-                info.style.display = "block";
+        if (info) {
+            if (state.containerPosition === "top-right") {
+                info.textContent = "";
+                info.style.display = "none";
+                return;
+            }
+
+            info.style.order = state.containerPosition === "top-right" ? "1" : "";
+            if (isDetail) {
+                const content = parseCurrentURL();
+                if (content?.episode) {
+                    info.textContent = `S${content.season}E${content.episode}`;
+                    info.style.display = "block";
+                } else {
+                    info.style.display = "none";
+                }
             } else {
                 info.style.display = "none";
             }
-        } else {
-            info.style.display = "none";
         }
     }
 
@@ -2228,6 +2932,22 @@
     }
 
     function sendToMPV(playlist, title) {
+        // Mirrors src/userscript-config-sync.ts — keep in sync.
+        // Flush any pending config to the bridge before opening MPV
+        // so the bridge runtime cache is never stale relative to /play.
+        if (pendingBridgeConfig) {
+            return flushPendingBridgeConfig().then((flushed) => {
+                if (!flushed) {
+                    log("[Bridge] Pending config sync failed; aborting /play");
+                    return Promise.reject(new Error("Pending config sync failed"));
+                }
+                return sendToMPVInner(playlist, title);
+            });
+        }
+        return sendToMPVInner(playlist, title);
+    }
+
+    function sendToMPVInner(playlist, title) {
         return new Promise((resolve, reject) => {
             const profile = JSON.parse(localStorage.getItem("profile") || "{}");
             const authKey = profile.auth?.key;
@@ -2500,6 +3220,12 @@
 
         notify(`v${version} initialized — ${providerSummary} — ${modeText}`);
 
+        if (typeof GM_registerMenuCommand === "function") {
+            GM_registerMenuCommand("Open MPV Bridge Settings", () => {
+                createConfigModal();
+            });
+        }
+
         // Check bridge server and show connected toast
         try {
             const isOnline = await checkServer();
@@ -2518,8 +3244,7 @@
         window.addEventListener("keydown", (e) => {
             if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
             if (e.key.toLowerCase() === mpvShortcut) {
-                const hash = window.location.hash;
-                if (hash.includes("/detail/")) {
+                if (isDetailRoute()) {
                     handleMPVClick(e);
                 }
             }
@@ -2531,14 +3256,43 @@
                 lastHash = window.location.hash;
                 log("URL changed:", `${lastHash.substring(0, 60)}...`);
                 updateButtonInfo();
+                if (GM_getValue("iconMode", "default") === "compact") {
+                    schedulePositionCompactConfigButton();
+                    setTimeout(() => {
+                        schedulePositionCompactConfigButton();
+                    }, 300);
+                }
             }
         }, 500);
 
+        const scheduleFloatingButtonLayout = () => {
+            if (GM_getValue("iconMode", "default") === "compact") {
+                schedulePositionCompactConfigButton();
+                return;
+            }
+
+            scheduleUpdateButtonInfo();
+        };
+
+        window.addEventListener("resize", scheduleFloatingButtonLayout);
+
         window.addEventListener("beforeunload", () => {
             clearInterval(hashCheckInterval);
+            window.removeEventListener("resize", scheduleFloatingButtonLayout);
         });
+        let compactRepositionTimer = null;
         new MutationObserver(() => {
             if (!document.getElementById("stremio-mpv-floating")) createFloatingButton();
+            if (GM_getValue("iconMode", "default") === "compact") {
+                schedulePositionCompactConfigButton();
+                if (compactRepositionTimer !== null) {
+                    clearTimeout(compactRepositionTimer);
+                }
+                compactRepositionTimer = setTimeout(() => {
+                    compactRepositionTimer = null;
+                    schedulePositionCompactConfigButton();
+                }, 300);
+            }
         }).observe(document.body, { childList: true, subtree: true });
     }
 

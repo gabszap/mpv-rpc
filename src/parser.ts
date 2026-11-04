@@ -14,6 +14,14 @@ export interface ParsedFilename {
     episode: number | null;
     episode_title: string | null;
     media_type: "anime" | "series" | "unknown";
+    // Optional release metadata (present when recovered via the anime
+    // release regex, e.g. "[Group] Title - Episode [Tags]" releases).
+    // Kept OPTIONAL so existing consumers that don't inspect them
+    // continue to work unchanged.
+    releaseGroup?: string;
+    resolution?: string;
+    source?: string;
+    codec?: string;
 }
 
 /**
@@ -318,6 +326,30 @@ function processGuessitResult(
         }
     }
 
+    // Anime-release recovery: upgrade title if GuessIt truncated it.
+    // The anime regex captures the full title (e.g. "Dr Stone - Science Future Part 3")
+    // when the input has the shape "[Group] Title - Subtitle - Episode [Tags]".
+    // We only upgrade — never downgrade — by requiring the regex's title to be
+    // a strict-prefix extension of the current GuessIt title.
+    let animeRecoveryApplied: AnimeReleaseParseResult | null = null;
+    const animeRecovery = parseAnimeReleaseFallback(filename);
+    if (
+        animeRecovery?.title &&
+        typeof animeRecovery.episode === "number" &&
+        (episode === null || episode === animeRecovery.episode) &&
+        animeRecovery.title.trim().length > title.trim().length &&
+        animeRecovery.title.trim().startsWith(title.trim())
+    ) {
+        title = animeRecovery.title;
+        if (episode === null) {
+            episode = animeRecovery.episode;
+        }
+        // Anime regex is authoritative for this shape — drop any partial
+        // episode_title GuessIt may have produced.
+        episode_title = null;
+        animeRecoveryApplied = animeRecovery;
+    }
+
     if (season === null) {
         const seasonMatch = title.match(/(\d+)(?:st|nd|rd|th)?\s*[Ss]eason|[Ss]eason\s*(\d+)/i);
         if (seasonMatch) {
@@ -344,6 +376,13 @@ function processGuessitResult(
         episode,
         episode_title,
         media_type: detectMediaType(filename),
+        // Propagate anime-release metadata only when the post-processor
+        // actually upgraded the title from the regex match. Stays
+        // `undefined` otherwise so existing non-anime parses are unaffected.
+        releaseGroup: animeRecoveryApplied?.releaseGroup,
+        resolution: animeRecoveryApplied?.resolution,
+        source: animeRecoveryApplied?.source,
+        codec: animeRecoveryApplied?.codec,
     };
 }
 
@@ -531,6 +570,10 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             episode,
             episode_title: null,
             media_type: mediaType,
+            releaseGroup: animeFallback.releaseGroup,
+            resolution: animeFallback.resolution,
+            source: animeFallback.source,
+            codec: animeFallback.codec,
         };
         parseCache.set(cacheKey, animeResult);
         return animeResult;

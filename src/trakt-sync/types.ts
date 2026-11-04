@@ -74,5 +74,7 @@ export interface TraktHistoryItem {
 /** Season/episode mapping from Trakt */
 export interface TraktSeasonEpisode {
     number: number;
-    episodes: TraktEpisode[];
+    episode_count?: number;
+    aired_episodes?: number;
+    episodes?: TraktEpisode[];
 }

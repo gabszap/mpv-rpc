@@ -17,6 +17,7 @@ export interface MpvData {
     episode: number | null;
     episode_title: string | null;
     filename: string;
+    path?: string;
     pause: boolean;
     percent_pos: number;
     time_pos: number;
@@ -224,9 +225,10 @@ export async function getMpvData(): Promise<MpvData | null> {
 
     try {
         // Get primary identifiers from MPV
-        const [filename, rawMediaTitle] = await Promise.all([
+        const [filename, rawMediaTitle, currentPath] = await Promise.all([
             getProperty("filename/no-ext"),
             getProperty("media-title"),
+            getProperty("path"),
         ]);
 
         // Sanitize media-title to remove tracker/subtitle metadata
@@ -429,6 +431,7 @@ export async function getMpvData(): Promise<MpvData | null> {
             episode: parsed.episode,
             episode_title: episodeTitle,
             filename: filename,
+            path: typeof currentPath === "string" ? currentPath : undefined,
             pause: pause === true,
             percent_pos: typeof percent_pos === "number" ? percent_pos : 0,
             time_pos: typeof time_pos === "number" ? time_pos : 0,

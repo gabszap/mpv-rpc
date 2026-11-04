@@ -134,4 +134,19 @@ describe("MAL Sync Logic", () => {
         expect(result).toBe("already_synced");
         expect(api.updateWatchedEpisodes).not.toHaveBeenCalled();
     });
+
+    it("keeps Jujutsu Kaisen split-entry progress local to MAL", async () => {
+        const malId = 57658;
+        const localEpisode = 5;
+
+        vi.mocked(auth.isAuthenticated).mockReturnValue(true);
+        vi.mocked(api.getWatchStatus).mockResolvedValue(0);
+        vi.mocked(api.updateWatchedEpisodes).mockResolvedValue(true);
+
+        const result = await sync.syncEpisodeDetailed(malId, localEpisode, 95, 12);
+
+        expect(result).toBe("updated");
+        expect(api.updateWatchedEpisodes).toHaveBeenCalledWith(malId, localEpisode, 12);
+        expect(api.updateWatchedEpisodes).not.toHaveBeenCalledWith(malId, 52, expect.anything());
+    });
 });
