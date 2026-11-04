@@ -89,7 +89,7 @@ jobs:
               run: npm ci
 
             - name: Run semantic-release (root)
-              run: npx semantic-release
+              run: npx semantic-release -e ./semantic-release/release.config.js
               env:
                   RELEASE_SCOPE: root
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
