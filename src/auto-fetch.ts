@@ -9,7 +9,7 @@ import { config } from "./config";
 import type { MpvData } from "./mpv";
 
 // Shared config file path (same as bridge uses)
-const CONFIG_PATH = path.resolve(__dirname, "..", ".stremio-mpv-config.json");
+const CONFIG_PATH = path.resolve(__dirname, "..", ".config", ".stremio-mpv-config.json");
 
 // Deduplication state
 let lastTriggerKey: string | null = null;

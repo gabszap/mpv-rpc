@@ -12,6 +12,9 @@ import * as discord from "./discord";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
 import * as mpv from "./mpv";
 import { checkAvailability } from "./parser";
+import { getUser } from "./trakt-sync/api";
+import { authorize as traktAuthorize, isAuthenticated as traktIsAuthenticated } from "./trakt-sync/auth";
+import { stopCurrentScrobble, tryScrobble } from "./trakt-sync/sync";
 
 let consoleRepl: ConsoleRepl | null = null;
 
@@ -43,10 +46,19 @@ async function update(): Promise<void> {
         const data = await mpv.getMpvData();
 
         if (!data) {
-            // MPV not connected, clear Discord activity
+            // MPV not connected, clear Discord activity and stop Trakt scrobble
             await discord.clearActivity();
             lastMalDiagnosticKey = null;
             lastMalSyncSuccessKey = null;
+
+            // Stop Trakt scrobble if active
+            if (config.trakt.enabled && traktIsAuthenticated()) {
+                try {
+                    await stopCurrentScrobble();
+                } catch (e) {
+                    console.error("[Trakt] Error stopping scrobble on disconnect:", e);
+                }
+            }
             return;
         }
 
@@ -121,6 +133,15 @@ async function update(): Promise<void> {
             }
         }
 
+        // Trakt sync - scrobble playback progress
+        if (config.trakt.enabled && traktIsAuthenticated() && data.mal_id && data.episode) {
+            try {
+                await tryScrobble(data);
+            } catch (e) {
+                console.error("[Trakt] Scrobble error:", e);
+            }
+        }
+
         // Auto-fetch: check if we should fetch next episodes
         await checkAndTriggerAutoFetch(data);
     } catch (e) {
@@ -189,6 +210,25 @@ async function start(): Promise<void> {
         console.log("[Main] MAL sync: disabled");
     }
 
+    // Show Trakt sync status
+    if (config.trakt.enabled) {
+        if (traktIsAuthenticated()) {
+            try {
+                const user = await getUser();
+                console.log("[Main] Trakt sync: enabled (authenticated)");
+                if (user?.username) {
+                    console.log(`[Main] Trakt sync: logged in as ${user.username}`);
+                }
+            } catch {
+                console.log("[Main] Trakt sync: enabled (authenticated, could not fetch username)");
+            }
+        } else {
+            console.log("[Main] Trakt sync: enabled (not authenticated - run with 'trakt-auth' to authorize)");
+        }
+    } else {
+        console.log("[Main] Trakt sync: disabled");
+    }
+
     // Try to connect to MPV
     console.log("[Main] Looking for MPV...");
     const mpvConnected = await mpv.connect();
@@ -243,6 +283,15 @@ async function stop(): Promise<void> {
     console.log("\n[Main] Shutting down...");
     _isRunning = false;
 
+    // Stop Trakt scrobble on shutdown
+    if (config.trakt.enabled && traktIsAuthenticated()) {
+        try {
+            await stopCurrentScrobble();
+        } catch (e) {
+            console.error("[Trakt] Error stopping scrobble on shutdown:", e);
+        }
+    }
+
     if (updateInterval) {
         clearInterval(updateInterval);
         updateInterval = null;
@@ -283,8 +332,18 @@ if (args.includes("mal-auth")) {
         }
         process.exit(success ? 0 : 1);
     });
+} else if (args.includes("trakt-auth")) {
+    // Trakt authorization mode
+    console.log("[Trakt] Starting device authorization flow...");
+    traktAuthorize().then((success) => {
+        if (success) {
+            console.log("[Trakt] Authorization complete! You can now restart mpv-rpc.");
+        } else {
+            console.log("[Trakt] Authorization failed or cancelled.");
+        }
+        process.exit(success ? 0 : 1);
+    });
 } else {
-    // Normal mode - Start the service
     start().catch((e) => {
         console.error("[Main] Fatal error:", e);
         process.exit(1);

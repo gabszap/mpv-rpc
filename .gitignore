@@ -2,10 +2,9 @@ node_modules/
 legacy/
 dist/
 .env
-.mal_tokens.json
+.config/
 guessit-api/.vercel
 scripts/
 .ocx
 .anime_cache/
 bun.lock
-.stremio-mpv-config.json
