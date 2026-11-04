@@ -1,0 +1,43 @@
+name: CI
+
+on:
+    workflow_dispatch:
+    pull_request:
+    push:
+        branches:
+            - main
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v5
+              with:
+                  node-version: 22
+                  cache: npm
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build TypeScript
+              run: npm run build
+
+            - name: Run tests
+              run: npm test
+
+            # stremio-mpv.user.js is generated from stremio-mpv-bridge/userscript/;
+            # fail when the committed file does not match what the sources produce.
+            - name: Check generated userscript is up to date
+              run: npm run check:userscript
