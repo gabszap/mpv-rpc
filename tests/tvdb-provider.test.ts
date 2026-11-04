@@ -963,10 +963,7 @@ describe("TvdbProvider season artwork", () => {
                                 slug: "jojos-bizarre-adventure-2012",
                                 status: "Continuing",
                                 translations: { eng: "JoJo's Bizarre Adventure (2012)" },
-                                aliases: [
-                                    "JoJo's Bizarre Adventure",
-                                    "JoJo's Bizarre Adventure: Steel Ball Run",
-                                ],
+                                aliases: ["JoJo's Bizarre Adventure", "JoJo's Bizarre Adventure: Steel Ball Run"],
                             },
                             {
                                 tvdb_id: "83950",

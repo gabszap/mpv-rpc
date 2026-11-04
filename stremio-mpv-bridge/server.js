@@ -1559,7 +1559,12 @@ function findBestStream(streams, config, targetSeason = null, targetEpisode = nu
         .filter((q) => q.length > 0);
     const hasEpisodeMatchSignal = candidateStreams.some((s) => episodeMatchByStream.get(s) === "exact");
 
-    if (preferredGroups.length > 0 || inferredGroup.length > 0 || selectedQualities.length > 0 || hasEpisodeMatchSignal) {
+    if (
+        preferredGroups.length > 0 ||
+        inferredGroup.length > 0 ||
+        selectedQualities.length > 0 ||
+        hasEpisodeMatchSignal
+    ) {
         let bestStream = candidateStreams[0];
         let bestScore = -1;
 
@@ -1580,7 +1585,9 @@ function findBestStream(streams, config, targetSeason = null, targetEpisode = nu
                     score += 4;
                 }
             } else if (inferredGroup.length > 0) {
-                const streamGroup = extractReleaseGroup(s.behaviorHints?.filename || s.title || s.description || s.name || "");
+                const streamGroup = extractReleaseGroup(
+                    s.behaviorHints?.filename || s.title || s.description || s.name || "",
+                );
                 if (streamGroup === inferredGroup || normalizedTitle.includes(inferredGroup.replace(/[[\]]/g, ""))) {
                     score += 2;
                 }

@@ -41,27 +41,8 @@
             "!!**/.anime_cache",
             "!!**/.opencode",
             "!!**/*.min.js",
+            "!stremio-mpv-bridge/stremio-mpv.user.js",
             "!!**/scripts/"
         ]
-    },
-    "overrides": [
-        {
-            "includes": ["stremio-mpv-bridge/stremio-mpv.user.js"],
-            "linter": {
-                "rules": {
-                    "recommended": true,
-                    "correctness": {
-                        "noUnusedVariables": "off",
-                        "noUnusedImports": "off"
-                    },
-                    "suspicious": {
-                        "noExplicitAny": "off"
-                    }
-                }
-            },
-            "javascript": {
-                "globals": ["GM_xmlhttpRequest", "GM_notification", "GM_setValue", "GM_getValue", "GM_info"]
-            }
-        }
-    ]
+    }
 }
