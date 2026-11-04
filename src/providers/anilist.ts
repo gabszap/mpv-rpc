@@ -4,9 +4,9 @@
  */
 
 import axios from "axios";
-import { formatProviderErrorDetails, logApiCall } from "./types";
 import { config } from "../config";
-import type { AnimeProvider, AnimeInfo, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
+import type { AnimeInfo, AnimeProvider, AnimeSearchResult, EpisodeLookupContext, SequelInfo } from "./types";
+import { formatProviderErrorDetails, logApiCall } from "./types";
 
 const ANILIST_API = "https://graphql.anilist.co";
 
@@ -52,18 +52,22 @@ async function anilistRequest(query: string, variables: Record<string, any>, ope
     const now = Date.now();
     const elapsed = now - lastRequestTime;
     if (elapsed < MIN_REQUEST_INTERVAL) {
-        await new Promise(resolve => setTimeout(resolve, MIN_REQUEST_INTERVAL - elapsed));
+        await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL - elapsed));
     }
     lastRequestTime = Date.now();
 
     try {
-        const response = await axios.post(ANILIST_API, {
-            query,
-            variables,
-        }, {
-            headers: { "Content-Type": "application/json" },
-            timeout: 10000,
-        });
+        const response = await axios.post(
+            ANILIST_API,
+            {
+                query,
+                variables,
+            },
+            {
+                headers: { "Content-Type": "application/json" },
+                timeout: 10000,
+            },
+        );
 
         circuitBreaker.recordSuccess();
         logApiCall("AniList", operation, variables, "200 OK", "");
@@ -73,13 +77,19 @@ async function anilistRequest(query: string, variables: Record<string, any>, ope
             logApiCall("AniList", operation, variables, "429 RATE_LIMITED", "retrying in 2s");
             console.log("[AniList] Rate limited, waiting 2s...");
             circuitBreaker.recordFailure();
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 2000));
             return anilistRequest(query, variables, operation);
         }
 
         logApiCall("AniList", operation, variables, "ERROR", e.message || "unknown");
         if (config.debug) {
-            logApiCall("AniList", operation, variables, "ERROR_DETAIL", formatProviderErrorDetails("AniList", operation, e));
+            logApiCall(
+                "AniList",
+                operation,
+                variables,
+                "ERROR_DETAIL",
+                formatProviderErrorDetails("AniList", operation, e),
+            );
         }
         circuitBreaker.recordFailure();
         throw e;
@@ -148,10 +158,7 @@ query ($id: Int) {
 `;
 
 function extractSeasonNumber(title: string): number | null {
-    const patterns = [
-        /(?:season|s)\s*(\d+)/i,
-        /(\d+)(?:st|nd|rd|th)\s*season/i,
-    ];
+    const patterns = [/(?:season|s)\s*(\d+)/i, /(\d+)(?:st|nd|rd|th)\s*season/i];
     for (const pattern of patterns) {
         const match = title.match(pattern);
         if (match) return parseInt(match[1], 10);
@@ -198,7 +205,13 @@ export class AniListProvider implements AnimeProvider {
 
             if (!media) return null;
 
-            logApiCall("AniList", "getById", { id }, "DETAIL", `"${media.title.english || media.title.romaji}" (${media.format})`);
+            logApiCall(
+                "AniList",
+                "getById",
+                { id },
+                "DETAIL",
+                `"${media.title.english || media.title.romaji}" (${media.format})`,
+            );
 
             return {
                 id: media.id,
@@ -217,7 +230,7 @@ export class AniListProvider implements AnimeProvider {
         animeId: number,
         episode: number,
         _season?: number,
-        _context?: EpisodeLookupContext
+        _context?: EpisodeLookupContext,
     ): Promise<string | null> {
         try {
             const response = await anilistRequest(EPISODE_QUERY, { id: animeId }, "getEpisode");
@@ -252,7 +265,13 @@ export class AniListProvider implements AnimeProvider {
                 const epData = episodes[episode - 1];
                 if (epData?.title) {
                     const title = epData.title.replace(/Episode\s*\d+\s*[-:]\s*/i, "").trim();
-                    logApiCall("AniList", "getEpisode", { id: animeId, ep: episode }, "DETAIL", `"${title}" (fallback)`);
+                    logApiCall(
+                        "AniList",
+                        "getEpisode",
+                        { id: animeId, ep: episode },
+                        "DETAIL",
+                        `"${title}" (fallback)`,
+                    );
                     return title;
                 }
             }
@@ -289,19 +308,24 @@ export class AniListProvider implements AnimeProvider {
                 break;
             }
 
-            logApiCall("AniList", "findSeason", { id: currentId }, "DETAIL", `sequel: "${sequel.title.romaji}" (ID:${sequel.id})`);
+            logApiCall(
+                "AniList",
+                "findSeason",
+                { id: currentId },
+                "DETAIL",
+                `sequel: "${sequel.title.romaji}" (ID:${sequel.id})`,
+            );
 
             currentId = sequel.id;
             lastValidId = currentId;
 
-            const seasonInTitle = extractSeasonNumber(sequel.title.romaji) ||
-                extractSeasonNumber(sequel.title.english || "");
+            const seasonInTitle =
+                extractSeasonNumber(sequel.title.romaji) || extractSeasonNumber(sequel.title.english || "");
             if (seasonInTitle === targetSeason) {
                 return this.getAnimeById(currentId);
             }
 
-            const isPart = isPartOfSameSeason(sequel.title.romaji) ||
-                isPartOfSameSeason(sequel.title.english || "");
+            const isPart = isPartOfSameSeason(sequel.title.romaji) || isPartOfSameSeason(sequel.title.english || "");
             if (!isPart && sequel.format === "TV") {
                 currentSeason++;
             }
@@ -324,8 +348,8 @@ export class AniListProvider implements AnimeProvider {
             const sequelMedia = sequelResponse?.data?.Media;
             if (!sequelMedia) return null;
 
-            const isSplitCour = isPartOfSameSeason(sequelMedia.title.romaji) ||
-                isPartOfSameSeason(sequelMedia.title.english || "");
+            const isSplitCour =
+                isPartOfSameSeason(sequelMedia.title.romaji) || isPartOfSameSeason(sequelMedia.title.english || "");
 
             return {
                 id: sequelMedia.id,
@@ -340,7 +364,9 @@ export class AniListProvider implements AnimeProvider {
         }
     }
 
-    private findSequel(edges: any[]): { id: number; title: { romaji: string; english: string | null }; format: string } | null {
+    private findSequel(
+        edges: any[],
+    ): { id: number; title: { romaji: string; english: string | null }; format: string } | null {
         for (const edge of edges) {
             if (edge.relationType === "SEQUEL") {
                 const node = edge.node;

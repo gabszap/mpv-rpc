@@ -10,16 +10,16 @@
     "dev": "tsc && npm run start",
     "bridge": "npm run start --workspace=stremio-mpv-bridge",
     "test": "vitest run",
-    "release:dry:root": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release --dry-run",
-    "release:root": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release",
-    "release:dry:bridge": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release --dry-run",
-    "release:bridge": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release",
-    "release:dry": "npm run release:dry:root",
-    "release:local": "npm run release:root",
-    "lint": "biome check .",
-    "lint:fix": "biome check --fix .",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --fix .",
+    "check": "biome check .",
+    "check:fix": "biome check --fix .",
     "format": "biome format .",
-    "format:fix": "biome format --write ."
+    "format:fix": "biome format --write",
+    "release": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release",
+    "release:dry": "dotenv -e .env -v RELEASE_SCOPE=root -- semantic-release --dry-run",
+    "release:bridge": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release",
+    "release:bridge:dry": "dotenv -e .env -v RELEASE_SCOPE=bridge -- semantic-release --dry-run"
   },
   "workspaces": [
     "stremio-mpv-bridge"

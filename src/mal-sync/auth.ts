@@ -3,10 +3,10 @@
  * Handles authorization flow and token management
  */
 
-import * as fs from "fs";
-import * as path from "path";
-import * as http from "http";
-import * as crypto from "crypto";
+import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as http from "node:http";
+import * as path from "node:path";
 import axios from "axios";
 import { config } from "../config";
 
@@ -82,13 +82,17 @@ function isTokenExpired(tokens: MalTokens): boolean {
  */
 async function refreshAccessToken(refreshToken: string): Promise<MalTokens | null> {
     try {
-        const response = await axios.post(MAL_TOKEN_URL, new URLSearchParams({
-            client_id: config.mal.clientId,
-            grant_type: "refresh_token",
-            refresh_token: refreshToken,
-        }), {
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        });
+        const response = await axios.post(
+            MAL_TOKEN_URL,
+            new URLSearchParams({
+                client_id: config.mal.clientId,
+                grant_type: "refresh_token",
+                refresh_token: refreshToken,
+            }),
+            {
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            },
+        );
 
         const tokens: MalTokens = {
             access_token: response.data.access_token,
@@ -131,9 +135,8 @@ export async function authorize(): Promise<boolean> {
     console.log(authUrl.toString());
 
     // Open browser
-    const { exec } = await import("child_process");
-    const openCmd = process.platform === "win32" ? "start" :
-        process.platform === "darwin" ? "open" : "xdg-open";
+    const { exec } = await import("node:child_process");
+    const openCmd = process.platform === "win32" ? "start" : process.platform === "darwin" ? "open" : "xdg-open";
     exec(`${openCmd} "${authUrl.toString()}"`);
 
     // Wait for callback
@@ -158,15 +161,19 @@ export async function authorize(): Promise<boolean> {
 
             // Exchange code for tokens
             try {
-                const response = await axios.post(MAL_TOKEN_URL, new URLSearchParams({
-                    client_id: config.mal.clientId,
-                    grant_type: "authorization_code",
-                    code,
-                    code_verifier: verifier,
-                    redirect_uri: `http://localhost:${CALLBACK_PORT}/callback`,
-                }), {
-                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                });
+                const response = await axios.post(
+                    MAL_TOKEN_URL,
+                    new URLSearchParams({
+                        client_id: config.mal.clientId,
+                        grant_type: "authorization_code",
+                        code,
+                        code_verifier: verifier,
+                        redirect_uri: `http://localhost:${CALLBACK_PORT}/callback`,
+                    }),
+                    {
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    },
+                );
 
                 const tokens: MalTokens = {
                     access_token: response.data.access_token,
@@ -204,11 +211,14 @@ export async function authorize(): Promise<boolean> {
         });
 
         // Timeout after 2 minutes
-        setTimeout(() => {
-            console.log("[MAL] Authorization timeout");
-            server.close();
-            resolve(false);
-        }, 2 * 60 * 1000);
+        setTimeout(
+            () => {
+                console.log("[MAL] Authorization timeout");
+                server.close();
+                resolve(false);
+            },
+            2 * 60 * 1000,
+        );
     });
 }
 

@@ -1524,6 +1524,32 @@
         GM_setValue("debug", debugEnabled);
 
         showToast("Settings saved!", "success");
+
+        // Sync config to bridge
+        try {
+            const bridgeConfig = {
+                providers: providers,
+                extraEpisodes: extraEpisodes,
+                playlistMode: playlistMode,
+                mpvShortcut: mpvShortcut,
+                preferredGroup: preferredGroup,
+                preferredQuality: preferredQuality,
+                mpvArgsStr: mpvArgsStr,
+                debug: debugEnabled,
+            };
+            const stremioMeta = parseCurrentURL();
+            if (stremioMeta && typeof stremioMeta === "object") {
+                bridgeConfig.stremioMeta = stremioMeta;
+            }
+            GM_xmlhttpRequest({
+                method: "POST",
+                url: "http://localhost:9632/config",
+                headers: { "Content-Type": "application/json" },
+                data: JSON.stringify(bridgeConfig),
+                onload: () => log("Config synced to bridge"),
+                onerror: () => log("Failed to sync config to bridge"),
+            });
+        } catch (_) {}
     }
 
     // ==================== UI SCRAPER ====================
@@ -1536,6 +1562,12 @@
         };
 
         try {
+            // Check cache first for series name
+            const cachedSeriesId = window.location.hash.match(/series\/([^/?#]+)/i);
+            if (cachedSeriesId?.[1] && seriesNameCache.has(cachedSeriesId[1])) {
+                metadata.seriesName = seriesNameCache.get(cachedSeriesId[1]);
+            }
+
             const headerEl = document.querySelector('div[class*="episode-title"]');
             if (headerEl?.innerText) {
                 const seMatch = headerEl.innerText.match(/S(\d+)E(\d+)/i);
@@ -1551,18 +1583,63 @@
                 }
             }
 
+            // Try multiple selectors for series name, in order of reliability
+            const nameCandidates = [];
+
+            // 1. Logo inside .meta-info-container (most reliable — actual series name)
+            const metaLogoEl = document.querySelector('[class*="meta-info-container"] img[class*="logo"]');
+            if (metaLogoEl?.title) {
+                nameCandidates.push(metaLogoEl.title.trim());
+            } else if (metaLogoEl?.alt) {
+                nameCandidates.push(metaLogoEl.alt.trim());
+            }
+
+            // 2. Title label element
             const titleEl = document.querySelector('[class*="title-label"]');
             if (titleEl?.innerText) {
-                metadata.seriesName = titleEl.innerText.trim();
-            } else {
-                const logoEl = document.querySelector('img[class*="logo"]');
-                if (logoEl?.title) {
-                    metadata.seriesName = logoEl.title.trim();
-                } else if (logoEl?.alt) {
-                    metadata.seriesName = logoEl.alt.trim();
+                nameCandidates.push(titleEl.innerText.trim());
+            }
+
+            // 3. Page title (usually "Series Name - Stremio" or similar)
+            if (document.title) {
+                const titleMatch = document.title.replace(/\s*[-\u2013\u2014]\s*Stremio\s*$/i, "").trim();
+                if (titleMatch && titleMatch.length > 1) {
+                    nameCandidates.push(titleMatch);
                 }
             }
 
+            // 4. Meta tags
+            const metaTitle = document.querySelector('meta[property="og:title"]');
+            if (metaTitle?.content) {
+                nameCandidates.push(metaTitle.content.trim());
+            }
+
+            // Filter out invalid names and pick the first valid one
+            const invalidPatterns = [
+                /you might also like/i,
+                /similar to/i,
+                /more like/i,
+                /recommended/i,
+                /trending/i,
+                /popular/i,
+                /^watch$/i,
+                /^stream$/i,
+            ];
+
+            for (const candidate of nameCandidates) {
+                if (!candidate || candidate.length < 2) continue;
+                if (invalidPatterns.some((p) => p.test(candidate))) continue;
+                metadata.seriesName = candidate;
+                break;
+            }
+
+            // Cache the resolved series name keyed by seriesId from URL
+            const urlSeriesId = window.location.hash.match(/series\/([^/?#]+)/i);
+            if (urlSeriesId?.[1] && metadata.seriesName) {
+                seriesNameCache.set(urlSeriesId[1], metadata.seriesName);
+            }
+
+            // Season detection fallbacks
             if (!metadata.season) {
                 const allMultiselects = document.querySelectorAll('[class*="multiselect-button"]');
                 for (const el of allMultiselects) {
@@ -1670,6 +1747,7 @@
     }
 
     let lastValidContent = null;
+    const seriesNameCache = new Map(); // seriesId -> name
 
     // ==================== FLOATING UI ====================
     const MPV_ICON = `<svg viewBox="0 0 64 64" width="48" height="48" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="o" x1="13" y1="0" x2="53" y2="40" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f9f9f9"/><stop offset="1" stop-color="#b9b9b9"/></linearGradient><linearGradient id="m" x1="44" y1="43" x2="18" y2="-2" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#451b4c"/><stop offset="1" stop-color="#6c3c76"/></linearGradient><linearGradient id="i" x1="25" y1="5" x2="49" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#2f0e35"/><stop offset="1" stop-color="#732e7d"/></linearGradient><linearGradient id="c" x1="24" y1="12" x2="42" y2="30" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f1f0f1"/><stop offset="1" stop-color="#ada7af"/></linearGradient><linearGradient id="p" x1="29" y1="18" x2="33" y2="23" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#66386f"/><stop offset="1" stop-color="#461d4d"/></linearGradient></defs><circle cx="32" cy="32" r="30" fill="url(#o)"/><circle cx="33" cy="31" r="28" fill="url(#m)"/><circle cx="35" cy="29" r="21" fill="url(#i)"/><circle cx="32" cy="32" r="14" fill="url(#c)"/><path d="M28 25v12l10-6z" fill="url(#p)"/></svg>`;

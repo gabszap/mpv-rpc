@@ -2,23 +2,23 @@
  * Common types and interfaces for anime metadata providers
  */
 
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 export interface AnimeInfo {
-    id: number;                    // Provider-specific ID (MAL ID or AniList ID)
-    mal_id?: number;               // MyAnimeList ID (for fallback purposes)
+    id: number; // Provider-specific ID (MAL ID or AniList ID)
+    mal_id?: number; // MyAnimeList ID (for fallback purposes)
     title_english: string | null;
     title_romaji: string;
     cover_url: string | null;
-    total_episodes?: number;       // For MAL sync (mark as completed)
+    total_episodes?: number; // For MAL sync (mark as completed)
 }
 
 export interface AnimeSearchResult {
     id: number;
     title: string;
     title_english: string | null;
-    type: string;                  // TV, Movie, OVA, etc.
+    type: string; // TV, Movie, OVA, etc.
     coverImage: string | null;
     titles?: Array<{ type: string; title: string }>;
 }
@@ -30,20 +30,20 @@ export interface EpisodeLookupContext {
 }
 
 export interface SequelInfo {
-    id: number;                    // Provider-specific ID
-    mal_id?: number;               // MAL ID (for sync)
+    id: number; // Provider-specific ID
+    mal_id?: number; // MAL ID (for sync)
     title_romaji: string;
     title_english: string | null;
-    total_episodes?: number;       // Episode count of the sequel
-    is_split_cour: boolean;        // true if "Part X"/"Cour X" (same logical season)
+    total_episodes?: number; // Episode count of the sequel
+    is_split_cour: boolean; // true if "Part X"/"Cour X" (same logical season)
 }
 
 export interface OverflowResult {
-    animeInfo: AnimeInfo;         // The resolved anime (may be different from original)
-    adjustedEpisode: number;      // Episode number within the resolved anime
-    originalEpisode: number;      // Original episode number from filename
-    overflowDepth: number;        // How many sequel steps were traversed (0 = no overflow)
-    sourceProvider?: string;      // Name of the provider that returned the final sequel info
+    animeInfo: AnimeInfo; // The resolved anime (may be different from original)
+    adjustedEpisode: number; // Episode number within the resolved anime
+    originalEpisode: number; // Original episode number from filename
+    overflowDepth: number; // How many sequel steps were traversed (0 = no overflow)
+    sourceProvider?: string; // Name of the provider that returned the final sequel info
 }
 
 export interface AnimeProvider {
@@ -66,7 +66,7 @@ export interface AnimeProvider {
         animeId: number,
         episode: number,
         season?: number,
-        context?: EpisodeLookupContext
+        context?: EpisodeLookupContext,
     ): Promise<string | null>;
 
     /**
@@ -128,9 +128,7 @@ function sanitizeErrorValue(value: unknown, depth = 0): unknown {
     }
 
     if (Array.isArray(value)) {
-        const items = value
-            .slice(0, LOG_MAX_ARRAY_ITEMS)
-            .map((item) => sanitizeErrorValue(item, depth + 1));
+        const items = value.slice(0, LOG_MAX_ARRAY_ITEMS).map((item) => sanitizeErrorValue(item, depth + 1));
 
         if (value.length > LOG_MAX_ARRAY_ITEMS) {
             items.push(`[truncated ${value.length - LOG_MAX_ARRAY_ITEMS} items]`);
@@ -185,7 +183,7 @@ export function formatProviderErrorDetails(
     provider: string,
     operation: string,
     error: unknown,
-    maxLength = LOG_DEFAULT_MAX_LENGTH
+    maxLength = LOG_DEFAULT_MAX_LENGTH,
 ): string {
     const err = (error ?? {}) as {
         code?: unknown;
@@ -241,7 +239,7 @@ export function logApiCall(
     endpoint: string,
     params: Record<string, any> | undefined,
     status: string,
-    result: string
+    result: string,
 ): void {
     try {
         const cacheDir = path.join(process.cwd(), ".anime_cache");
@@ -251,11 +249,17 @@ export function logApiCall(
         const logPath = path.join(cacheDir, "api_log.txt");
 
         const now = new Date();
-        const timestamp = now.getFullYear() + "-" +
-            String(now.getMonth() + 1).padStart(2, "0") + "-" +
-            String(now.getDate()).padStart(2, "0") + " " +
-            String(now.getHours()).padStart(2, "0") + ":" +
-            String(now.getMinutes()).padStart(2, "0") + ":" +
+        const timestamp =
+            now.getFullYear() +
+            "-" +
+            String(now.getMonth() + 1).padStart(2, "0") +
+            "-" +
+            String(now.getDate()).padStart(2, "0") +
+            " " +
+            String(now.getHours()).padStart(2, "0") +
+            ":" +
+            String(now.getMinutes()).padStart(2, "0") +
+            ":" +
             String(now.getSeconds()).padStart(2, "0");
 
         const paramsStr = params ? JSON.stringify(params) : "{}";

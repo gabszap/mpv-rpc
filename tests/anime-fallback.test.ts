@@ -116,7 +116,7 @@ describe("Anime fallback search", () => {
             {
                 title_romaji: "Seishun Buta Yarou",
                 title_english: "Rascal Does Not Dream of Bunny Girl Senpai",
-            }
+            },
         );
 
         expect(candidates).toEqual([
@@ -162,7 +162,7 @@ describe("Anime fallback search", () => {
             expect.objectContaining({
                 searchTitle: "Dr Stone",
                 allowSeasonInference: true,
-            })
+            }),
         );
         expect(primaryGetEpisodeTitleMock).toHaveBeenNthCalledWith(
             2,
@@ -172,7 +172,7 @@ describe("Anime fallback search", () => {
             expect.objectContaining({
                 searchTitle: "Dr Stone",
                 allowSeasonInference: false,
-            })
+            }),
         );
     });
 });

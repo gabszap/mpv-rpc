@@ -113,6 +113,37 @@ npm publish         # Irreversible
 sudo anything       # System-level
 ```
 
+## Biome - Lint & Formatting
+
+This project uses **Biome** for linting and formatting. You MUST run the appropriate Biome commands after every code change.
+
+### Available Commands
+
+| Command | Purpose |
+|---------|---------|
+| `npm run lint` | Run linting (check for issues) |
+| `npm run lint:fix` | Run linting with auto-fix |
+| `npm run format` | Check formatting (dry run) |
+| `npm run format:fix` | Auto-fix formatting |
+| `npm run check` | Lint + format check combined |
+| `npm run check:fix` | Lint + format auto-fix combined |
+
+### Required Workflow After Code Changes
+
+1. Run `npm run check:fix` to auto-fix lint and formatting issues
+2. If `check:fix` reports errors it cannot auto-fix, resolve them manually
+3. If any file under `src/` was changed, run `npm run build` to verify TypeScript compilation
+4. Run `npm run check` to confirm everything passes
+5. Report the result in your summary
+
+### Build Requirement
+
+After ANY change to files under `src/`, you MUST run `npm run build` to ensure the TypeScript compilation succeeds.
+
+This is mandatory — do NOT skip the build step after modifying source code.
+
+Do NOT skip Biome verification. All code must pass `npm run check` before completing a task.
+
 ## Output Format
 
 When returning to the orchestrator, provide:

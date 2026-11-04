@@ -1,21 +1,22 @@
 /**
  * MPV Discord RPC - Main Entry Point
- * 
+ *
  * Connects MPV Media Player directly to Discord Rich Presence
  */
 
-import { config } from "./config";
-import * as mpv from "./mpv";
-import * as discord from "./discord";
-import { checkAvailability } from "./parser";
 import { providerName } from "./anime";
-import { syncEpisodeDetailed, authorize, isAuthenticated, getUsername } from "./mal-sync/sync";
+import { checkAndTriggerAutoFetch } from "./auto-fetch";
+import { config } from "./config";
 import { ConsoleRepl, createEpisodeContext } from "./console";
+import * as discord from "./discord";
+import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
+import * as mpv from "./mpv";
+import { checkAvailability } from "./parser";
 
 let consoleRepl: ConsoleRepl | null = null;
 
 let updateInterval: NodeJS.Timeout | null = null;
-let isRunning = false;
+let _isRunning = false;
 let isUpdating = false; // Mutex to prevent parallel updates
 let lastMalDiagnosticKey: string | null = null; // Avoid repeating MAL diagnostic logs
 let lastMalSyncSuccessKey: string | null = null; // Avoid repeated MAL success logs
@@ -51,12 +52,7 @@ async function update(): Promise<void> {
 
         // Update episode context for the REPL (for manual override tracking)
         if (consoleRepl) {
-            const context = createEpisodeContext(
-                data.filename,
-                data.series_title,
-                data.season,
-                data.episode
-            );
+            const context = createEpisodeContext(data.filename, data.series_title, data.season, data.episode);
             consoleRepl.updateContext(context, data.filename);
         }
 
@@ -77,14 +73,14 @@ async function update(): Promise<void> {
             if (!data.episode) {
                 logMalDiagnostic(
                     `${data.filename}:missing-episode`,
-                    `[MAL] Skipped sync at ${Math.round(data.percent_pos)}%: episode number not detected (title may be missing episode marker like E02 or - 02).`
+                    `[MAL] Skipped sync at ${Math.round(data.percent_pos)}%: episode number not detected (title may be missing episode marker like E02 or - 02).`,
                 );
             }
 
             if (!data.mal_id) {
                 logMalDiagnostic(
                     `${data.filename}:missing-mal-id`,
-                    `[MAL] Skipped sync at ${Math.round(data.percent_pos)}%: MAL ID not found for "${data.series_title}".`
+                    `[MAL] Skipped sync at ${Math.round(data.percent_pos)}%: MAL ID not found for "${data.series_title}".`,
                 );
             }
 
@@ -94,34 +90,39 @@ async function update(): Promise<void> {
                     data.mal_id,
                     syncEpisode,
                     data.percent_pos,
-                    data.total_episodes ?? undefined
+                    data.total_episodes ?? undefined,
                 );
 
                 const syncKey = `${data.filename}:${data.mal_id}:${syncEpisode}`;
-                const progressLabel = data.total_episodes
-                    ? `${syncEpisode}/${data.total_episodes}`
-                    : `${syncEpisode}`;
+                const progressLabel = data.total_episodes ? `${syncEpisode}/${data.total_episodes}` : `${syncEpisode}`;
 
                 if (syncStatus === "updated") {
                     if (lastMalSyncSuccessKey !== syncKey) {
-                        console.log(`[MAL] Synced progress: ${data.series_title} - EP ${progressLabel} (MAL ID: ${data.mal_id})`);
+                        console.log(
+                            `[MAL] Synced progress: ${data.series_title} - EP ${progressLabel} (MAL ID: ${data.mal_id})`,
+                        );
                         lastMalSyncSuccessKey = syncKey;
                     }
                     lastMalDiagnosticKey = null;
                 } else if (syncStatus === "already_synced") {
                     if (lastMalSyncSuccessKey !== syncKey) {
-                        console.log(`[MAL] Already synced: ${data.series_title} - EP ${progressLabel} (MAL ID: ${data.mal_id})`);
+                        console.log(
+                            `[MAL] Already synced: ${data.series_title} - EP ${progressLabel} (MAL ID: ${data.mal_id})`,
+                        );
                         lastMalSyncSuccessKey = syncKey;
                     }
                     lastMalDiagnosticKey = null;
                 } else if (syncStatus === "failed") {
                     logMalDiagnostic(
                         `${data.filename}:sync-failed`,
-                        `[MAL] Sync request failed (API/network/auth issue).`
+                        `[MAL] Sync request failed (API/network/auth issue).`,
                     );
                 }
             }
         }
+
+        // Auto-fetch: check if we should fetch next episodes
+        await checkAndTriggerAutoFetch(data);
     } catch (e) {
         console.error("[Main] Update error:", e);
     } finally {
@@ -138,7 +139,7 @@ async function start(): Promise<void> {
     console.log("╚════════════════════════════════════════╝");
     console.log("");
 
-    isRunning = true;
+    _isRunning = true;
 
     // Connect to Discord
     if (config.settings.discordRpc) {
@@ -208,23 +209,23 @@ async function start(): Promise<void> {
 
     // Initialize console REPL for manual title override
     consoleRepl = new ConsoleRepl();
-    consoleRepl.on('overrideSet', () => {
+    consoleRepl.on("overrideSet", () => {
         // Trigger immediate presence update when override is set
         update();
     });
-    consoleRepl.on('overrideCleared', () => {
+    consoleRepl.on("overrideCleared", () => {
         // Trigger immediate presence update when override is cleared
         update();
     });
-    consoleRepl.on('renameSet', () => {
+    consoleRepl.on("renameSet", () => {
         // Trigger immediate re-fetch when series name is overridden
         update();
     });
-    consoleRepl.on('renameCleared', () => {
+    consoleRepl.on("renameCleared", () => {
         // Trigger immediate re-fetch when series name override is cleared
         update();
     });
-    consoleRepl.on('exit', () => {
+    consoleRepl.on("exit", () => {
         stop();
     });
 
@@ -240,7 +241,7 @@ async function start(): Promise<void> {
  */
 async function stop(): Promise<void> {
     console.log("\n[Main] Shutting down...");
-    isRunning = false;
+    _isRunning = false;
 
     if (updateInterval) {
         clearInterval(updateInterval);

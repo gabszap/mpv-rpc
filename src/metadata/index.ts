@@ -3,11 +3,11 @@
  */
 
 export {
-    isGenericTitle,
-    resolveTitleWithFallback,
-    resolveEpisodeTitle,
-    getFallbackStrategy,
     type ApiMetadata,
     type FallbackContext,
     type FallbackStrategy,
-} from './fallbackResolver';
+    getFallbackStrategy,
+    isGenericTitle,
+    resolveEpisodeTitle,
+    resolveTitleWithFallback,
+} from "./fallbackResolver";

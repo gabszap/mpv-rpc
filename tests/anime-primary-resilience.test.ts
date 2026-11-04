@@ -1,6 +1,6 @@
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const primaryJikanSearchAnimeMock = vi.fn();
@@ -141,7 +141,7 @@ describe("Anime provider resilience", () => {
             expect.objectContaining({
                 searchTitle: "Attack on Titan",
                 allowSeasonInference: true,
-            })
+            }),
         );
     });
 
@@ -184,10 +184,13 @@ describe("Anime provider resilience", () => {
         expect(fallbackKitsuSearchAnimeMock).toHaveBeenCalledTimes(1);
 
         const cachePath = path.join(testCwd, ".anime_cache", "anime_cache.json");
-        const cacheData = JSON.parse(fs.readFileSync(cachePath, "utf-8")) as Record<string, {
-            data: unknown;
-            sourceProvider?: string;
-        }>;
+        const cacheData = JSON.parse(fs.readFileSync(cachePath, "utf-8")) as Record<
+            string,
+            {
+                data: unknown;
+                sourceProvider?: string;
+            }
+        >;
 
         const cacheEntry = cacheData["jikan:attack on titan:1"];
         expect(cacheEntry?.data).toBeNull();

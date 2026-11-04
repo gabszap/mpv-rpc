@@ -38,7 +38,7 @@ async function callGuessItApi(filename: string): Promise<Record<string, any> | n
                 headers: {
                     "Content-Type": "application/json",
                 },
-            }
+            },
         );
         return response.data;
     } catch (e: any) {
@@ -59,7 +59,7 @@ async function callGuessItCli(filename: string): Promise<Record<string, any> | n
             timeout: 15000,
         });
         return JSON.parse(stdout.trim());
-    } catch (e) {
+    } catch (_e) {
         return null;
     }
 }
@@ -179,7 +179,7 @@ function isValidSearchTitle(title: string): boolean {
 function processGuessitResult(
     guessed: Record<string, any>,
     filename: string,
-    normalizedFilename: string
+    normalizedFilename: string,
 ): ParsedFilename | null {
     if (!guessed || Object.keys(guessed).length === 0) {
         return null;
@@ -187,9 +187,8 @@ function processGuessitResult(
 
     let title = guessed.title || filename;
 
-    const alternativeTitle = typeof guessed.alternative_title === "string"
-        ? cleanTitle(guessed.alternative_title)
-        : null;
+    const alternativeTitle =
+        typeof guessed.alternative_title === "string" ? cleanTitle(guessed.alternative_title) : null;
 
     // Fix Guessit detecting "Ko" as Korean language in titles like "Oshi no Ko"
     // Also handles dot-separated filenames like "OSHI.NO.KO.S03E10..."
@@ -201,14 +200,29 @@ function processGuessitResult(
     }
 
     const knownReleaseGroups = [
-        "subsplease", "erai-raws", "judas", "horriblesubs", "hs",
-        "rarbg", "yts", "ettv", "fgt", "sparks", "axxo", "lol",
-        "toonshub", "msubs", "ddp", "amzn", "nf", "hmax"
+        "subsplease",
+        "erai-raws",
+        "judas",
+        "horriblesubs",
+        "hs",
+        "rarbg",
+        "yts",
+        "ettv",
+        "fgt",
+        "sparks",
+        "axxo",
+        "lol",
+        "toonshub",
+        "msubs",
+        "ddp",
+        "amzn",
+        "nf",
+        "hmax",
     ];
 
     if (guessed.release_group && guessed.title) {
         const groupLower = guessed.release_group.toLowerCase();
-        const isKnownGroup = knownReleaseGroups.some(g => groupLower.includes(g));
+        const isKnownGroup = knownReleaseGroups.some((g) => groupLower.includes(g));
 
         if (!isKnownGroup) {
             const combinedTitle = `${guessed.release_group}-${guessed.title}`;
@@ -253,7 +267,7 @@ function processGuessitResult(
         const normalizedTitle = cleanTitle(guessed.title);
         const combinedPattern = new RegExp(
             `${escapeRegex(normalizedTitle)}\\s*-\\s*${escapeRegex(alternativeTitle)}\\s*-\\s*0*${guessed.episode}(?:[^\\d]|$)`,
-            "i"
+            "i",
         );
 
         if (combinedPattern.test(filename)) {
@@ -268,7 +282,7 @@ function processGuessitResult(
     if (episode !== null && episode_title && title) {
         const arcPattern = new RegExp(
             `${escapeRegex(title)}\\s*-\\s*${escapeRegex(episode_title)}\\s*-\\s*0*${episode}(?:[^\\d]|$)`,
-            "i"
+            "i",
         );
 
         if (arcPattern.test(filename)) {
@@ -317,7 +331,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     if (torrentNameMatch) {
         try {
             extractedTorrentName = decodeURIComponent(torrentNameMatch[1]);
-        } catch (e) {
+        } catch (_e) {
             extractedTorrentName = torrentNameMatch[1];
         }
 
@@ -365,23 +379,21 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
         try {
             filename = decodeURIComponent(filename);
             console.log("[Parser] Decoded URL-encoded filename");
-        } catch (e) {
+        } catch (_e) {
             console.warn("[Parser] Failed to decode URL-encoded filename, continuing anyway");
         }
     }
 
-    const normalizedFilename = filename
-        .replace(/\+/g, "-")
-        .replace(/\//g, "-");
+    const normalizedFilename = filename.replace(/\+/g, "-").replace(/\//g, "-");
 
     let guessed: Record<string, any> | null = null;
-    let usedMethod: "api" | "cli" | "none" = "none";
+    let _usedMethod: "api" | "cli" | "none" = "none";
 
     // Try API first if enabled
     if (config.guessitApi.enabled && config.guessitApi.url) {
         guessed = await callGuessItApi(normalizedFilename);
         if (guessed) {
-            usedMethod = "api";
+            _usedMethod = "api";
         }
     }
 
@@ -389,7 +401,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     if (!guessed) {
         guessed = await callGuessItCli(normalizedFilename);
         if (guessed) {
-            usedMethod = "cli";
+            _usedMethod = "cli";
         }
     }
 

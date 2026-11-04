@@ -19,7 +19,7 @@ interface UpdateListResponse {
 export async function updateWatchedEpisodes(
     malId: number,
     episodesWatched: number,
-    totalEpisodes?: number
+    totalEpisodes?: number,
 ): Promise<boolean> {
     const token = await getAccessToken();
     if (!token) {
@@ -28,7 +28,7 @@ export async function updateWatchedEpisodes(
     }
 
     try {
-        const status = (totalEpisodes && episodesWatched >= totalEpisodes) ? "completed" : "watching";
+        const status = totalEpisodes && episodesWatched >= totalEpisodes ? "completed" : "watching";
 
         // Use URLSearchParams for x-www-form-urlencoded
         const params = new URLSearchParams();
@@ -40,10 +40,10 @@ export async function updateWatchedEpisodes(
             params.toString(), // Explicitly stringify
             {
                 headers: {
-                    "Authorization": `Bearer ${token}`,
+                    Authorization: `Bearer ${token}`,
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
-            }
+            },
         );
 
         if (response.status === 200) {
@@ -71,13 +71,10 @@ export async function getWatchStatus(malId: number): Promise<number | null> {
     if (!token) return null;
 
     try {
-        const response = await axios.get(
-            `${MAL_API}/anime/${malId}`,
-            {
-                params: { fields: "my_list_status" },
-                headers: { "Authorization": `Bearer ${token}` },
-            }
-        );
+        const response = await axios.get(`${MAL_API}/anime/${malId}`, {
+            params: { fields: "my_list_status" },
+            headers: { Authorization: `Bearer ${token}` },
+        });
 
         return response.data.my_list_status?.num_watched_episodes ?? 0;
     } catch (e: any) {
@@ -95,12 +92,9 @@ export async function getUsername(): Promise<string | null> {
     if (!token) return null;
 
     try {
-        const response = await axios.get(
-            `${MAL_API}/users/@me`,
-            {
-                headers: { "Authorization": `Bearer ${token}` },
-            }
-        );
+        const response = await axios.get(`${MAL_API}/users/@me`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
 
         return response.data.name || null;
     } catch {

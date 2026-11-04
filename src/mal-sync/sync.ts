@@ -4,8 +4,8 @@
  */
 
 import { config } from "../config";
+import { getWatchStatus, updateWatchedEpisodes } from "./api";
 import { isAuthenticated } from "./auth";
-import { updateWatchedEpisodes, getWatchStatus } from "./api";
 
 export type MalSyncResult = "updated" | "already_synced" | "skipped" | "failed";
 
@@ -76,7 +76,7 @@ export async function syncEpisodeDetailed(
     malId: number,
     episode: number,
     percentWatched: number,
-    totalEpisodes?: number
+    totalEpisodes?: number,
 ): Promise<MalSyncResult> {
     // Check if MAL sync is enabled
     if (!config.mal.enabled) {
@@ -137,12 +137,12 @@ export async function syncEpisode(
     malId: number,
     episode: number,
     percentWatched: number,
-    totalEpisodes?: number
+    totalEpisodes?: number,
 ): Promise<boolean> {
     const result = await syncEpisodeDetailed(malId, episode, percentWatched, totalEpisodes);
     return result === "updated" || result === "already_synced";
 }
 
+export { getUsername } from "./api";
 // Re-export auth functions for convenience
 export { authorize, isAuthenticated, logout } from "./auth";
-export { getUsername } from "./api";

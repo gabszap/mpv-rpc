@@ -4,11 +4,11 @@
  * Linux/macOS: Unix Sockets (/tmp/mpv-socket)
  */
 
-import * as net from "net";
-import { config } from "./config";
-import { parseFilename } from "./parser";
+import * as net from "node:net";
 import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "./anime";
+import { config } from "./config";
 import { checkSeriesNameOverride } from "./console";
+import { parseFilename } from "./parser";
 
 export interface MpvData {
     media_title: string;
@@ -23,17 +23,19 @@ export interface MpvData {
     duration: number;
     artist: string;
     cover_image: string | null;
-    mal_id: number | null;        // For MAL sync
+    mal_id: number | null; // For MAL sync
     total_episodes: number | null; // For MAL sync (mark as completed)
-    adjusted_episode: number | null;  // Adjusted episode for split cour (null if no overflow)
-    imdb_id?: string;            // For Stremio sync
-    type?: string;               // For Stremio sync
+    adjusted_episode: number | null; // Adjusted episode for split cour (null if no overflow)
+    imdb_id?: string; // For Stremio sync
+    type?: string; // For Stremio sync
+    playlistPos: number; // Current position in playlist (0-indexed)
+    playlistCount: number; // Total number of items in playlist
 }
 
 let socket: net.Socket | null = null;
 let requestId = 1;
 let isConnected = false;
-let pendingRequests: Map<number, (data: any) => void> = new Map();
+const pendingRequests: Map<number, (data: any) => void> = new Map();
 let dataBuffer = "";
 let lastConnectionAttempt = 0;
 const CONNECTION_COOLDOWN = 5000; // 5 seconds between connection attempts
@@ -77,11 +79,13 @@ export async function connect(): Promise<boolean> {
                     const response = JSON.parse(line);
                     const id = response.request_id;
                     if (id && pendingRequests.has(id)) {
-                        const callback = pendingRequests.get(id)!;
+                        const callback = pendingRequests.get(id);
                         pendingRequests.delete(id);
-                        callback(response.data);
+                        if (callback) {
+                            callback(response.data);
+                        }
                     }
-                } catch (e) {
+                } catch (_e) {
                     // Ignore parse errors for event messages
                 }
             }
@@ -130,7 +134,7 @@ function sendCommand(command: (string | number)[]): Promise<any> {
         }
 
         const id = requestId++;
-        const msg = JSON.stringify({ command, request_id: id }) + "\n";
+        const msg = `${JSON.stringify({ command, request_id: id })}\n`;
 
         pendingRequests.set(id, resolve);
 
@@ -204,7 +208,7 @@ export function sanitizeMediaTitle(title: string): string {
 
     // 6. Remove common tracker suffixes that might remain
     //    e.g. "◎ NyaaSi", "▌ [S3]", etc.
-    title = title.replace(/\s*[◎▌⚙️💾👤].*$/u, "");
+    title = title.replace(/\s*(?:◎|▌|⚙|️|💾|👤).*$/u, "");
 
     return title.trim();
 }
@@ -222,7 +226,7 @@ export async function getMpvData(): Promise<MpvData | null> {
         // Get primary identifiers from MPV
         const [filename, rawMediaTitle] = await Promise.all([
             getProperty("filename/no-ext"),
-            getProperty("media-title")
+            getProperty("media-title"),
         ]);
 
         // Sanitize media-title to remove tracker/subtitle metadata
@@ -246,6 +250,8 @@ export async function getMpvData(): Promise<MpvData | null> {
                 mal_id: null,
                 total_episodes: null,
                 adjusted_episode: null,
+                playlistPos: 0,
+                playlistCount: 0,
             };
         }
 
@@ -259,9 +265,11 @@ export async function getMpvData(): Promise<MpvData | null> {
         const isUrl = (s: string) => /^(https?|magnet):/i.test(s);
         const isPlaylist = (s: string) => /stremio-playlist-\d+/i.test(s);
         const hasEpisodeMarker = (s: string) => {
-            return /S\d{1,2}E\d{1,3}/i.test(s)
-                || /(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*\d{1,3}(?=[^\d]|$)/.test(s)
-                || /-\s*\d{1,3}(?=\s*(?:\[|\(|v\d|$))/i.test(s);
+            return (
+                /S\d{1,2}E\d{1,3}/i.test(s) ||
+                /(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*\d{1,3}(?=[^\d]|$)/.test(s) ||
+                /-\s*\d{1,3}(?=\s*(?:\[|\(|v\d|$))/i.test(s)
+            );
         };
 
         let parseTarget = filename;
@@ -309,12 +317,14 @@ export async function getMpvData(): Promise<MpvData | null> {
         const parsed = await parseFilename(parseTarget);
 
         // Get other properties in parallel
-        const [pause, percent_pos, time_pos, duration, artist] = await Promise.all([
+        const [pause, percent_pos, time_pos, duration, artist, playlistPos, playlistCount] = await Promise.all([
             getProperty("pause"),
             getProperty("percent-pos"),
             getProperty("time-pos"),
             getProperty("duration"),
             getProperty("metadata/by-key/Artist"),
+            getProperty("playlist-pos"),
+            getProperty("playlist-count"),
         ]);
 
         // Fetch anime metadata
@@ -350,7 +360,12 @@ export async function getMpvData(): Promise<MpvData | null> {
                     let overflowResolved = false;
                     const titlePref = config.settings.preferredTitleLanguage;
                     if (parsed.episode && animeInfo.total_episodes && parsed.episode > animeInfo.total_episodes) {
-                        const overflowResult = await resolveOverflowEpisode(animeInfo, parsed.episode, parsed.season, sourceProvider);
+                        const overflowResult = await resolveOverflowEpisode(
+                            animeInfo,
+                            parsed.episode,
+                            parsed.season,
+                            sourceProvider,
+                        );
                         if (overflowResult) {
                             overflowResolved = true;
                             // Use the resolved cour's info for display and MAL sync
@@ -361,9 +376,15 @@ export async function getMpvData(): Promise<MpvData | null> {
                             coverImage = overflowResult.animeInfo.cover_url || coverImage;
                             // Update series title to reflect the resolved cour
                             if (titlePref === "english") {
-                                seriesTitle = overflowResult.animeInfo.title_english || overflowResult.animeInfo.title_romaji || seriesTitle;
+                                seriesTitle =
+                                    overflowResult.animeInfo.title_english ||
+                                    overflowResult.animeInfo.title_romaji ||
+                                    seriesTitle;
                             } else {
-                                seriesTitle = overflowResult.animeInfo.title_romaji || overflowResult.animeInfo.title_english || seriesTitle;
+                                seriesTitle =
+                                    overflowResult.animeInfo.title_romaji ||
+                                    overflowResult.animeInfo.title_english ||
+                                    seriesTitle;
                             }
                         }
                     }
@@ -417,6 +438,8 @@ export async function getMpvData(): Promise<MpvData | null> {
             mal_id: malId,
             total_episodes: totalEpisodes,
             adjusted_episode: adjustedEpisode,
+            playlistPos: typeof playlistPos === "number" ? playlistPos : 0,
+            playlistCount: typeof playlistCount === "number" ? playlistCount : 0,
         };
     } catch (e) {
         console.error("[MPV] Error getting data:", e);

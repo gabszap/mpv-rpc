@@ -209,6 +209,6 @@
       "enabled": true,
     },
   },
-  "instructions": ["./tools/philosophy.md"],
+  "instructions": ["./tools/philosophy.md", "./tools/workflow.md"],
   "plugin": ["@franlol/opencode-md-table-formatter@0.0.6"],
 }
