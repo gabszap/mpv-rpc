@@ -75,3 +75,4 @@ jobs:
               env:
                   RELEASE_SCOPE: bridge
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
