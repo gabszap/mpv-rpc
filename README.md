@@ -18,7 +18,7 @@ Discord Rich Presence for MPV Media Player with anime metadata, optional watch s
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="README_PT.md">Português</a>
+  <a href="README.md">English</a> | <a href="docs/README_PT.md">Português</a>
 </p>
 
 ---

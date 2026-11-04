@@ -427,7 +427,7 @@ Debug steps:
 ## Documentation Index
 
 - Project overview and setup: [README.md](README.md)
-- Portuguese overview: [README_PT.md](README_PT.md)
+- Portuguese overview: [README_PT.md](docs/README_PT.md)
 - System Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - MAL OAuth and sync setup: [docs/mal-sync-setup.md](docs/mal-sync-setup.md)
 - Stremio bridge setup and usage: [docs/stremio-mpv-bridge.md](docs/stremio-mpv-bridge.md)
