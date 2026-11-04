@@ -9,6 +9,7 @@ import { checkSeriesNameOverride } from "../console";
 import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "../core/anime";
 import { config } from "../core/config";
 import { parseFilename } from "../core/parser";
+import { normalizeTitleTokens } from "../core/title-tokens";
 import { normalizeTvdbLanguageCode } from "../providers/tvdb";
 import { readStremioPlaybackContext, type StremioPlaybackContext } from "../stremio-sync/context";
 
@@ -20,12 +21,7 @@ function normalizeStremioIdentityTitle(title: string | null | undefined): string
         return [];
     }
 
-    return title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ")
-        .trim()
-        .split(/\s+/)
-        .filter((token) => token.length > 0);
+    return normalizeTitleTokens(title);
 }
 
 function titlesHaveSafeTokenOverlap(contextName: string | null, playbackTitle: string): boolean {

@@ -1,4 +1,5 @@
 import { type CanonicalEpisodePosition, resolveCanonicalSplitPartEpisode } from "../core/canonical-episode";
+import { normalizeTitleTokens } from "../core/title-tokens";
 import type { MpvData } from "../integrations/mpv";
 import type { StremioPlaybackContext } from "./context";
 
@@ -67,11 +68,7 @@ export function getCurrentEpisodePosition(data: MpvData): EpisodePosition {
 }
 
 function normalizeTitleForMatch(title: string): string {
-    return title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ")
-        .trim()
-        .replace(/\s+/g, " ");
+    return normalizeTitleTokens(title).join(" ");
 }
 
 function stripEpisodeMarkersFromFilename(filename: string): string {
@@ -100,7 +97,17 @@ function doesContextNameExactlyMatchPlayback(context: StremioPlaybackContext, da
         return false;
     }
 
-    return getSafePlaybackTitleCandidates(data).some((playbackTitle) => playbackTitle === normalizedContextName);
+    const contextWordCount = normalizedContextName.split(" ").filter((word) => word.length > 0).length;
+
+    return getSafePlaybackTitleCandidates(data).some((playbackTitle) => {
+        if (playbackTitle === normalizedContextName) {
+            return true;
+        }
+        if (contextWordCount >= 3 && ` ${playbackTitle} `.includes(` ${normalizedContextName} `)) {
+            return true;
+        }
+        return false;
+    });
 }
 
 function readProviderNumericId(value: string | null | undefined, provider: "mal" | "tvdb" | "kitsu"): number | null {

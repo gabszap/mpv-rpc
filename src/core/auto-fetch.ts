@@ -10,6 +10,7 @@ import { readStremioPlaybackContext } from "../stremio-sync/context";
 import { normalizeTitle } from "../trakt-sync/api";
 import { resolveCanonicalSplitPartEpisode } from "./canonical-episode";
 import { config } from "./config";
+import { filterTitleStopTokens } from "./title-tokens";
 
 // Shared config file path (same as bridge uses)
 const CONFIG_PATH = path.join(process.cwd(), ".config", ".stremio-mpv-config.json");
@@ -98,8 +99,8 @@ function isAutoFetchEnabled(sharedConfig: SharedConfig): boolean {
  * Prevents substring false positives like "Naruto" matching "Boruto: Naruto Next Generations".
  */
 function titlesMatch(configTitle: string, watchingTitle: string): boolean {
-    const configTokens = configTitle.split(/\s+/).filter((t) => t.length > 0);
-    const watchTokens = watchingTitle.split(/\s+/).filter((t) => t.length > 0);
+    const configTokens = filterTitleStopTokens(configTitle.split(/\s+/).filter((t) => t.length > 0));
+    const watchTokens = filterTitleStopTokens(watchingTitle.split(/\s+/).filter((t) => t.length > 0));
 
     if (configTokens.length === 0 || watchTokens.length === 0) return false;
 

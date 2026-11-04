@@ -1227,6 +1227,36 @@ describe("Stremio sync MVP", () => {
         expect(api.putLibraryItem).toHaveBeenCalledTimes(1);
     });
 
+    it("syncs same-position series context when localized conjunction differs (e.g. Rick e Morty vs Rick and Morty)", async () => {
+        vi.mocked(context.readStremioPlaybackContext).mockReturnValue({
+            libraryItemId: "tt2861424",
+            imdbId: "tt2861424",
+            videoId: "tt2861424:1:2",
+            name: "Rick e Morty",
+            type: "series",
+            season: 1,
+            episode: 2,
+            episodesInSeason: 11,
+        });
+
+        await expect(
+            trySyncStremio(
+                createMpvData({
+                    media_title: "[DB] Rick and Morty - S01E02 [1080p][HEVC].mkv",
+                    series_title: "Rick and Morty",
+                    season: 1,
+                    episode: 2,
+                    filename: "[DB] Rick and Morty - S01E02 [1080p][HEVC].mkv",
+                }),
+            ),
+        ).resolves.toEqual({
+            status: "synced",
+            libraryItemId: "tt2861424",
+        });
+
+        expect(api.putLibraryItem).toHaveBeenCalledTimes(1);
+    });
+
     it("updates only Continue Watching MVP fields", async () => {
         await expect(trySyncStremio(createMpvData())).resolves.toEqual({
             status: "synced",
