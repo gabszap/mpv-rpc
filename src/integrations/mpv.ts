@@ -12,6 +12,8 @@ import { parseFilename } from "../core/parser";
 import { normalizeTvdbLanguageCode } from "../providers/tvdb";
 import { readStremioPlaybackContext, type StremioPlaybackContext } from "../stremio-sync/context";
 
+const CONJUNCTION_STOP_WORDS = new Set(["and", "e", "y", "und", "et"]);
+
 /**
  * Normalize titles for a conservative bridge-context compatibility check.
  */
@@ -20,12 +22,17 @@ function normalizeStremioIdentityTitle(title: string | null | undefined): string
         return [];
     }
 
-    return title
+    const rawTokens = title
+        .replace(/\(\s*(?:19|20)\d{2}\s*\)/g, " ")
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, " ")
         .trim()
         .split(/\s+/)
         .filter((token) => token.length > 0);
+    const filtered = rawTokens.filter(
+        (token) => !/^(?:19|20)\d{2}$/.test(token) && !CONJUNCTION_STOP_WORDS.has(token),
+    );
+    return filtered.length > 0 ? filtered : rawTokens;
 }
 
 function titlesHaveSafeTokenOverlap(contextName: string | null, playbackTitle: string): boolean {

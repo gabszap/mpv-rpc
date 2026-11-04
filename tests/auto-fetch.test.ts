@@ -431,6 +431,36 @@ describe("checkAndTriggerAutoFetch — single-flight guard", () => {
         });
     });
 
+    it("matches parenthesized year Stremio config title against part-prefixed playback title", async () => {
+        readFileSyncMock.mockReturnValue(
+            JSON.stringify({
+                stremioMeta: {
+                    imdbId: "tt2359704",
+                    name: "JoJo's Bizarre Adventure (2012)",
+                    season: 6,
+                    episode: 1,
+                    type: "series",
+                },
+                extraEpisodes: 2,
+            }),
+        );
+
+        const { checkAndTriggerAutoFetch } = await importAutoFetchModule();
+        await checkAndTriggerAutoFetch(
+            makeMpvData({
+                media_title: "Steel Ball Run: JoJo's Bizarre Adventure - S06E01",
+                series_title: "Steel Ball Run: JoJo's Bizarre Adventure",
+                season: 6,
+                episode: 1,
+                filename: "JoJos.Bizarre.Adventure.S06E01.mkv",
+                imdb_id: "tt2359704",
+            }),
+        );
+
+        const autoFetchCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/auto-fetch"));
+        expect(autoFetchCall).toBeDefined();
+    });
+
     it("uses split-part canonical position atomically for dry-run next episodes", async () => {
         config.syncDryRun = true;
         const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);

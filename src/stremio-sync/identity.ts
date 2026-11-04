@@ -66,12 +66,20 @@ export function getCurrentEpisodePosition(data: MpvData): EpisodePosition {
     };
 }
 
+const CONJUNCTION_STOP_WORDS = new Set(["and", "e", "y", "und", "et"]);
+
 function normalizeTitleForMatch(title: string): string {
-    return title
+    const rawTokens = title
+        .replace(/\(\s*(?:19|20)\d{2}\s*\)/g, " ")
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, " ")
         .trim()
-        .replace(/\s+/g, " ");
+        .split(/\s+/)
+        .filter((token) => token.length > 0);
+    const filtered = rawTokens.filter(
+        (token) => !/^(?:19|20)\d{2}$/.test(token) && !CONJUNCTION_STOP_WORDS.has(token),
+    );
+    return (filtered.length > 0 ? filtered : rawTokens).join(" ");
 }
 
 function stripEpisodeMarkersFromFilename(filename: string): string {
@@ -100,7 +108,17 @@ function doesContextNameExactlyMatchPlayback(context: StremioPlaybackContext, da
         return false;
     }
 
-    return getSafePlaybackTitleCandidates(data).some((playbackTitle) => playbackTitle === normalizedContextName);
+    const contextWordCount = normalizedContextName.split(" ").filter((word) => word.length > 0).length;
+
+    return getSafePlaybackTitleCandidates(data).some((playbackTitle) => {
+        if (playbackTitle === normalizedContextName) {
+            return true;
+        }
+        if (contextWordCount >= 3 && ` ${playbackTitle} `.includes(` ${normalizedContextName} `)) {
+            return true;
+        }
+        return false;
+    });
 }
 
 function readProviderNumericId(value: string | null | undefined, provider: "mal" | "tvdb" | "kitsu"): number | null {
