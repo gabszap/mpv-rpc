@@ -2,6 +2,19 @@
 
 This file is managed by semantic-release.
 
+## [2.4.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.3.0...mpv-rpc-v2.4.0) (2026-11-04)
+
+### Features
+
+* **trakt:** add Trakt.tv scrobble integration with OAuth2 device auth ([1573394](https://github.com/gabszap/mpv-rpc/commit/157339486dcb284d118b08e2d974a4b9d18b4657))
+
+### Bug Fixes
+
+* **trakt:** guard filename-change stop with 1% progress minimum ([7fe0931](https://github.com/gabszap/mpv-rpc/commit/7fe09314effd505d86a9d64687dd6b35235d6eb6))
+* **trakt:** improve resilience and edge case handling ([6218067](https://github.com/gabszap/mpv-rpc/commit/62180674fd5a160cf3a2f67d584505e1128e959f))
+* **trakt:** improve scrobble reliability and API logging ([bb242f7](https://github.com/gabszap/mpv-rpc/commit/bb242f7ec5e9542d2d9f340271c9eb3b3790dfbf))
+* **trakt:** threshold-first scrobble logic + debug API logging ([b88b28e](https://github.com/gabszap/mpv-rpc/commit/b88b28e4fc97f752de6ba5725701e232a82cbfe3))
+
 ## [2.3.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.2.0...mpv-rpc-v2.3.0) (2026-11-04)
 
 ### Features
