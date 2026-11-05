@@ -1,55 +1,68 @@
-# MPV Discord RPC
+<div align="center">
 
-Discord Rich Presence for MPV Media Player with anime metadata, optional watch sync, and Stremio Web playback through MPV.
+<h1>
+  <img src="assets/banner.svg" alt="MPV Discord RPC" width="100%">
+</h1>
 
-<p align="center">
-  <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?style=for-the-badge&color=22c55e" alt="Version">
-  <img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?filename=stremio-mpv-bridge%2Fpackage.json&style=for-the-badge&label=bridge&color=8b5cf6" alt="Bridge Version">
+**Discord Rich Presence for MPV with anime metadata, optional watch sync, and Stremio Web playback through MPV.**
+
+<p>
+  <a href="https://github.com/gabszap/mpv-rpc/releases"><img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?style=for-the-badge&color=22c55e" alt="Version"></a>
+  <a href="https://github.com/gabszap/mpv-rpc/tree/main/stremio-mpv-bridge"><img src="https://img.shields.io/github/package-json/v/gabszap/mpv-rpc?filename=stremio-mpv-bridge%2Fpackage.json&style=for-the-badge&label=bridge&color=8b5cf6" alt="Bridge Version"></a>
+  <a href="https://github.com/gabszap/mpv-rpc/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/gabszap/mpv-rpc/ci.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License">
+</p>
+<p>
+  <img src="https://img.shields.io/badge/Node.js-22+-339933?logo=nodedotjs&logoColor=white&style=for-the-badge" alt="Node.js 22+">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white&style=for-the-badge" alt="TypeScript">
   <img src="https://custom-icon-badges.demolab.com/badge/Windows-0078D6?logo=windows11&logoColor=white&style=for-the-badge" alt="Windows">
   <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" alt="Linux">
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License">
 </p>
 
-<p align="center">
-  <img src="assets/demo.gif" alt="MPV Discord RPC demo" width="600">
-  <br>
-  <em>Discord Rich Presence in action</em>
+<p>
+  <a href="#highlights">Highlights</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#stremio-bridge">Stremio</a> ·
+  <a href="#sync-services">Sync</a> ·
+  <a href="#configuration-reference">Configuration</a> ·
+  <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
-<p align="center">
-  <a href="README.md">English</a> | <a href="docs/README_PT.md">Português</a>
+<img src="assets/demo.gif" alt="MPV Discord RPC demo" width="600">
+<br>
+<em>Discord Rich Presence in action</em>
+
+<p>
+  <a href="README.md"><b>English</b></a> · <a href="docs/README_PT.md">Português</a>
 </p>
+
+</div>
 
 ---
 
-## What this does
+## Highlights
 
-**MPV Discord RPC** watches your MPV playback through IPC and turns it into Discord Rich Presence. For anime files, it can parse the filename, fetch metadata and cover art, resolve episode titles, and optionally sync watch progress to MyAnimeList, Trakt.tv, and Stremio.
+**MPV Discord RPC** watches your MPV playback through IPC and turns it into Discord Rich Presence. For anime files it parses the filename, fetches metadata and cover art, resolves episode titles, and can sync watch progress to MyAnimeList, Trakt.tv and Stremio.
 
-The project also includes **Stremio MPV Bridge**, a separate workspace that lets Stremio Web open streams directly in MPV with playlist support.
-
-## Feature overview
-
-| Area | Features |
+| | |
 | --- | --- |
-| Discord RPC | Live playback status, pause/playing state, progress, privacy mode, optional idle hiding |
-| Anime metadata | Filename parsing, cover art, official titles, episode titles, local cache |
-| Providers | Jikan/MyAnimeList, AniList, Kitsu, TheTVDB |
-| Parser fallback | GuessIt API, local GuessIt CLI, regex fallback |
-| Sync | MyAnimeList episode progress, Trakt.tv scrobbling, Stremio Continue Watching and watched marking |
-| Stremio bridge | Browser userscript, local bridge server, MPV launch, single/batch/all playlist modes, provider settings |
-| Developer workflow | TypeScript, Vitest, Biome, semantic-release, independent root/bridge releases |
+| **Discord Rich Presence** | Live playback status, pause/playing state, progress, privacy mode, optional idle hiding |
+| **Anime metadata** | Filename parsing, cover art, official titles, localized episode titles, local cache |
+| **Multiple providers** | Jikan/MyAnimeList, AniList, Kitsu and TheTVDB, with automatic fallback |
+| **Resilient parser** | GuessIt API → local GuessIt CLI → regex fallback |
+| **Watch sync** | MyAnimeList progress, Trakt.tv scrobbling, Stremio Continue Watching and watched marking |
+| **Stremio bridge** | Userscript + local server that opens Stremio Web streams in MPV with playlist support |
 
-> Cover art is currently focused on anime metadata. For non-anime files, the app can still show playback status without anime-specific metadata.
+> [!NOTE]
+> Cover art is focused on anime metadata. For non-anime files the app still shows playback status, just without anime-specific metadata.
 
 ## Requirements
 
-- Node.js 22 or newer
-- MPV Media Player
-- Discord Desktop, if `DISCORD_RPC=true`
-- Optional: Python 3.12+ and `guessit`, only if you want local GuessIt parsing instead of the cloud API
-- Optional: a userscript manager, such as Tampermonkey or Violentmonkey, for Stremio Web integration
+- **Node.js 22** or newer
+- **MPV** Media Player
+- **Discord Desktop**, if `DISCORD_RPC=true`
+- *Optional:* Python 3.12+ and `guessit`, only if you want local GuessIt parsing instead of the cloud API
+- *Optional:* a userscript manager such as Tampermonkey or Violentmonkey, for Stremio Web integration
 
 ## Quick start
 
@@ -113,23 +126,14 @@ For development, build and run in one command:
 npm run dev
 ```
 
+> [!TIP]
+> Pick the setup that fits you: **Discord only** is exactly the four steps above. For Stremio Web playback, continue with the [Stremio bridge](#stremio-bridge) section.
 
-## Setup paths
+## Stremio bridge
 
-### Basic Discord RPC only
+The **Stremio MPV Bridge** is a separate workspace: a Violentmonkey/Tampermonkey userscript plus a local server that lets Stremio Web open streams directly in MPV, with single, batch or full-series playlist modes and provider settings.
 
-Use this path if you only want MPV playback in Discord:
-
-1. Install dependencies.
-2. Copy `.env.example` to `.env`.
-3. Enable MPV IPC in `mpv.conf`.
-4. Run `npm run build && npm start`.
-
-### Discord RPC + Stremio Web playback
-
-Use this path if you want Stremio Web to open streams in MPV:
-
-1. Complete the basic Discord RPC setup.
+1. Complete the Quick start above.
 2. Install `stremio-mpv-bridge/stremio-mpv.user.js` in your userscript manager.
 3. Start both services:
 
@@ -137,31 +141,35 @@ Use this path if you want Stremio Web to open streams in MPV:
    npm run start:all
    ```
 
-4. Open `https://web.stremio.com/`, choose an episode/movie, and use the MPV bridge button or shortcut.
+4. Open `https://web.stremio.com/`, choose an episode or movie, and use the MPV bridge button or shortcut.
 
 Full guide: [Stremio MPV Bridge Guide](docs/stremio-mpv-bridge.md)
 
-### Sync services
+## Sync services
 
 | Service | Enable in `.env` | Auth command | Guide |
 | --- | --- | --- | --- |
-| MyAnimeList | `MAL_SYNC=true` | `npm start -- mal-auth` | [MAL guide](docs/mal-sync-setup.md) |
-| Trakt.tv | `TRAKT_SYNC=true` | `npm start -- trakt-auth` | [Trakt guide](docs/trakt-sync-setup.md) |
-| Stremio | `STREMIO_SYNC=true` | Open media through the bridge so it can capture context/auth | [Stremio guide](docs/stremio-mpv-bridge.md) |
+| **MyAnimeList** | `MAL_SYNC=true` | `npm start -- mal-auth` | [MAL guide](docs/mal-sync-setup.md) |
+| **Trakt.tv** | `TRAKT_SYNC=true` | `npm start -- trakt-auth` | [Trakt guide](docs/trakt-sync-setup.md) |
+| **Stremio** | `STREMIO_SYNC=true` | Open media through the bridge so it can capture context/auth | [Stremio guide](docs/stremio-mpv-bridge.md) |
 
 Tokens and Stremio context are stored under `.config/`, which is ignored by git.
 
-Some anime sync mappings use TheTVDB to safely convert aired/default season+episode numbers to absolute episode numbers, even when `METADATA_PROVIDER` is not `tvdb`. Set `TVDB_API_KEY` for those cases; without it, ambiguous syncs are skipped rather than guessed.
+> [!IMPORTANT]
+> Some anime sync mappings use TheTVDB to safely convert aired/default season+episode numbers to absolute episode numbers, even when `METADATA_PROVIDER` is not `tvdb`. Set `TVDB_API_KEY` for those cases; without it, ambiguous syncs are skipped rather than guessed.
 
 ## Filename parsing
 
-The parser tries the safest available method in this order:
+The parser tries the safest available method, in this order:
 
 1. **GuessIt API**: enabled when `USE_GUESSIT_API=true` and `GUESSIT_API_URL` is set.
 2. **Local GuessIt CLI**: used when the API is unavailable and `guessit` is installed locally.
 3. **Regex fallback**: always available for basic title/episode extraction.
 
-### Public GuessIt API
+<details>
+<summary><b>Public GuessIt API</b></summary>
+
+<br>
 
 The default public endpoint is:
 
@@ -172,7 +180,12 @@ GUESSIT_API_URL=https://guessit-api.vercel.app/api/parse
 
 Only filenames are sent to the API. If you prefer maximum privacy or expect heavy usage, deploy your own API from the included `guessit-api/` folder.
 
-### Deploy your own GuessIt API
+</details>
+
+<details>
+<summary><b>Deploy your own GuessIt API</b></summary>
+
+<br>
 
 ```bash
 cd guessit-api
@@ -187,12 +200,16 @@ USE_GUESSIT_API=true
 GUESSIT_API_URL=https://your-project.vercel.app/api/parse
 ```
 
+</details>
+
 ## Configuration reference
 
 Copy `.env.example` to `.env`, then adjust only what you need. Missing values fall back to runtime defaults.
 
 <details>
-<summary>Core settings</summary>
+<summary><b>Core settings</b></summary>
+
+<br>
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -209,7 +226,9 @@ Copy `.env.example` to `.env`, then adjust only what you need. Missing values fa
 </details>
 
 <details>
-<summary>MPV and bridge settings</summary>
+<summary><b>MPV and bridge settings</b></summary>
+
+<br>
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -217,12 +236,14 @@ Copy `.env.example` to `.env`, then adjust only what you need. Missing values fa
 | `MPV_PATH` | `mpv` | MPV executable path used by the bridge |
 | `PORT` | `9632` | Bridge server port |
 
-If you change `PORT`, update `CONFIG.SERVER_URL` inside `stremio-mpv-bridge/stremio-mpv.user.js` so the userscript points to the same bridge URL.
+If you change `PORT`, update `CONFIG.SERVER_URL` in `stremio-mpv-bridge/userscript/src/constants.js`, then run `npm run build:userscript` to regenerate `stremio-mpv-bridge/stremio-mpv.user.js` so the userscript points to the same bridge URL.
 
 </details>
 
 <details>
-<summary>Metadata and parser settings</summary>
+<summary><b>Metadata and parser settings</b></summary>
+
+<br>
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -235,7 +256,9 @@ If you change `PORT`, update `CONFIG.SERVER_URL` inside `stremio-mpv-bridge/stre
 </details>
 
 <details>
-<summary>Sync settings</summary>
+<summary><b>Sync settings</b></summary>
+
+<br>
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -255,36 +278,36 @@ If you change `PORT`, update `CONFIG.SERVER_URL` inside `stremio-mpv-bridge/stre
 
 </details>
 
-### Auto-Fetch (Dual Gate)
+### Auto-Fetch (dual gate)
 
-The Auto-Fetch feature has two independent gates:
+Auto-Fetch has two independent gates, and **both must be `true`** for it to fire:
 
-1. **`.env` gate** — `AUTO_FETCH` (default `true`): the RPC-side kill switch. When `false`, the RPC never triggers auto-fetch regardless of the bridge config.
-2. **Bridge config gate** — `autoFetch.enabled`: the bridge-side toggle, controlled via the userscript modal (Playback → Auto-Fetch Episodes). When OFF, the bridge ignores auto-fetch requests even if the RPC triggers.
+| Gate | Where | Role |
+| --- | --- | --- |
+| `.env` → `AUTO_FETCH` (default `true`) | RPC side | Global kill switch. When `false`, the RPC never triggers auto-fetch, regardless of the bridge config. |
+| Bridge config → `autoFetch.enabled` | Userscript modal (Playback → Auto-Fetch Episodes) | Per-instance fine control. When OFF, the bridge ignores auto-fetch requests even if the RPC triggers. |
 
-Both must be `true` for auto-fetch to fire. The `.env` gate is the global kill switch; the bridge toggle is per-instance fine control.
-
-**TL;DR:** In practice, you usually only need to disable Auto-Fetch in the bridge settings. Set `AUTO_FETCH=false` only when you want a global kill switch.
+> [!TIP]
+> In practice you usually only need to disable Auto-Fetch in the bridge settings. Set `AUTO_FETCH=false` only when you want a global kill switch.
 
 ## How it works
 
-```text
-MPV playback
-  -> MPV IPC socket / named pipe
-  -> filename parser
-  -> metadata provider + cache
-  -> Discord Rich Presence
-  -> optional MAL / Trakt / Stremio sync
+```mermaid
+flowchart LR
+    A[MPV playback] -->|IPC socket / named pipe| B[Filename parser]
+    B --> C[Metadata provider + cache]
+    C --> D[Discord Rich Presence]
+    C -.optional.-> E[MAL / Trakt / Stremio sync]
 ```
 
 The Stremio bridge runs separately:
 
-```text
-Stremio Web userscript
-  -> local bridge server on http://localhost:9632
-  -> temporary MPV playlist
-  -> MPV playback
-  -> optional Stremio context for Continue Watching sync
+```mermaid
+flowchart LR
+    A[Stremio Web userscript] -->|POST /play| B[Local bridge server<br>localhost:9632]
+    B --> C[Temporary MPV playlist]
+    C --> D[MPV playback]
+    D -.optional.-> E[Stremio context for<br>Continue Watching sync]
 ```
 
 ## Screenshots
@@ -295,9 +318,12 @@ Stremio Web userscript
 | :---: | :---: | :---: |
 | ![Romaji title mode](assets/romaji.png) | ![English title mode](assets/english.png) | ![Filename mode](assets/filename.png) |
 
-> Filename means the anime title is taken from the filename (no metadata provider used)
+> *Filename* means the anime title is taken from the filename (no metadata provider used).
+
 ### Localized episode titles (TVDB)
-> Note: localized episode titles are only available for TVDB metadata provider
+
+> [!NOTE]
+> Localized episode titles are only available with the TVDB metadata provider.
 
 | English | Portuguese | Spanish |
 | :---: | :---: | :---: |
@@ -313,7 +339,9 @@ Stremio Web userscript
 
 ### Privacy mode
 
-![Privacy mode preview](assets/privacymode.png)
+<p align="center">
+  <img src="assets/privacymode.png" alt="Privacy mode preview">
+</p>
 
 ## Troubleshooting
 
@@ -322,12 +350,24 @@ Stremio Web userscript
 | Discord status does not appear | Discord Desktop is running, `DISCORD_RPC=true`, app was rebuilt after config changes |
 | MPV is not detected | `input-ipc-server` in `mpv.conf` matches `MPV_IPC_PATH` |
 | Stremio button says server offline | Run `npm run bridge` or `npm run start:all` |
-| Stremio works on a custom port in browser but not userscript | Update `CONFIG.SERVER_URL` in the userscript |
+| Stremio works on a custom port in the browser but not in the userscript | Update `CONFIG.SERVER_URL` in `stremio-mpv-bridge/userscript/src/constants.js` and run `npm run build:userscript` |
 | Anime title/episode looks wrong | Clear `.anime_cache/`, enable `DEBUG=true`, check parser/provider logs |
 | MAL or Trakt does not sync | Re-run the auth command and confirm the relevant `*_SYNC=true` setting |
 
+## Development
 
-## Releases
+```bash
+npm install          # install dependencies
+npm run build        # compile TypeScript to dist/
+npm test             # run the test suite (Vitest)
+npm run check        # lint and format check (Biome)
+```
+
+The Stremio userscript is **generated**: edit `stremio-mpv-bridge/userscript/src/` (and `header.txt`), then run `npm run build:userscript`. `npm run check:userscript` fails when the committed `stremio-mpv.user.js` is out of date. CI runs the lint, build, tests and userscript check on every pull request.
+
+More: [Architecture](docs/ARCHITECTURE.md) · [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/ROADMAP.md) · [AGENTS.md](AGENTS.md)
+
+### Releases
 
 Releases are automated with **semantic-release** and split into two independent streams:
 
@@ -358,8 +398,8 @@ For local semantic-release runs, keep `GH_TOKEN` or `GITHUB_TOKEN` in `.env`.
 
 ## Credits
 
-- [iamkroot/trakt-scrobbler](https://github.com/iamkroot/trakt-scrobbler) — reference implementation for Trakt.tv scrobbling and OAuth device flow patterns.
-- [PreMiD](https://premid.app/) — asset reference.
+- [iamkroot/trakt-scrobbler](https://github.com/iamkroot/trakt-scrobbler): reference implementation for Trakt.tv scrobbling and OAuth device flow patterns.
+- [PreMiD](https://premid.app/): asset reference.
 
 ## License
 

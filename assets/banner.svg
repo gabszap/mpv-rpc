@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="t d">
+  <title id="t">MPV Discord RPC</title>
+  <desc id="d">Discord Rich Presence for MPV with anime metadata and watch sync</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d0914"/>
+      <stop offset="0.55" stop-color="#1a1030"/>
+      <stop offset="1" stop-color="#2b1340"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="1010" cy="40" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="150" cy="340" r="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5865f2" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#5865f2" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="titleFill" x1="190" y1="100" x2="700" y2="160" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d9c8ff"/>
+    </linearGradient>
+    <linearGradient id="thumb" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6c3c76"/>
+      <stop offset="1" stop-color="#2f0e35"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="outer" x1="13" y1="0" x2="53" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f9f9f9"/>
+      <stop offset="1" stop-color="#b9b9b9"/>
+    </linearGradient>
+    <linearGradient id="mid" x1="44" y1="43" x2="18" y2="-2" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#451b4c"/>
+      <stop offset="1" stop-color="#6c3c76"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="25" y1="5" x2="49" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2f0e35"/>
+      <stop offset="1" stop-color="#732e7d"/>
+    </linearGradient>
+    <linearGradient id="center" x1="24" y1="12" x2="42" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f1f0f1"/>
+      <stop offset="1" stop-color="#ada7af"/>
+    </linearGradient>
+    <linearGradient id="play" x1="29" y1="18" x2="33" y2="23" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#66386f"/>
+      <stop offset="1" stop-color="#461d4d"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="360" fill="url(#bg)"/>
+  <rect width="1280" height="360" fill="url(#glowA)"/>
+  <rect width="1280" height="360" fill="url(#glowB)"/>
+  <rect x="0" y="358" width="1280" height="2" fill="#8b5cf6" fill-opacity="0.55"/>
+
+  <!-- MPV logo -->
+  <g transform="translate(72 84) scale(1.75)">
+    <circle cx="32" cy="32" r="30" fill="url(#outer)"/>
+    <circle cx="33" cy="31" r="28" fill="url(#mid)"/>
+    <circle cx="35" cy="29" r="21" fill="url(#inner)"/>
+    <circle cx="32" cy="32" r="14" fill="url(#center)"/>
+    <path d="M28 25v12l10-6z" fill="url(#play)"/>
+  </g>
+
+  <!-- Title block -->
+  <g font-family="'Segoe UI','Inter','Helvetica Neue',Arial,sans-serif">
+    <text x="206" y="152" font-size="62" font-weight="800" fill="url(#titleFill)" letter-spacing="-1">MPV Discord RPC</text>
+    <text x="208" y="194" font-size="22" fill="#c9b8e8">Rich Presence, anime metadata and watch sync for MPV</text>
+
+    <g font-size="15" font-weight="600" fill="#ede7ff">
+      <rect x="208" y="226" width="138" height="34" rx="17" fill="#8b5cf6" fill-opacity="0.22" stroke="#8b5cf6" stroke-opacity="0.6"/>
+      <text x="277" y="248" text-anchor="middle">Discord RPC</text>
+
+      <rect x="358" y="226" width="164" height="34" rx="17" fill="#8b5cf6" fill-opacity="0.22" stroke="#8b5cf6" stroke-opacity="0.6"/>
+      <text x="440" y="248" text-anchor="middle">Anime metadata</text>
+
+      <rect x="534" y="226" width="236" height="34" rx="17" fill="#8b5cf6" fill-opacity="0.22" stroke="#8b5cf6" stroke-opacity="0.6"/>
+      <text x="652" y="248" text-anchor="middle">MAL · Trakt · Stremio</text>
+    </g>
+  </g>
+
+  <!-- Discord-style presence card (decorative) -->
+  <g filter="url(#shadow)" font-family="'Segoe UI','Inter','Helvetica Neue',Arial,sans-serif">
+    <rect x="832" y="78" width="384" height="204" rx="16" fill="#232428" stroke="#3b3d44"/>
+    <text x="858" y="112" font-size="12" font-weight="700" fill="#b5bac1" letter-spacing="0.8">PLAYING MPV</text>
+
+    <rect x="858" y="128" width="84" height="84" rx="12" fill="url(#thumb)"/>
+    <path d="M884 154v32l26-16z" fill="#f1f0f1" fill-opacity="0.92"/>
+
+    <text x="962" y="152" font-size="18" font-weight="700" fill="#ffffff">Sousou no Frieren</text>
+    <text x="962" y="176" font-size="15" fill="#dbdee1">Episode 12</text>
+    <text x="962" y="200" font-size="13" fill="#b5bac1">Watching with MPV</text>
+
+    <rect x="858" y="234" width="332" height="6" rx="3" fill="#4e5058"/>
+    <rect x="858" y="234" width="123" height="6" rx="3" fill="url(#bar)"/>
+    <text x="858" y="262" font-size="12" fill="#b5bac1">08:42</text>
+    <text x="1190" y="262" font-size="12" fill="#b5bac1" text-anchor="end">23:40</text>
+  </g>
+</svg>
