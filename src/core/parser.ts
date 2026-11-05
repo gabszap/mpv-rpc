@@ -2,7 +2,7 @@
  * Filename Parser Module - PTT (native TypeScript) with regex fallbacks
  */
 
-import { type PttParsed, parseWithPtt } from "./parser-ptt";
+import { isPttLoaded, type PttParsed, parseWithPtt } from "./parser-ptt";
 
 /** Which parsing method produced a `ParsedFilename`. */
 export type ParseMethod = "ptt" | "anime-regex" | "regex";
@@ -147,6 +147,17 @@ function isValidSearchTitle(title: string): boolean {
     }
 
     return true;
+}
+
+/**
+ * Cache a result produced by a regex fallback. When PTT could not be loaded, the
+ * result is only a stand-in, so it is not cached: a later call, once PTT loads, must
+ * be able to produce the real answer for the same filename.
+ */
+function cacheFallbackResult(cacheKey: string, result: ParsedFilename): void {
+    if (isPttLoaded()) {
+        parseCache.set(cacheKey, result);
+    }
 }
 
 /**
@@ -383,14 +394,14 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             codec: animeFallback.codec,
             parseMethod: "anime-regex",
         };
-        parseCache.set(cacheKey, animeResult);
+        cacheFallbackResult(cacheKey, animeResult);
         return animeResult;
     }
 
     // Final fallback: regex parsing
     const fallbackResult = fallbackParse(filename);
     // Cache the fallback result too
-    parseCache.set(cacheKey, fallbackResult);
+    cacheFallbackResult(cacheKey, fallbackResult);
     return fallbackResult;
 }
 

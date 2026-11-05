@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseWithPtt, setPttImporterForTests } from "../src/core/parser-ptt";
+import { parseWithPtt, setDefaultPttImporterForTests, setPttImporterForTests } from "../src/core/parser-ptt";
 
 type FakePtt = { parseTorrentTitle: (title: string) => unknown };
 
@@ -109,5 +109,26 @@ describe("parseWithPtt with a fake importer", () => {
         );
 
         await expect(parseWithPtt("weird\u0000name.mkv")).resolves.toBeNull();
+    });
+});
+
+describe("default importer", () => {
+    it("is restored by setPttImporterForTests(null) after an override", async () => {
+        setDefaultPttImporterForTests(async () => ({ parseTorrentTitle: () => ({ title: "FromDefault" }) }));
+        try {
+            setPttImporterForTests(async () => {
+                throw new Error("override");
+            });
+            vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            expect(await parseWithPtt("a.mkv")).toBeNull();
+
+            setPttImporterForTests(null);
+
+            expect((await parseWithPtt("b.mkv"))?.title).toBe("FromDefault");
+        } finally {
+            // Put back the real importer installed by tests/setup/ptt-importer.ts.
+            setDefaultPttImporterForTests(() => import("@aiostreams/release-parser"));
+            setPttImporterForTests(null);
+        }
     });
 });

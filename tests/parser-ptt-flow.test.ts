@@ -79,6 +79,19 @@ describe("parseFilename with PTT first", () => {
         expect(result.episode).toBe(9);
     });
 
+    it("does not keep a regex result produced while PTT could not load", async () => {
+        setPttImporterForTests(async () => {
+            throw new Error("cannot load");
+        });
+        const first = await parseFilename("Cache Recovery - 07.mkv");
+        expect(first.parseMethod).toBe("regex");
+
+        setPttImporterForTests(null);
+        const second = await parseFilename("Cache Recovery - 07.mkv");
+
+        expect(second.parseMethod).toBe("ptt");
+    });
+
     it("falls back to the regex when PTT cannot load", async () => {
         setPttImporterForTests(async () => {
             throw new Error("cannot load");

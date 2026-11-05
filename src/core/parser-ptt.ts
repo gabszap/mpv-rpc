@@ -20,21 +20,16 @@ export interface PttParsed {
 type PttModule = { parseTorrentTitle: (title: string) => unknown };
 type PttImporter = () => Promise<PttModule>;
 
-// The package is ESM-only and this project compiles to CommonJS. With
-// `module: CommonJS`, tsc rewrites a literal `import()` into `require()`, which
-// cannot load an ESM package, so the dynamic import goes through `Function`.
+// The package is ESM-only (its exports map has only an "import" condition) and this
+// project compiles to CommonJS. With `module: CommonJS`, tsc rewrites a literal
+// `import()` into `require()`, which cannot load the package on any Node version, so
+// the dynamic import goes through `Function` to survive compilation.
 const importEsm = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<PttModule>;
-const defaultImporter: PttImporter = async () => {
-    try {
-        return await importEsm("@aiostreams/release-parser");
-    } catch {
-        // Runtimes that run modules inside a vm context (such as Vitest) do not
-        // support dynamic import from Function code. A literal import() works there;
-        // after tsc it becomes a require() of an ES module, valid on Node 22.12+.
-        return await import("@aiostreams/release-parser");
-    }
-};
+const productionImporter: PttImporter = () => importEsm("@aiostreams/release-parser");
 
+// Test runners that execute modules inside a vm context (Vitest) cannot run the
+// Function-based import, so the test setup replaces the default importer.
+let defaultImporter: PttImporter = productionImporter;
 let importer: PttImporter = defaultImporter;
 let loadedModule: PttModule | null = null;
 let hasWarnedAboutLoadFailure = false;
@@ -79,6 +74,14 @@ function readString(value: unknown): string | undefined {
 }
 
 /**
+ * True once the PTT module has been loaded. While it is false, a parse result came
+ * from the regex fallbacks because PTT was unavailable, and must not be cached.
+ */
+export function isPttLoaded(): boolean {
+    return loadedModule !== null;
+}
+
+/**
  * Parse a release name with PTT. Returns null when PTT cannot be loaded, throws
  * on this input, or finds no title.
  */
@@ -120,11 +123,20 @@ export async function parseWithPtt(filename: string): Promise<PttParsed | null> 
 }
 
 /**
- * Test hook: replace the module loader. Passing null restores the real loader
+ * Test hook: replace the module loader. Passing null restores the default importer
  * and resets the loaded module and the one-time warning.
  */
 export function setPttImporterForTests(replacement: PttImporter | null): void {
     importer = replacement ?? defaultImporter;
     loadedModule = null;
     hasWarnedAboutLoadFailure = false;
+}
+
+/**
+ * Test hook: replace the default importer (the one restored by
+ * `setPttImporterForTests(null)`). Passing null restores the production importer.
+ */
+export function setDefaultPttImporterForTests(replacement: PttImporter | null): void {
+    defaultImporter = replacement ?? productionImporter;
+    setPttImporterForTests(null);
 }
