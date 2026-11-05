@@ -8,7 +8,8 @@ import * as net from "node:net";
 import { checkSeriesNameOverride } from "../console";
 import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "../core/anime";
 import { config } from "../core/config";
-import { parseFilename } from "../core/parser";
+import type { ResolvedMetadata } from "../core/metadata-router";
+import { type ParsedFilename, parseFilename } from "../core/parser";
 import { normalizeTitleTokens } from "../core/title-tokens";
 import { normalizeTvdbLanguageCode } from "../providers/tvdb";
 import { readStremioPlaybackContext, type StremioPlaybackContext } from "../stremio-sync/context";
@@ -361,6 +362,115 @@ export function sanitizeMediaTitle(title: string): string {
 }
 
 /**
+ * Anime metadata for a parsed file: cover, display title, episode title, MAL id and overflow
+ * resolution. This is the anime pipeline that `getMpvData` used to run inline; it never throws
+ * (provider errors are logged and the values resolved so far are returned).
+ */
+export async function resolveAnimeMetadata(input: {
+    parsed: ParsedFilename;
+    seriesTitle: string;
+    originalTitle: string;
+    renameOverrideName: string | null;
+}): Promise<ResolvedMetadata> {
+    const { parsed, originalTitle, renameOverrideName } = input;
+    let coverImage: string | null = null;
+    let episodeTitle = parsed.episode_title;
+    let seriesTitle = input.seriesTitle;
+    let malId: number | null = null;
+    let totalEpisodes: number | null = null;
+    let adjustedEpisode: number | null = null;
+    let metadataSourceProvider: string | null = null;
+
+    // Try to get anime info for any valid title
+    // The API will return null if the title is not found, so we don't need to filter by media_type
+    if (seriesTitle && seriesTitle !== "N/A") {
+        try {
+            // Try to get anime info with source provider for overflow resolution
+            const animeResult = await getAnimeInfoWithProvider(seriesTitle, parsed.season);
+            if (animeResult) {
+                const animeInfo = animeResult.animeInfo;
+                const sourceProvider = animeResult.sourceProvider;
+                metadataSourceProvider = sourceProvider;
+                coverImage = selectCoverImage(animeInfo);
+                malId = animeInfo.mal_id || null;
+                totalEpisodes = animeInfo.total_episodes || null;
+
+                // Resolve overflow for split cour anime
+                // When episode > total_episodes, find the correct cour
+                let overflowResolved = false;
+                const titlePref = config.settings.preferredTitleLanguage;
+                if (parsed.episode && animeInfo.total_episodes && parsed.episode > animeInfo.total_episodes) {
+                    const overflowResult = await resolveOverflowEpisode(
+                        animeInfo,
+                        parsed.episode,
+                        parsed.season,
+                        sourceProvider,
+                    );
+                    if (overflowResult) {
+                        overflowResolved = true;
+                        // Use the resolved cour's info for display and MAL sync
+                        malId = overflowResult.animeInfo.mal_id || null;
+                        totalEpisodes = overflowResult.animeInfo.total_episodes || null;
+                        adjustedEpisode = overflowResult.adjustedEpisode;
+                        // Update display info to show the correct cour
+                        coverImage = selectCoverImage(overflowResult.animeInfo, coverImage);
+                        // Update series title to reflect the resolved cour
+                        if (titlePref === "english") {
+                            seriesTitle =
+                                overflowResult.animeInfo.title_english ||
+                                overflowResult.animeInfo.title_romaji ||
+                                seriesTitle;
+                        } else {
+                            seriesTitle =
+                                overflowResult.animeInfo.title_romaji ||
+                                overflowResult.animeInfo.title_english ||
+                                seriesTitle;
+                        }
+                    }
+                }
+
+                // Choose title based on preferred language setting
+                // Skip if overflow resolution already set the title to the correct cour
+                if (!overflowResolved && (titlePref !== "none" || renameOverrideName !== null)) {
+                    // When rename is active, always use API title (the whole point of rename
+                    // is to correct the search, so the API result IS the desired title)
+                    const englishTitle = animeInfo.title_english;
+                    const romajiTitle = animeInfo.title_romaji;
+
+                    if (titlePref === "english" || (titlePref === "none" && renameOverrideName !== null)) {
+                        // Prefer English, fallback to Romaji
+                        seriesTitle = englishTitle || romajiTitle || seriesTitle;
+                    } else {
+                        // Prefer Romaji, fallback to English
+                        seriesTitle = romajiTitle || englishTitle || seriesTitle;
+                    }
+                }
+                // If "none" without rename, keep the original filename title
+            }
+
+            // Get episode title when it is missing, or refresh a parsed title
+            // when TVDB is the metadata source and a localized language is configured.
+            // Use override name when available, otherwise original title.
+            if (parsed.episode !== null) {
+                const parsedEpisode = parsed.episode;
+                const episodeLookupTitle = renameOverrideName ?? originalTitle;
+                episodeTitle = await resolveRuntimeEpisodeTitle({
+                    currentEpisodeTitle: episodeTitle,
+                    episode: parsedEpisode,
+                    metadataSourceProvider,
+                    tvdbLanguage: config.tvdb.language,
+                    fetchEpisodeTitle: () => getEpisodeTitle(episodeLookupTitle, parsed.season, parsedEpisode),
+                });
+            }
+        } catch (e) {
+            console.error("[MPV] Error fetching anime metadata:", e);
+        }
+    }
+
+    return { coverImage, seriesTitle, episodeTitle, malId, totalEpisodes, adjustedEpisode, metadataSourceProvider };
+}
+
+/**
  * Get all MPV data needed for Discord presence
  */
 export async function getMpvData(): Promise<MpvData | null> {
@@ -475,107 +585,18 @@ export async function getMpvData(): Promise<MpvData | null> {
             getProperty("playlist-count"),
         ]);
 
-        // Fetch anime metadata
-        let coverImage: string | null = null;
-        let episodeTitle = parsed.episode_title;
-        let seriesTitle = parsed.series_title;
-        let malId: number | null = null;
-        let totalEpisodes: number | null = null;
-        let adjustedEpisode: number | null = null;
-        let metadataSourceProvider: string | null = null;
-        const originalTitle = parsed.series_title; // Keep original for episode lookup
-
         // Check for manual series name override (rename command)
         const renameOverride = checkSeriesNameOverride(filename);
-        if (renameOverride) {
-            seriesTitle = renameOverride.overrideName;
-        }
+        const originalTitle = parsed.series_title; // Keep original for episode lookup
 
-        // Try to get anime info for any valid title
-        // The API will return null if the title is not found, so we don't need to filter by media_type
-        if (seriesTitle && seriesTitle !== "N/A") {
-            try {
-                // Try to get anime info with source provider for overflow resolution
-                const animeResult = await getAnimeInfoWithProvider(seriesTitle, parsed.season);
-                if (animeResult) {
-                    const animeInfo = animeResult.animeInfo;
-                    const sourceProvider = animeResult.sourceProvider;
-                    metadataSourceProvider = sourceProvider;
-                    coverImage = selectCoverImage(animeInfo);
-                    malId = animeInfo.mal_id || null;
-                    totalEpisodes = animeInfo.total_episodes || null;
-
-                    // Resolve overflow for split cour anime
-                    // When episode > total_episodes, find the correct cour
-                    let overflowResolved = false;
-                    const titlePref = config.settings.preferredTitleLanguage;
-                    if (parsed.episode && animeInfo.total_episodes && parsed.episode > animeInfo.total_episodes) {
-                        const overflowResult = await resolveOverflowEpisode(
-                            animeInfo,
-                            parsed.episode,
-                            parsed.season,
-                            sourceProvider,
-                        );
-                        if (overflowResult) {
-                            overflowResolved = true;
-                            // Use the resolved cour's info for display and MAL sync
-                            malId = overflowResult.animeInfo.mal_id || null;
-                            totalEpisodes = overflowResult.animeInfo.total_episodes || null;
-                            adjustedEpisode = overflowResult.adjustedEpisode;
-                            // Update display info to show the correct cour
-                            coverImage = selectCoverImage(overflowResult.animeInfo, coverImage);
-                            // Update series title to reflect the resolved cour
-                            if (titlePref === "english") {
-                                seriesTitle =
-                                    overflowResult.animeInfo.title_english ||
-                                    overflowResult.animeInfo.title_romaji ||
-                                    seriesTitle;
-                            } else {
-                                seriesTitle =
-                                    overflowResult.animeInfo.title_romaji ||
-                                    overflowResult.animeInfo.title_english ||
-                                    seriesTitle;
-                            }
-                        }
-                    }
-
-                    // Choose title based on preferred language setting
-                    // Skip if overflow resolution already set the title to the correct cour
-                    if (!overflowResolved && (titlePref !== "none" || renameOverride)) {
-                        // When rename is active, always use API title (the whole point of rename
-                        // is to correct the search, so the API result IS the desired title)
-                        const englishTitle = animeInfo.title_english;
-                        const romajiTitle = animeInfo.title_romaji;
-
-                        if (titlePref === "english" || (titlePref === "none" && renameOverride)) {
-                            // Prefer English, fallback to Romaji
-                            seriesTitle = englishTitle || romajiTitle || seriesTitle;
-                        } else {
-                            // Prefer Romaji, fallback to English
-                            seriesTitle = romajiTitle || englishTitle || seriesTitle;
-                        }
-                    }
-                    // If "none" without rename, keep the original filename title
-                }
-
-                // Get episode title when it is missing, or refresh a parsed title
-                // when TVDB is the metadata source and a localized language is configured.
-                // Use override name when available, otherwise original title.
-                if (parsed.episode !== null) {
-                    const parsedEpisode = parsed.episode;
-                    const episodeLookupTitle = renameOverride?.overrideName ?? originalTitle;
-                    episodeTitle = await resolveRuntimeEpisodeTitle({
-                        currentEpisodeTitle: episodeTitle,
-                        episode: parsedEpisode,
-                        metadataSourceProvider,
-                        tvdbLanguage: config.tvdb.language,
-                        fetchEpisodeTitle: () => getEpisodeTitle(episodeLookupTitle, parsed.season, parsedEpisode),
-                    });
-                }
-            } catch (e) {
-                console.error("[MPV] Error fetching anime metadata:", e);
-            }
-        }
+        // Fetch anime metadata
+        const metadata = await resolveAnimeMetadata({
+            parsed,
+            seriesTitle: renameOverride ? renameOverride.overrideName : parsed.series_title,
+            originalTitle,
+            renameOverrideName: renameOverride ? renameOverride.overrideName : null,
+        });
+        const { coverImage, seriesTitle, episodeTitle, malId, totalEpisodes, adjustedEpisode } = metadata;
 
         const mpvData: MpvData = {
             media_title: parsed.full_title,
