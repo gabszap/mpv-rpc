@@ -8,7 +8,9 @@ import * as net from "node:net";
 import { checkSeriesNameOverride } from "../console";
 import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "../core/anime";
 import { config } from "../core/config";
-import { parseFilename } from "../core/parser";
+import { resolveMedia } from "../core/media";
+import { type ResolvedMetadata, routeMetadata } from "../core/metadata-router";
+import { type ParsedFilename, parseFilename } from "../core/parser";
 import { normalizeTitleTokens } from "../core/title-tokens";
 import { normalizeTvdbLanguageCode } from "../providers/tvdb";
 import { readStremioPlaybackContext, type StremioPlaybackContext } from "../stremio-sync/context";
@@ -38,7 +40,9 @@ function titlesHaveSafeTokenOverlap(contextName: string | null, playbackTitle: s
     return matchingTokens / shorterTokens.length >= 0.8;
 }
 
-function isStremioIdentitySafeForPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+type StremioPlaybackPosition = Pick<MpvData, "series_title" | "season" | "episode">;
+
+function isStremioIdentitySafeForPlayback(context: StremioPlaybackContext, data: StremioPlaybackPosition): boolean {
     if (!context.imdbId) {
         return false;
     }
@@ -79,7 +83,7 @@ function readProviderIdFromContext(context: StremioPlaybackContext, provider: "m
     return null;
 }
 
-function readStremioPlaybackIdentity(data: MpvData): {
+export function readStremioPlaybackIdentity(data: StremioPlaybackPosition): {
     imdbId?: string;
     type?: "series" | "movie";
     malId?: number;
@@ -125,6 +129,8 @@ export interface MpvData {
     type?: string; // For Stremio sync
     tvdb_id?: number; // For Stremio fallback tracking
     kitsu_id?: number; // For Stremio fallback tracking
+    media_kind?: "movie" | "series"; // Set when TMDb resolved the metadata
+    year?: number; // Release year from TMDb
     playlistPos: number; // Current position in playlist (0-indexed)
     playlistCount: number; // Total number of items in playlist
 }
@@ -361,6 +367,156 @@ export function sanitizeMediaTitle(title: string): string {
 }
 
 /**
+ * Anime metadata for a parsed file: cover, display title, episode title, MAL id and overflow
+ * resolution. This is the anime pipeline that `getMpvData` used to run inline; it never throws
+ * (provider errors are logged and the values resolved so far are returned).
+ */
+export async function resolveAnimeMetadata(input: {
+    parsed: ParsedFilename;
+    seriesTitle: string;
+    originalTitle: string;
+    renameOverrideName: string | null;
+}): Promise<ResolvedMetadata> {
+    const { parsed, originalTitle, renameOverrideName } = input;
+    let coverImage: string | null = null;
+    let episodeTitle = parsed.episode_title;
+    let seriesTitle = input.seriesTitle;
+    let malId: number | null = null;
+    let totalEpisodes: number | null = null;
+    let adjustedEpisode: number | null = null;
+    let metadataSourceProvider: string | null = null;
+
+    // Try to get anime info for any valid title
+    // The API will return null if the title is not found, so we don't need to filter by media_type
+    if (seriesTitle && seriesTitle !== "N/A") {
+        try {
+            // Try to get anime info with source provider for overflow resolution
+            const animeResult = await getAnimeInfoWithProvider(seriesTitle, parsed.season);
+            if (animeResult) {
+                const animeInfo = animeResult.animeInfo;
+                const sourceProvider = animeResult.sourceProvider;
+                metadataSourceProvider = sourceProvider;
+                coverImage = selectCoverImage(animeInfo);
+                malId = animeInfo.mal_id || null;
+                totalEpisodes = animeInfo.total_episodes || null;
+
+                // Resolve overflow for split cour anime
+                // When episode > total_episodes, find the correct cour
+                let overflowResolved = false;
+                const titlePref = config.settings.preferredTitleLanguage;
+                if (parsed.episode && animeInfo.total_episodes && parsed.episode > animeInfo.total_episodes) {
+                    const overflowResult = await resolveOverflowEpisode(
+                        animeInfo,
+                        parsed.episode,
+                        parsed.season,
+                        sourceProvider,
+                    );
+                    if (overflowResult) {
+                        overflowResolved = true;
+                        // Use the resolved cour's info for display and MAL sync
+                        malId = overflowResult.animeInfo.mal_id || null;
+                        totalEpisodes = overflowResult.animeInfo.total_episodes || null;
+                        adjustedEpisode = overflowResult.adjustedEpisode;
+                        // Update display info to show the correct cour
+                        coverImage = selectCoverImage(overflowResult.animeInfo, coverImage);
+                        // Update series title to reflect the resolved cour
+                        if (titlePref === "english") {
+                            seriesTitle =
+                                overflowResult.animeInfo.title_english ||
+                                overflowResult.animeInfo.title_romaji ||
+                                seriesTitle;
+                        } else {
+                            seriesTitle =
+                                overflowResult.animeInfo.title_romaji ||
+                                overflowResult.animeInfo.title_english ||
+                                seriesTitle;
+                        }
+                    }
+                }
+
+                // Choose title based on preferred language setting
+                // Skip if overflow resolution already set the title to the correct cour
+                if (!overflowResolved && (titlePref !== "none" || renameOverrideName !== null)) {
+                    // When rename is active, always use API title (the whole point of rename
+                    // is to correct the search, so the API result IS the desired title)
+                    const englishTitle = animeInfo.title_english;
+                    const romajiTitle = animeInfo.title_romaji;
+
+                    if (titlePref === "english" || (titlePref === "none" && renameOverrideName !== null)) {
+                        // Prefer English, fallback to Romaji
+                        seriesTitle = englishTitle || romajiTitle || seriesTitle;
+                    } else {
+                        // Prefer Romaji, fallback to English
+                        seriesTitle = romajiTitle || englishTitle || seriesTitle;
+                    }
+                }
+                // If "none" without rename, keep the original filename title
+            }
+
+            // Get episode title when it is missing, or refresh a parsed title
+            // when TVDB is the metadata source and a localized language is configured.
+            // Use override name when available, otherwise original title.
+            if (parsed.episode !== null) {
+                const parsedEpisode = parsed.episode;
+                const episodeLookupTitle = renameOverrideName ?? originalTitle;
+                episodeTitle = await resolveRuntimeEpisodeTitle({
+                    currentEpisodeTitle: episodeTitle,
+                    episode: parsedEpisode,
+                    metadataSourceProvider,
+                    tvdbLanguage: config.tvdb.language,
+                    fetchEpisodeTitle: () => getEpisodeTitle(episodeLookupTitle, parsed.season, parsedEpisode),
+                });
+            }
+        } catch (e) {
+            console.error("[MPV] Error fetching anime metadata:", e);
+        }
+    }
+
+    return { coverImage, seriesTitle, episodeTitle, malId, totalEpisodes, adjustedEpisode, metadataSourceProvider };
+}
+
+/**
+ * Media (movie and non-anime series) metadata through TMDb. Returns null when nothing matched
+ * or TMDb is not available, so the router can fall back to the anime pipeline. `seriesTitle` is
+ * the title to search (the rename override when one is active).
+ */
+export async function resolveMediaMetadata(input: {
+    parsed: ParsedFilename;
+    seriesTitle: string;
+    renameOverrideName: string | null;
+    stremioType: "movie" | "series" | undefined;
+    stremioImdbId: string | undefined;
+}): Promise<ResolvedMetadata | null> {
+    const { parsed, seriesTitle, renameOverrideName } = input;
+    if (!seriesTitle || seriesTitle === "N/A") return null;
+
+    const resolved = await resolveMedia({
+        title: seriesTitle,
+        kindHint: input.stremioType ?? null,
+        season: parsed.season,
+        episode: parsed.episode,
+        year: parsed.year ?? null,
+        imdbId: input.stremioImdbId ?? null,
+    });
+    if (!resolved) return null;
+
+    // TITLE_LANG=none keeps the filename title, except when a rename override asks for the API title.
+    const useProviderTitle = config.settings.preferredTitleLanguage !== "none" || renameOverrideName !== null;
+
+    return {
+        coverImage: resolved.coverUrl,
+        seriesTitle: useProviderTitle ? resolved.info.title : seriesTitle,
+        episodeTitle: resolved.episodeTitle ?? parsed.episode_title,
+        malId: null,
+        totalEpisodes: null,
+        adjustedEpisode: null,
+        metadataSourceProvider: "tmdb",
+        mediaKind: resolved.info.kind,
+        year: resolved.info.year,
+    };
+}
+
+/**
  * Get all MPV data needed for Discord presence
  */
 export async function getMpvData(): Promise<MpvData | null> {
@@ -475,107 +631,50 @@ export async function getMpvData(): Promise<MpvData | null> {
             getProperty("playlist-count"),
         ]);
 
-        // Fetch anime metadata
-        let coverImage: string | null = null;
-        let episodeTitle = parsed.episode_title;
-        let seriesTitle = parsed.series_title;
-        let malId: number | null = null;
-        let totalEpisodes: number | null = null;
-        let adjustedEpisode: number | null = null;
-        let metadataSourceProvider: string | null = null;
-        const originalTitle = parsed.series_title; // Keep original for episode lookup
-
         // Check for manual series name override (rename command)
         const renameOverride = checkSeriesNameOverride(filename);
-        if (renameOverride) {
-            seriesTitle = renameOverride.overrideName;
-        }
+        const renameOverrideName = renameOverride ? renameOverride.overrideName : null;
+        const lookupTitle = renameOverrideName ?? parsed.series_title;
 
-        // Try to get anime info for any valid title
-        // The API will return null if the title is not found, so we don't need to filter by media_type
-        if (seriesTitle && seriesTitle !== "N/A") {
-            try {
-                // Try to get anime info with source provider for overflow resolution
-                const animeResult = await getAnimeInfoWithProvider(seriesTitle, parsed.season);
-                if (animeResult) {
-                    const animeInfo = animeResult.animeInfo;
-                    const sourceProvider = animeResult.sourceProvider;
-                    metadataSourceProvider = sourceProvider;
-                    coverImage = selectCoverImage(animeInfo);
-                    malId = animeInfo.mal_id || null;
-                    totalEpisodes = animeInfo.total_episodes || null;
+        // The Stremio context is read before the lookup, against the parsed title, so that a
+        // movie from Stremio can be routed to TMDb. A context for another title yields nothing.
+        const earlyStremioIdentity = readStremioPlaybackIdentity({
+            series_title: parsed.series_title,
+            season: parsed.season,
+            episode: parsed.episode,
+        });
 
-                    // Resolve overflow for split cour anime
-                    // When episode > total_episodes, find the correct cour
-                    let overflowResolved = false;
-                    const titlePref = config.settings.preferredTitleLanguage;
-                    if (parsed.episode && animeInfo.total_episodes && parsed.episode > animeInfo.total_episodes) {
-                        const overflowResult = await resolveOverflowEpisode(
-                            animeInfo,
-                            parsed.episode,
-                            parsed.season,
-                            sourceProvider,
-                        );
-                        if (overflowResult) {
-                            overflowResolved = true;
-                            // Use the resolved cour's info for display and MAL sync
-                            malId = overflowResult.animeInfo.mal_id || null;
-                            totalEpisodes = overflowResult.animeInfo.total_episodes || null;
-                            adjustedEpisode = overflowResult.adjustedEpisode;
-                            // Update display info to show the correct cour
-                            coverImage = selectCoverImage(overflowResult.animeInfo, coverImage);
-                            // Update series title to reflect the resolved cour
-                            if (titlePref === "english") {
-                                seriesTitle =
-                                    overflowResult.animeInfo.title_english ||
-                                    overflowResult.animeInfo.title_romaji ||
-                                    seriesTitle;
-                            } else {
-                                seriesTitle =
-                                    overflowResult.animeInfo.title_romaji ||
-                                    overflowResult.animeInfo.title_english ||
-                                    seriesTitle;
-                            }
-                        }
-                    }
-
-                    // Choose title based on preferred language setting
-                    // Skip if overflow resolution already set the title to the correct cour
-                    if (!overflowResolved && (titlePref !== "none" || renameOverride)) {
-                        // When rename is active, always use API title (the whole point of rename
-                        // is to correct the search, so the API result IS the desired title)
-                        const englishTitle = animeInfo.title_english;
-                        const romajiTitle = animeInfo.title_romaji;
-
-                        if (titlePref === "english" || (titlePref === "none" && renameOverride)) {
-                            // Prefer English, fallback to Romaji
-                            seriesTitle = englishTitle || romajiTitle || seriesTitle;
-                        } else {
-                            // Prefer Romaji, fallback to English
-                            seriesTitle = romajiTitle || englishTitle || seriesTitle;
-                        }
-                    }
-                    // If "none" without rename, keep the original filename title
-                }
-
-                // Get episode title when it is missing, or refresh a parsed title
-                // when TVDB is the metadata source and a localized language is configured.
-                // Use override name when available, otherwise original title.
-                if (parsed.episode !== null) {
-                    const parsedEpisode = parsed.episode;
-                    const episodeLookupTitle = renameOverride?.overrideName ?? originalTitle;
-                    episodeTitle = await resolveRuntimeEpisodeTitle({
-                        currentEpisodeTitle: episodeTitle,
-                        episode: parsedEpisode,
-                        metadataSourceProvider,
-                        tvdbLanguage: config.tvdb.language,
-                        fetchEpisodeTitle: () => getEpisodeTitle(episodeLookupTitle, parsed.season, parsedEpisode),
-                    });
-                }
-            } catch (e) {
-                console.error("[MPV] Error fetching anime metadata:", e);
-            }
-        }
+        // Fetch metadata: TMDb for movies and non-anime series, the anime providers otherwise
+        const routed = await routeMetadata(
+            { parsedMediaType: parsed.media_type, stremioType: earlyStremioIdentity.type },
+            {
+                anime: () =>
+                    resolveAnimeMetadata({
+                        parsed,
+                        seriesTitle: lookupTitle,
+                        originalTitle: parsed.series_title, // Keep original for episode lookup
+                        renameOverrideName,
+                    }),
+                media: () =>
+                    resolveMediaMetadata({
+                        parsed,
+                        seriesTitle: lookupTitle,
+                        renameOverrideName,
+                        stremioType: earlyStremioIdentity.type,
+                        stremioImdbId: earlyStremioIdentity.imdbId,
+                    }),
+            },
+        );
+        const metadata: ResolvedMetadata = routed.result ?? {
+            coverImage: null,
+            seriesTitle: lookupTitle,
+            episodeTitle: parsed.episode_title,
+            malId: null,
+            totalEpisodes: null,
+            adjustedEpisode: null,
+            metadataSourceProvider: null,
+        };
+        const { coverImage, seriesTitle, episodeTitle, malId, totalEpisodes, adjustedEpisode } = metadata;
 
         const mpvData: MpvData = {
             media_title: parsed.full_title,
@@ -596,8 +695,13 @@ export async function getMpvData(): Promise<MpvData | null> {
             adjusted_episode: adjustedEpisode,
             playlistPos: typeof playlistPos === "number" ? playlistPos : 0,
             playlistCount: typeof playlistCount === "number" ? playlistCount : 0,
+            ...(metadata.mediaKind ? { media_kind: metadata.mediaKind } : {}),
+            ...(typeof metadata.year === "number" ? { year: metadata.year } : {}),
         };
-        const stremioIdentity = readStremioPlaybackIdentity(mpvData);
+        // A TMDb title can be translated, so it is not compared with the Stremio name again;
+        // the identity already validated against the parsed title is reused.
+        const stremioIdentity =
+            routed.pipeline === "media" ? earlyStremioIdentity : readStremioPlaybackIdentity(mpvData);
 
         return {
             ...mpvData,
