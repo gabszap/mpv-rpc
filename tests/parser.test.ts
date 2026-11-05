@@ -10,6 +10,7 @@ function disablePtt(): void {
 }
 
 afterEach(() => {
+    parser.clearParseCacheForTests();
     setPttImporterForTests(null);
 });
 

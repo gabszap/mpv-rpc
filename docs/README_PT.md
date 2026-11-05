@@ -157,7 +157,7 @@ Tokens e contexto do Stremio ficam em `.config/`, que é ignorado pelo git.
 O parser tenta estes métodos, nesta ordem:
 
 1. **PTT**: um parser nativo em TypeScript para nomes de release (`@aiostreams/release-parser`). Roda localmente, sem rede e sem Python, e extrai título, temporada, episódio, grupo de release, resolução e mais.
-2. **Regex de release de anime**: usada para nomes no formato `[Grupo] Título - 05 [tags]` quando o PTT não pode ser usado.
+2. **Regex de release de anime**: usada para nomes no formato `[Grupo] Título - 05 [tags]` quando o PTT não está disponível ou o resultado dele não é aproveitável (por exemplo, o nome tem marcador de episódio, mas o PTT não encontrou o episódio).
 3. **Regex genérico**: sempre disponível para extração básica de título/episódio.
 
 > [!NOTE]

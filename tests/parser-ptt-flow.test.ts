@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseFilename } from "../src/core/parser";
+import { clearParseCacheForTests, parseFilename } from "../src/core/parser";
 import { setPttImporterForTests } from "../src/core/parser-ptt";
 
 beforeEach(() => {
@@ -8,6 +8,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    clearParseCacheForTests();
     setPttImporterForTests(null);
     vi.restoreAllMocks();
 });
@@ -30,6 +31,36 @@ describe("parseFilename with PTT first", () => {
 
         expect(result.parseMethod).toBe("regex");
         expect(result.episode).toBe(5);
+    });
+
+    it("does not read S12E3 inside a word as an episode marker", async () => {
+        setPttImporterForTests(async () => ({ parseTorrentTitle: () => ({ title: "Foo Bar" }) }));
+
+        const result = await parseFilename("Foo Bar xS12E3 Special.mkv");
+
+        expect(result.parseMethod).toBe("ptt");
+        expect(result.episode).toBeNull();
+    });
+
+    it("still reads a real S01E02 marker", async () => {
+        setPttImporterForTests(async () => ({ parseTorrentTitle: () => ({ title: "Foo Bar" }) }));
+
+        const result = await parseFilename("Foo Bar S01E02.mkv");
+
+        expect(result.parseMethod).toBe("regex");
+        expect(result.episode).toBe(2);
+    });
+
+    it("parses the same filename again after the cache is cleared", async () => {
+        setPttImporterForTests(async () => ({ parseTorrentTitle: () => ({}) }));
+        const first = await parseFilename("Cache Clear Show - 04.mkv");
+        expect(first.parseMethod).not.toBe("ptt");
+
+        setPttImporterForTests(null);
+        clearParseCacheForTests();
+        const second = await parseFilename("Cache Clear Show - 04.mkv");
+
+        expect(second.parseMethod).toBe("ptt");
     });
 
     it("accepts a name without an episode marker", async () => {
@@ -67,7 +98,10 @@ describe("parseFilename with PTT first", () => {
 
         const result = await parseFilename(`${"A".repeat(5000)} - 05.mkv`);
 
-        expect(typeof result.series_title).toBe("string");
+        expect(result.parseMethod).toBe("ptt");
+        expect(result.episode).toBe(5);
+        expect(result.series_title.startsWith("AAAA")).toBe(true);
+        expect(result.series_title.length).toBeGreaterThan(4000);
         expect(performance.now() - started).toBeLessThan(1000);
     });
 
