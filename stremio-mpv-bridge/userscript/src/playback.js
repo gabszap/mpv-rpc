@@ -4,6 +4,7 @@ import { checkServer, sendToMPV } from "./bridge-api.js";
 import { createConfigModal } from "./config-modal.js";
 import { log } from "./logging.js";
 import { settings } from "./settings.js";
+import { buildStreamUrl, fetchStreamList, mapWithConcurrency, STREAM_FETCH_CONCURRENCY } from "./stream-fetch.js";
 import { extractReleaseGroup, findBestStream } from "./stream-selection.js";
 import { notify, showNowPlayingWidget, showToast } from "./toasts.js";
 import { parseCurrentURL } from "./url-parser.js";
@@ -203,15 +204,21 @@ async function collectStreams(content, limit) {
                 })
                 .slice(0, limit);
 
-            for (const ep of nextEpisodes) {
+            // The episodes are independent, so fetch a few at a time instead of one after
+            // the other (each request to a slow provider takes around 10 seconds). Results
+            // keep the episode order.
+            const nextItems = await mapWithConcurrency(nextEpisodes, STREAM_FETCH_CONCURRENCY, async (ep) => {
                 notify(`Fetching S${ep.season}E${ep.episode}${ep.title ? ` - ${ep.title}` : ""}...`);
-                const nextItem = await fetchWithProviders(ep.season, ep.episode);
+                return fetchWithProviders(ep.season, ep.episode);
+            });
+            nextEpisodes.forEach((ep, index) => {
+                const nextItem = nextItems[index];
                 if (nextItem) {
                     addItem(nextItem);
                 } else {
                     log(`Episode S${ep.season}E${ep.episode} not found on any provider.`);
                 }
-            }
+            });
         } else {
             // Fallback: sequential episode increment
             log("No series meta available, falling back to sequential episode increment");
@@ -237,54 +244,36 @@ async function collectStreams(content, limit) {
     return items;
 }
 
-async function fetchStreams(baseUrl, id, season, episode) {
-    const isKitsu = id.startsWith("kitsu:");
-    const url = isKitsu
-        ? `${baseUrl}/stream/series/${id}:${episode}.json`
-        : `${baseUrl}/stream/series/${id}:${season}:${episode}.json`;
-
-    const MAX_RETRIES = 2;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (attempt > 0) {
-            notify(`Retrying stream fetch for S${season}E${episode} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`);
-            await new Promise((r) => setTimeout(r, 1000));
-        }
-
-        const result = await new Promise((resolve) => {
-            log(`Fetching streams from: ${url}`);
-            GM_xmlhttpRequest({
-                method: "GET",
-                url,
-                timeout: 10000,
-                onload: (r) => {
-                    if (r.status !== 200) {
-                        log(`Stream fetch returned status ${r.status} for S${season}E${episode}`);
-                        resolve({ retry: true, data: [] });
-                        return;
-                    }
-                    try {
-                        const data = JSON.parse(r.responseText);
-                        resolve({ retry: false, data: data.streams || [] });
-                    } catch (e) {
-                        log(`Failed to parse stream response for S${season}E${episode}:`, e.message);
-                        resolve({ retry: false, data: [] });
-                    }
-                },
-                onerror: () => {
-                    log(`Stream fetch error for S${season}E${episode}`);
-                    resolve({ retry: true, data: [] });
-                },
-                ontimeout: () => {
-                    log(`Stream fetch timeout for S${season}E${episode}`);
-                    resolve({ retry: true, data: [] });
-                },
-            });
+function gmRequest(url, timeoutMs) {
+    return new Promise((resolve) => {
+        log(`Fetching streams from: ${url}`);
+        GM_xmlhttpRequest({
+            method: "GET",
+            url,
+            timeout: timeoutMs,
+            onload: (r) => {
+                if (r.status !== 200) {
+                    log(`Stream fetch returned status ${r.status}`);
+                }
+                resolve({ kind: "response", status: r.status, body: r.responseText });
+            },
+            onerror: () => {
+                log("Stream fetch error");
+                resolve({ kind: "error" });
+            },
+            ontimeout: () => {
+                log(`Stream fetch timeout after ${timeoutMs} ms`);
+                resolve({ kind: "timeout" });
+            },
         });
+    });
+}
 
-        if (!result.retry || attempt === MAX_RETRIES) {
-            return result.data;
-        }
-    }
-    return [];
+async function fetchStreams(baseUrl, id, season, episode) {
+    const url = buildStreamUrl(baseUrl, id, season, episode);
+    return fetchStreamList(url, gmRequest, {
+        onRetry: (attempt, attempts) =>
+            notify(`Retrying stream fetch for S${season}E${episode} (attempt ${attempt}/${attempts})...`),
+        onSlow: () => notify(`Still waiting for S${season}E${episode}: this provider is slow...`),
+    });
 }
