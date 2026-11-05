@@ -2,6 +2,12 @@
 
 This file is managed by semantic-release.
 
+## [1.12.1](https://github.com/gabszap/mpv-rpc/compare/bridge-v1.12.0...bridge-v1.12.1) (2026-11-05)
+
+### Bug Fixes
+
+* **bridge:** stop aborting slow stream providers and fetch episodes in parallel ([96f17f8](https://github.com/gabszap/mpv-rpc/commit/96f17f844e371826477ba0997c7910bb703d68df))
+
 ## [1.12.0](https://github.com/gabszap/mpv-rpc/compare/bridge-v1.11.0...bridge-v1.12.0) (2026-11-04)
 
 ### Features
