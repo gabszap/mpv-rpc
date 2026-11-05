@@ -2,8 +2,6 @@
  * Filename Parser Module - PTT (native TypeScript) with regex fallbacks
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { type PttParsed, parseWithPtt } from "./parser-ptt";
 
 /** Which parsing method produced a `ParsedFilename`. */
@@ -55,22 +53,8 @@ export type AnimeReleaseParseResult = {
  */
 const ANIME_RELEASE_REGEX = /^\[(?<group>[^\]]+)\]\s+(?<title>.+?)\s+-\s+(?<episode>\d{1,4})\s+\[(?<tags>[^\]]+)\]/i;
 
-const execFileAsync = promisify(execFile);
-
 // Cache for parsed filenames to avoid parsing the same name twice
 const parseCache: Map<string, ParsedFilename> = new Map();
-
-/**
- * Check if GuessIt CLI is available locally
- */
-export async function checkAvailability(): Promise<boolean> {
-    try {
-        await execFileAsync("guessit", ["--version"]);
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 /**
  * Detect if the file is anime or regular series based on filename patterns

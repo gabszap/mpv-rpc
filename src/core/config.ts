@@ -97,13 +97,6 @@ export const config = {
         minRequestInterval: 500,
     },
 
-    // GuessIt API settings
-    guessitApi: {
-        enabled: getEnvBool("USE_GUESSIT_API", true),
-        url: getEnv("GUESSIT_API_URL", ""),
-        timeout: 10000,
-    },
-
     // TheTVDB API settings
     tvdb: {
         apiKey: getEnv("TVDB_API_KEY", ""),
@@ -236,19 +229,6 @@ export function reloadConfig(): string[] {
     if (config.settings.preferredTitleLanguage !== newTitleLang) {
         changes.push(`TITLE_LANG: ${config.settings.preferredTitleLanguage} -> ${newTitleLang}`);
         (config.settings as Record<string, unknown>).preferredTitleLanguage = newTitleLang;
-    }
-
-    // GuessIt
-    const newGuessitEnabled = getEnvBool("USE_GUESSIT_API", true);
-    if (config.guessitApi.enabled !== newGuessitEnabled) {
-        changes.push(`USE_GUESSIT_API: ${config.guessitApi.enabled} -> ${newGuessitEnabled}`);
-        config.guessitApi.enabled = newGuessitEnabled;
-    }
-
-    const newGuessitUrl = getEnv("GUESSIT_API_URL", "");
-    if (config.guessitApi.url !== newGuessitUrl) {
-        changes.push("GUESSIT_API_URL changed");
-        config.guessitApi.url = newGuessitUrl;
     }
 
     // TVDB

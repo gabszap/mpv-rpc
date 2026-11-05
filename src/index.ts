@@ -8,7 +8,7 @@ import { ConsoleRepl, createEpisodeContext } from "./console";
 import { getAnimeCacheFilePath, getProviderName, reloadProvider } from "./core/anime";
 import { checkAndTriggerAutoFetch } from "./core/auto-fetch";
 import { config, reloadConfig } from "./core/config";
-import { checkAvailability, parseFilename } from "./core/parser";
+import { parseFilename } from "./core/parser";
 import * as discord from "./integrations/discord";
 import * as mpv from "./integrations/mpv";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
@@ -73,8 +73,6 @@ async function performReload(arg: string): Promise<void> {
     const oldDiscordRpc = config.settings.discordRpc;
     const oldInterval = config.updateInterval;
     const oldMetadataProvider = config.metadataProvider;
-    const oldGuessitEnabled = config.guessitApi.enabled;
-    const oldGuessitUrl = config.guessitApi.url;
 
     const changes = reloadConfig();
 
@@ -123,21 +121,6 @@ async function performReload(arg: string): Promise<void> {
         await discord.disconnect();
         if (config.settings.discordRpc) {
             await discord.connect();
-        }
-    }
-
-    // Re-check GuessIt parser if its settings changed
-    if (config.guessitApi.enabled !== oldGuessitEnabled || config.guessitApi.url !== oldGuessitUrl) {
-        console.log("[Reload] GuessIt settings changed, re-checking parser...");
-        if (config.guessitApi.enabled && config.guessitApi.url) {
-            console.log(`[Reload] GuessIt API enabled: ${config.guessitApi.url}`);
-        } else {
-            const guessitAvailable = await checkAvailability();
-            if (guessitAvailable) {
-                console.log("[Reload] GuessIt CLI found! Advanced parsing enabled.");
-            } else {
-                console.warn("[Reload] WARNING: No GuessIt available. Using basic fallback parser.");
-            }
         }
     }
 
@@ -340,20 +323,8 @@ async function start(): Promise<void> {
         console.log("[Discord] RPC Disabled");
     }
 
-    // Check Parser availability
-    console.log("[Main] Checking parser...");
-    if (config.guessitApi.enabled && config.guessitApi.url) {
-        console.log(`[Main] GuessIt API enabled: ${config.guessitApi.url}`);
-    } else {
-        const guessitAvailable = await checkAvailability();
-        if (guessitAvailable) {
-            console.log("[Main] GuessIt CLI found! Advanced parsing enabled.");
-        } else {
-            console.warn("[Main] WARNING: No GuessIt available. Using basic fallback parser.");
-            console.warn("       Set GUESSIT_API_URL in .env for cloud-based parsing (no Python needed).");
-            console.warn("       See guessit-api/README.md for deployment instructions.");
-        }
-    }
+    // Filename parser
+    console.log("[Main] Parser: PTT (native TypeScript)");
 
     // Show metadata provider
     console.log(`[Main] Metadata provider: ${getProviderName()}`);
