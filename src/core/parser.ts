@@ -22,6 +22,8 @@ export interface ParsedFilename {
     resolution?: string;
     source?: string;
     codec?: string;
+    // Release year found in the filename (PTT only), used to disambiguate movie and series lookups.
+    year?: number;
     // Which method produced this result. Optional so existing consumers and
     // hand-built values keep working.
     parseMethod?: ParseMethod;
@@ -228,6 +230,7 @@ function fromPtt(parsed: PttParsed, filename: string): ParsedFilename | null {
     if (parsed.resolution) result.resolution = parsed.resolution;
     if (parsed.source) result.source = parsed.source;
     if (parsed.codec) result.codec = parsed.codec;
+    if (parsed.year !== undefined) result.year = parsed.year;
     return result;
 }
 
