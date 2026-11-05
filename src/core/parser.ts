@@ -56,6 +56,11 @@ const ANIME_RELEASE_REGEX = /^\[(?<group>[^\]]+)\]\s+(?<title>.+?)\s+-\s+(?<epis
 // Cache for parsed filenames to avoid parsing the same name twice
 const parseCache: Map<string, ParsedFilename> = new Map();
 
+/** Test hook: forget every cached parse result. */
+export function clearParseCacheForTests(): void {
+    parseCache.clear();
+}
+
 /**
  * Detect if the file is anime or regular series based on filename patterns
  */
@@ -190,7 +195,10 @@ function hasEpisodeMarker(filename: string): boolean {
     // extractEpisodeFromFilename only recognizes a trailing "- 05" at the very end
     // of the string, so drop a file extension first.
     const withoutExtension = filename.replace(/\.[A-Za-z0-9]{2,4}$/, "");
-    return /[Ss](\d{1,2})[Ee](\d{1,3})/.test(withoutExtension) || extractEpisodeFromFilename(withoutExtension) !== null;
+    return (
+        /(?<![A-Za-z0-9])[Ss](\d{1,2})[Ee](\d{1,3})/.test(withoutExtension) ||
+        extractEpisodeFromFilename(withoutExtension) !== null
+    );
 }
 
 /**
