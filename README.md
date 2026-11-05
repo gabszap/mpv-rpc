@@ -55,7 +55,7 @@
 | **Stremio bridge** | Userscript + local server that opens Stremio Web streams in MPV with playlist support |
 
 > [!NOTE]
-> Anime files use the anime providers. Movies and other series use TMDb when `TMDB_API_KEY` is set, and fall back to the anime providers when TMDb finds nothing. Without a key, non-anime files only show playback status.
+> Anime files use the anime providers. Movies and other series use TMDb when `TMDB_API_KEY` is set, and fall back to the anime providers when TMDb finds nothing or the match looks like Japanese animation. Without a key everything works as before.
 
 ## Requirements
 

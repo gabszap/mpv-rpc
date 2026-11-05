@@ -167,6 +167,14 @@ describe("resolveMediaMetadata", () => {
         expect(result?.seriesTitle).toBe("Breaking Bad (TMDb)");
     });
 
+    it("returns null for a result that looks like Japanese animation so the anime pipeline runs", async () => {
+        resolveMediaMock.mockResolvedValue(
+            seriesResult({ info: { kind: "series", tmdbId: 1, title: "Frieren", year: 2023, animeLikely: true } }),
+        );
+
+        expect(await run({ seriesTitle: "Frieren" })).toBeNull();
+    });
+
     it("returns null when resolveMedia returns null", async () => {
         resolveMediaMock.mockResolvedValue(null);
 

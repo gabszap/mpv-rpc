@@ -45,6 +45,7 @@ describe("TmdbProvider.findByImdbId", () => {
             originalTitle: "Inception",
             year: 2010,
             posterUrl: "https://image.tmdb.org/t/p/w500/ljsZTbVsrQSqZgWeep2B1QiDKuh.jpg",
+            animeLikely: false,
         });
         const [url, requestConfig] = axiosGetMock.mock.calls[0];
         expect(url).toBe("https://api.themoviedb.org/3/find/tt1375666");
@@ -109,6 +110,27 @@ describe("TmdbProvider.search", () => {
         await makeProvider().search("Breaking Bad", "series");
 
         expect(axiosGetMock.mock.calls[0][1].params).not.toHaveProperty("first_air_date_year");
+    });
+
+    it("flags a Japanese animation as animeLikely", async () => {
+        axiosGetMock.mockResolvedValueOnce(ok("search-tv-anime"));
+
+        const info = await makeProvider().search("Frieren", "series");
+
+        expect(info?.animeLikely).toBe(true);
+    });
+
+    it("does not flag a live-action show or a non-Japanese animation", async () => {
+        axiosGetMock.mockResolvedValueOnce(ok("search-tv"));
+        expect((await makeProvider().search("Breaking Bad", "series"))?.animeLikely).toBe(false);
+
+        axiosGetMock.mockResolvedValueOnce({
+            status: 200,
+            data: {
+                results: [{ id: 1, name: "Cartoon", genre_ids: [16], origin_country: ["US"], original_language: "en" }],
+            },
+        });
+        expect((await makeProvider().search("Cartoon", "series"))?.animeLikely).toBe(false);
     });
 
     it("returns null for an empty result list", async () => {

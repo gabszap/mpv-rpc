@@ -196,7 +196,7 @@ npm run bridge
      1. Stremio says `type=movie` → media pipeline (TMDb) first, anime pipeline as fallback.
      2. The parser marked the file `anime` → anime pipeline only.
      3. Anything else → media pipeline first, anime pipeline as fallback.
-   - **Media pipeline** (movies and non-anime series): `src/core/media.ts` resolves through the `MediaProvider` contract (`src/providers/media-types.ts`), implemented by `src/providers/tmdb.ts`. Without `TMDB_API_KEY` it returns nothing and the anime pipeline runs. Its cache is in memory only (24 hours for hits, 10 minutes for misses); transient failures are never cached; a 401 disables TMDb until `.reload`. Results carry no `mal_id`, so MAL sync does not run for them.
+   - **Media pipeline** (movies and non-anime series): `src/core/media.ts` resolves through the `MediaProvider` contract (`src/providers/media-types.ts`), implemented by `src/providers/tmdb.ts`. Without `TMDB_API_KEY` it returns nothing and the anime pipeline runs. Its cache is in memory only (24 hours for hits, 10 minutes for misses); transient failures are never cached; a 401 disables TMDb until `.reload`. Results carry no `mal_id`, so MAL sync does not run for them; for that reason a TMDb match flagged `animeLikely` (genre Animation with a Japanese origin) is treated as a miss and the anime pipeline runs instead. After a transient TMDb failure the media pipeline pauses for 60 seconds.
    - **Anime pipeline**: `resolveAnimeMetadata` in `src/integrations/mpv.ts`, described below. Do not change its behavior when working on the media pipeline; the two are kept separate on purpose.
    - Discord renders a movie (`media_kind === "movie"`) in `buildActivityContent` (`src/integrations/discord.ts`).
 

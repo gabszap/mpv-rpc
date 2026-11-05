@@ -500,6 +500,10 @@ export async function resolveMediaMetadata(input: {
     });
     if (!resolved) return null;
 
+    // Japanese animation belongs to the anime pipeline (MAL ids, total episodes, overflow); returning null
+    // lets the router fall back to it, so anime files keep working when a TMDb key is set.
+    if (resolved.info.animeLikely) return null;
+
     // TITLE_LANG=none keeps the filename title, except when a rename override asks for the API title.
     const useProviderTitle = config.settings.preferredTitleLanguage !== "none" || renameOverrideName !== null;
 

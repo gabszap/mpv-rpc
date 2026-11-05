@@ -7,6 +7,7 @@ const HIT_TTL_MS = 24 * 60 * 60 * 1000;
 const MISS_TTL_MS = 10 * 60 * 1000;
 const MIN_TITLE_OVERLAP = 0.8;
 const MAX_YEAR_DIFFERENCE = 1;
+const TRANSIENT_COOLDOWN_MS = 60 * 1000;
 
 export interface ResolveMediaInput {
     title: string;
@@ -33,6 +34,8 @@ const pending = new Map<string, Promise<unknown>>();
 let providerOverride: MediaProvider | null = null;
 let defaultProvider: TmdbProvider | null = null;
 let authDisabled = false;
+let transientCooldownUntil = 0;
+let lastTransientWarningAt = 0;
 
 function getProvider(): MediaProvider {
     if (providerOverride) return providerOverride;
@@ -53,6 +56,7 @@ export function isMediaProviderConfigured(): boolean {
 /** Re-enables the provider after an auth failure (called by the `.reload` command). */
 export function reloadMediaProvider(): void {
     authDisabled = false;
+    transientCooldownUntil = 0;
     defaultProvider = null;
 }
 
@@ -63,6 +67,8 @@ export function setMediaProviderForTests(provider: MediaProvider | null): void {
 export function clearMediaCacheForTests(): void {
     cache.clear();
     pending.clear();
+    transientCooldownUntil = 0;
+    lastTransientWarningAt = 0;
 }
 
 /**
@@ -88,7 +94,7 @@ async function cached<T>(key: string, load: () => Promise<T | null>): Promise<T 
     return promise;
 }
 
-function titlesMatch(fileTitle: string, info: MediaInfo): boolean {
+function titlesMatch(fileTitle: string, info: MediaInfo, yearConfirmed: boolean): boolean {
     const wanted = normalizeTitleTokens(fileTitle);
     if (wanted.length === 0) return false;
     const candidates = [info.title, info.originalTitle].filter((value): value is string => !!value);
@@ -96,6 +102,11 @@ function titlesMatch(fileTitle: string, info: MediaInfo): boolean {
         const tokens = normalizeTitleTokens(candidate);
         if (tokens.length === 0) return false;
         const candidateSet = new Set(tokens);
+        // A one word title ("Dune", "It") overlaps fully with any longer title that contains it, so without a
+        // matching year it must equal the candidate exactly.
+        if (!yearConfirmed && Math.min(new Set(wanted).size, candidateSet.size) === 1) {
+            return candidateSet.size === new Set(wanted).size && wanted.every((token) => candidateSet.has(token));
+        }
         const shared = new Set(wanted.filter((token) => candidateSet.has(token))).size;
         return shared / Math.min(new Set(wanted).size, candidateSet.size) >= MIN_TITLE_OVERLAP;
     });
@@ -104,6 +115,13 @@ function titlesMatch(fileTitle: string, info: MediaInfo): boolean {
 function yearsMatch(fileYear: number | null, info: MediaInfo): boolean {
     if (fileYear === null || info.year === null) return true;
     return Math.abs(fileYear - info.year) <= MAX_YEAR_DIFFERENCE;
+}
+
+function warnTransient(message: string): void {
+    const now = Date.now();
+    if (now - lastTransientWarningAt < TRANSIENT_COOLDOWN_MS) return;
+    lastTransientWarningAt = now;
+    console.warn(message);
 }
 
 function handleFailure(error: unknown): void {
@@ -115,7 +133,7 @@ function handleFailure(error: unknown): void {
         return;
     }
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[Media] TMDb lookup failed (${message}); will retry later`);
+    warnTransient(`[Media] TMDb lookup failed (${message}); will retry later`);
 }
 
 async function lookupInfo(
@@ -135,7 +153,8 @@ async function lookupInfo(
     return cached(key, async () => {
         const found = await provider.search(input.title, kind, input.year);
         if (!found) return null;
-        return titlesMatch(input.title, found) && yearsMatch(input.year, found) ? found : null;
+        const yearConfirmed = input.year !== null && found.year !== null && yearsMatch(input.year, found);
+        return titlesMatch(input.title, found, yearConfirmed) && yearsMatch(input.year, found) ? found : null;
     });
 }
 
@@ -151,6 +170,7 @@ async function lookupDetail(key: string, load: () => Promise<string | null>): Pr
 
 export async function resolveMedia(input: ResolveMediaInput): Promise<ResolvedMedia | null> {
     if (!isMediaProviderConfigured()) return null;
+    if (Date.now() < transientCooldownUntil) return null;
 
     const provider = getProvider();
     const kind: MediaKind = input.kindHint ?? (input.season !== null || input.episode !== null ? "series" : "movie");
@@ -160,6 +180,10 @@ export async function resolveMedia(input: ResolveMediaInput): Promise<ResolvedMe
         info = await lookupInfo(provider, input, kind);
     } catch (error) {
         handleFailure(error);
+        // A failing TMDb is not asked again for a minute, so an outage costs one wait instead of one per update
+        if (!(error instanceof MediaProviderError && error.reason === "auth")) {
+            transientCooldownUntil = Date.now() + TRANSIENT_COOLDOWN_MS;
+        }
         return null;
     }
     if (!info) return null;

@@ -55,7 +55,7 @@ O **MPV Discord RPC** acompanha a reprodução do MPV via IPC e transforma isso 
 | **Bridge do Stremio** | Userscript + servidor local que abre streams do Stremio Web no MPV com suporte a playlists |
 
 > [!NOTE]
-> Arquivos de anime usam os provedores de anime. Filmes e outras séries usam o TMDb quando `TMDB_API_KEY` está definida, e recorrem aos provedores de anime se o TMDb não achar nada. Sem a chave, arquivos que não são anime mostram só o status de reprodução.
+> Arquivos de anime usam os provedores de anime. Filmes e outras séries usam o TMDb quando `TMDB_API_KEY` está definida, e recorrem aos provedores de anime se o TMDb não achar nada ou se o resultado parecer animação japonesa. Sem a chave, tudo funciona como antes.
 
 ## Requisitos
 
