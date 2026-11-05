@@ -6,8 +6,9 @@ This project connects **MPV** playback to:
 
 1) **Discord Rich Presence** (optionally)
 2) **Anime metadata providers** (Jikan/AniList/Kitsu/TVDB)
-3) **MyAnimeList (MAL) sync** (optionally)
-4) A separate **Stremio → MPV bridge** workspace
+3) **Movie and series metadata** through TMDb (optionally, needs `TMDB_API_KEY`)
+4) **MyAnimeList (MAL) sync** (optionally)
+5) A separate **Stremio → MPV bridge** workspace
 
 The intent of this file is to keep work safe, reproducible, and easy to troubleshoot.
 
@@ -190,7 +191,16 @@ npm run bridge
      2. Anime release regex
      3. Regex fallback
 
-3) **Metadata resolution → providers + caching**
+3) **Metadata routing → two pipelines**
+   - `src/core/metadata-router.ts` picks the pipeline for each file (called from `getMpvData` in `src/integrations/mpv.ts`):
+     1. Stremio says `type=movie` → media pipeline (TMDb) first, anime pipeline as fallback.
+     2. The parser marked the file `anime` → anime pipeline only.
+     3. Anything else → media pipeline first, anime pipeline as fallback.
+   - **Media pipeline** (movies and non-anime series): `src/core/media.ts` resolves through the `MediaProvider` contract (`src/providers/media-types.ts`), implemented by `src/providers/tmdb.ts`. Without `TMDB_API_KEY` it returns nothing and the anime pipeline runs. Its cache is in memory only (24 hours for hits, 10 minutes for misses); transient failures are never cached; a 401 disables TMDb until `.reload`. Results carry no `mal_id`, so MAL sync does not run for them.
+   - **Anime pipeline**: `resolveAnimeMetadata` in `src/integrations/mpv.ts`, described below. Do not change its behavior when working on the media pipeline; the two are kept separate on purpose.
+   - Discord renders a movie (`media_kind === "movie"`) in `buildActivityContent` (`src/integrations/discord.ts`).
+
+   Anime pipeline details:
    - `src/core/anime.ts` calls the configured provider (from `src/core/config.ts`).
    - Providers implement `AnimeProvider` (`src/providers/types.ts`).
    - Resolution strategy:
@@ -231,6 +241,11 @@ npm run bridge
   - edit: `src/core/anime.ts`, `src/providers/*`, `src/providers/types.ts`
   - validate: provider/anime tests under `tests/`
   - note: caching can mask fixes; see Troubleshooting → Cache
+
+- **Movie and series metadata (TMDb)**
+  - edit: `src/providers/tmdb.ts`, `src/providers/media-types.ts`, `src/core/media.ts`, `src/core/metadata-router.ts`
+  - validate: `tests/tmdb-provider.test.ts`, `tests/media-resolver.test.ts`, `tests/metadata-router.test.ts`, `tests/mpv-media-metadata.test.ts`, `tests/discord-activity-content.test.ts` (no network; axios is mocked, fixtures in `tests/fixtures/tmdb`)
+  - keep: the anime pipeline untouched (`tests/mpv-anime-metadata.test.ts` pins it)
 
 - **Env variables / defaults / configuration**
   - edit: `src/core/config.ts`, `.env.example`
