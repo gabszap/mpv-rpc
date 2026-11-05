@@ -32,7 +32,8 @@ The intent of this file is to keep work safe, reproducible, and easy to troubles
   - `npm run build`
 
 - **Parser fallback order (do not reorder):**
-  - GuessIt API → local GuessIt CLI → regex fallback
+  - PTT → GuessIt API → local GuessIt CLI → anime release regex → regex fallback
+  - PTT is the native TypeScript parser (`src/core/parser-ptt.ts`, package `@aiostreams/release-parser`). The GuessIt steps are a temporary safety net and are removed in a follow-up change.
 
 - **`.env` loading must remain compatible with `src/core/config.ts`:**
   - use `dotenv` as the official loader
@@ -185,9 +186,11 @@ npm run bridge
      - season (optional)
      - episode (optional)
    - Fallback order is fixed:
-     1. GuessIt API
-     2. GuessIt CLI
-     3. Regex fallback
+     1. PTT (`src/core/parser-ptt.ts`)
+     2. GuessIt API
+     3. GuessIt CLI
+     4. Anime release regex
+     5. Regex fallback
    - `src/core/parser.ts` also exposes parser availability checks.
 
 3) **Metadata resolution → providers + caching**
@@ -225,7 +228,7 @@ npm run bridge
 - **Parser changes / filename detection**
   - edit: `src/core/parser.ts`
   - validate: `tests/parser.test.ts`
-  - keep: GuessIt API → GuessIt CLI → regex fallback order
+  - keep: PTT → GuessIt API → GuessIt CLI → anime release regex → regex fallback order
 
 - **Provider logic / search matching / resilience**
   - edit: `src/core/anime.ts`, `src/providers/*`, `src/providers/types.ts`
