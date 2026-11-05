@@ -169,6 +169,121 @@ export function logStatus(data: MpvData, options: { privacyMode?: boolean } = {}
     }
 }
 
+export interface ActivityContentOptions {
+    showTitleAsPresence: boolean;
+    showCover: boolean;
+    mpvIcon: string;
+}
+
+export interface ActivityContent {
+    name: string | undefined;
+    details: string;
+    state: string | undefined;
+    largeImageKey: string;
+    largeImageText: string;
+}
+
+/**
+ * Text and image of the status for a playing file (everything except timestamps and the
+ * play/pause icon). Pure: it reads only `data` and `options`.
+ */
+export function buildActivityContent(data: MpvData, options: ActivityContentOptions): ActivityContent {
+    const isPaused = data.pause;
+    const fullTitle = data.series_title !== "N/A" ? data.series_title : data.media_title;
+
+    // Clean title (remove "- Season X" suffix for activity name)
+    const cleanTitle = fullTitle.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
+
+    // Use adjusted episode for display when overflow is resolved
+    const displayEpisode = data.adjusted_episode ?? data.episode;
+
+    // Create episode context and resolve any manual override
+    // Pass resolved S/E as the main id and parsed S/E as the anchor
+    const episodeContext = createEpisodeContext(
+        data.filename,
+        data.series_title,
+        data.season,
+        displayEpisode,
+        data.season,
+        data.episode,
+    );
+    const { title: resolvedEpisodeTitle } = resolveDisplayTitle(data.episode_title || "", episodeContext);
+
+    // Build state string
+    let state = "";
+    let details = fullTitle; // Default: show full title in details
+
+    const isMovie = data.media_kind === "movie";
+    const movieYear = isMovie && typeof data.year === "number" ? data.year : null;
+
+    if (isMovie && options.showTitleAsPresence) {
+        // The title is already the activity name; a movie has no episode to show
+        details = movieYear ? `Movie (${movieYear})` : "Movie";
+        state = "on MPV";
+    } else if (isMovie && movieYear) {
+        // Title in details, release year in state
+        state = String(movieYear);
+    } else if (options.showTitleAsPresence) {
+        // When showTitleAsPresence is active, avoid duplicating title (it's already in activity name)
+        if (data.season !== null && displayEpisode !== null) {
+            // SxEx format
+            details = resolvedEpisodeTitle || `Episode ${displayEpisode}`;
+            state = "on MPV";
+        } else if (displayEpisode !== null) {
+            // Episode only (no season)
+            details = resolvedEpisodeTitle
+                ? `Episode ${displayEpisode} - ${resolvedEpisodeTitle}`
+                : `Episode ${displayEpisode}`;
+            state = "on MPV";
+        } else if (resolvedEpisodeTitle) {
+            details = resolvedEpisodeTitle;
+            state = "on MPV";
+        } else {
+            details = "on MPV";
+            state = "";
+        }
+    } else if (data.season !== null && displayEpisode !== null) {
+        // Discord already shows badge with season/episode, so just show title
+        state = resolvedEpisodeTitle || "";
+    } else if (displayEpisode !== null) {
+        // Episode only (no season) - show episode info in state
+        if (resolvedEpisodeTitle) {
+            state = `Episode ${displayEpisode} - ${resolvedEpisodeTitle}`;
+        } else {
+            state = `Episode ${displayEpisode}`;
+        }
+    } else if (resolvedEpisodeTitle) {
+        // Only have episode title (no episode number) - show title as state
+        state = resolvedEpisodeTitle;
+    } else if (data.artist !== "N/A") {
+        state = `by ${data.artist}`;
+    } else {
+        state = isPaused ? "Paused" : `Playing - ${data.percent_pos.toFixed(1)}%`;
+    }
+
+    // Determine image
+    const largeImage = options.showCover && data.cover_image ? data.cover_image : options.mpvIcon;
+
+    // Format large image text for Season/Episode badge
+    let largeText = "MPV Media Player";
+    if (options.showCover && data.cover_image && data.season !== null && displayEpisode !== null) {
+        largeText = `Season ${data.season}, Episode ${displayEpisode}`;
+    } else if (isMovie && options.showCover && data.cover_image) {
+        largeText = movieYear ? `${fullTitle} (${movieYear})` : fullTitle;
+    }
+
+    // Activity name - use clean title or "MPV" based on setting
+    const activityName = options.showTitleAsPresence ? cleanTitle : undefined;
+
+    return {
+        name: activityName,
+        details,
+        state: state || undefined,
+        largeImageKey: largeImage,
+        largeImageText: largeText,
+    };
+}
+
 /**
  * Update Discord Rich Presence with MPV data
  */
@@ -260,93 +375,27 @@ export async function setActivity(data: MpvData): Promise<void> {
         return;
     }
 
-    // Clean title (remove "- Season X" suffix for activity name)
-    const cleanTitle = fullTitle.replace(/\s*[-–]\s*Season\s*\d+$/i, "").trim();
-
-    // Use adjusted episode for display when overflow is resolved
-    const displayEpisode = data.adjusted_episode ?? data.episode;
-
-    // Create episode context and resolve any manual override
-    // Pass resolved S/E as the main id and parsed S/E as the anchor
-    const episodeContext = createEpisodeContext(
-        data.filename,
-        data.series_title,
-        data.season,
-        displayEpisode,
-        data.season,
-        data.episode,
-    );
-    const { title: resolvedEpisodeTitle } = resolveDisplayTitle(data.episode_title || "", episodeContext);
-
-    // Build state string
-    let state = "";
-    let details = fullTitle; // Default: show full title in details
-
-    // When showTitleAsPresence is active, avoid duplicating title (it's already in activity name)
-    if (config.settings.showTitleAsPresence) {
-        if (data.season !== null && displayEpisode !== null) {
-            // SxEx format
-            details = resolvedEpisodeTitle || `Episode ${displayEpisode}`;
-            state = "on MPV";
-        } else if (displayEpisode !== null) {
-            // Episode only (no season)
-            details = resolvedEpisodeTitle
-                ? `Episode ${displayEpisode} - ${resolvedEpisodeTitle}`
-                : `Episode ${displayEpisode}`;
-            state = "on MPV";
-        } else if (resolvedEpisodeTitle) {
-            details = resolvedEpisodeTitle;
-            state = "on MPV";
-        } else {
-            details = "on MPV";
-            state = "";
-        }
-    } else if (data.season !== null && displayEpisode !== null) {
-        // Discord already shows badge with season/episode, so just show title
-        state = resolvedEpisodeTitle || "";
-    } else if (displayEpisode !== null) {
-        // Episode only (no season) - show episode info in state
-        if (resolvedEpisodeTitle) {
-            state = `Episode ${displayEpisode} - ${resolvedEpisodeTitle}`;
-        } else {
-            state = `Episode ${displayEpisode}`;
-        }
-    } else if (resolvedEpisodeTitle) {
-        // Only have episode title (no episode number) - show title as state
-        state = resolvedEpisodeTitle;
-    } else if (data.artist !== "N/A") {
-        state = `by ${data.artist}`;
-    } else {
-        state = isPaused ? "Paused" : `Playing - ${data.percent_pos.toFixed(1)}%`;
-    }
-
-    // Determine image
-    const largeImage = config.settings.showCover && data.cover_image ? data.cover_image : config.mpvIcon;
-
-    // Format large image text for Season/Episode badge
-    let largeText = "MPV Media Player";
-    if (config.settings.showCover && data.cover_image && data.season !== null && displayEpisode !== null) {
-        largeText = `Season ${data.season}, Episode ${displayEpisode}`;
-    }
+    const content = buildActivityContent(data, {
+        showTitleAsPresence: config.settings.showTitleAsPresence,
+        showCover: config.settings.showCover,
+        mpvIcon: config.mpvIcon,
+    });
 
     // Calculate timestamps for progress bar
     const now = Date.now();
     const startTimestamp = isPaused ? undefined : Math.floor((now - data.time_pos * 1000) / 1000);
     const endTimestamp = isPaused ? undefined : Math.floor((now + (data.duration - data.time_pos) * 1000) / 1000);
 
-    // Activity name - use clean title or "MPV" based on setting
-    const activityName = config.settings.showTitleAsPresence ? cleanTitle : undefined;
-
     try {
         await client?.user?.setActivity({
             type: ActivityType.Watching,
-            name: activityName,
-            details,
-            state: state || undefined,
+            name: content.name,
+            details: content.details,
+            state: content.state,
             startTimestamp,
             endTimestamp,
-            largeImageKey: largeImage,
-            largeImageText: largeText,
+            largeImageKey: content.largeImageKey,
+            largeImageText: content.largeImageText,
             smallImageKey: isPaused ? Assets.Pause : Assets.Play,
             smallImageText: isPaused ? "Paused" : "Watching",
         });

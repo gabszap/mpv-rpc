@@ -42,19 +42,20 @@
 
 ## Highlights
 
-**MPV Discord RPC** watches your MPV playback through IPC and turns it into Discord Rich Presence. For anime files it parses the filename, fetches metadata and cover art, resolves episode titles, and can sync watch progress to MyAnimeList, Trakt.tv and Stremio.
+**MPV Discord RPC** watches your MPV playback through IPC and turns it into Discord Rich Presence. For anime files it parses the filename, fetches metadata and cover art, resolves episode titles, and can sync watch progress to MyAnimeList, Trakt.tv and Stremio. For movies and other series it can fetch the poster, official title and year from TMDb.
 
 | | |
 | --- | --- |
 | **Discord Rich Presence** | Live playback status, pause/playing state, progress, privacy mode, optional idle hiding |
 | **Anime metadata** | Filename parsing, cover art, official titles, localized episode titles, local cache |
 | **Multiple providers** | Jikan/MyAnimeList, AniList, Kitsu and TheTVDB, with automatic fallback |
+| **Movies and series metadata** | TMDb poster, official title, year and episode names for non-anime content (needs a free `TMDB_API_KEY`) |
 | **Resilient parser** | PTT (native TypeScript) → anime release regex → regex fallback |
 | **Watch sync** | MyAnimeList progress, Trakt.tv scrobbling, Stremio Continue Watching and watched marking |
 | **Stremio bridge** | Userscript + local server that opens Stremio Web streams in MPV with playlist support |
 
 > [!NOTE]
-> Cover art is focused on anime metadata. For non-anime files the app still shows playback status, just without anime-specific metadata.
+> Anime files use the anime providers. Movies and other series use TMDb when `TMDB_API_KEY` is set, and fall back to the anime providers when TMDb finds nothing or the match looks like Japanese animation. Without a key everything works as before.
 
 ## Requirements
 
@@ -176,11 +177,11 @@ Copy `.env.example` to `.env`, then adjust only what you need. Missing values fa
 | --- | --- | --- |
 | `DISCORD_CLIENT_ID` | bundled app ID | Discord application client ID |
 | `DISCORD_RPC` | `true` | Enable Discord Rich Presence |
-| `SHOW_COVER` | `true` | Show anime cover art when available |
+| `SHOW_COVER` | `true` | Show cover art or the movie/series poster when available |
 | `PRIVACY_MODE` | `false` | Hide media details in Discord |
 | `HIDE_IDLING` | `false` | Hide activity while MPV is idle |
 | `SHOW_TITLE` | `true` | Use resolved title as Discord activity name |
-| `TITLE_LANG` | `none` | Title language: `english`, `eng`, `romaji`, or `none` |
+| `TITLE_LANG` | `none` | Anime title language: `english`, `eng`, `romaji`, or `none`. For TMDb results it only switches between the official title and the filename title (`none`); the language comes from `TMDB_LANG` |
 | `DEBUG` | `false` | Write detailed provider/sync logs under `.anime_cache/` |
 | `AUTO_FETCH` | `true` | Global RPC-side kill switch for auto-fetching next episodes. Also requires the bridge config toggle `autoFetch.enabled` to be ON. |
 
@@ -211,6 +212,8 @@ If you change `PORT`, update `CONFIG.SERVER_URL` in `stremio-mpv-bridge/userscri
 | `METADATA_PROVIDER` | `jikan` | Metadata provider: `jikan`, `anilist`, `kitsu`, or `tvdb` |
 | `TVDB_API_KEY` | empty | TheTVDB API key, required when using `tvdb` as the primary provider and for safe sync episode order mapping |
 | `TVDB_LANG` | `eng` | TheTVDB language code for episode metadata |
+| `TMDB_API_KEY` | empty | TMDb API key or read access token (create one at themoviedb.org/settings/api). Enables movie and series metadata; without it the app behaves as before |
+| `TMDB_LANG` | `en-US` | TMDb language for titles and episode names (for example `pt-BR`, `ja-JP`) |
 
 </details>
 

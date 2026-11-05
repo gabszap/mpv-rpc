@@ -8,6 +8,8 @@ export interface MediaInfo {
     originalTitle: string | null;
     year: number | null;
     posterUrl: string | null;
+    /** True for Japanese animation (genre Animation, Japanese origin); such files belong to the anime pipeline. */
+    animeLikely: boolean;
 }
 
 /**

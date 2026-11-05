@@ -27,6 +27,7 @@ function makeInfo(overrides: Partial<MediaInfo> = {}): MediaInfo {
         originalTitle: "Breaking Bad",
         year: 2008,
         posterUrl: SERIES_POSTER,
+        animeLikely: false,
         ...overrides,
     };
 }
@@ -226,12 +227,14 @@ describe("resolveMedia cache", () => {
 
 describe("resolveMedia failures", () => {
     it("returns null on a transient failure and does not cache it", async () => {
+        vi.useFakeTimers();
         vi.spyOn(console, "warn").mockImplementation(() => undefined);
         const provider = makeProvider();
         provider.search.mockRejectedValueOnce(new MediaProviderError("transient", "timeout"));
         setMediaProviderForTests(provider);
 
         expect(await resolveMedia(input())).toBeNull();
+        vi.advanceTimersByTime(61 * 1000);
         const second = await resolveMedia(input());
 
         expect(second?.info.title).toBe("Breaking Bad");
@@ -270,7 +273,62 @@ describe("resolveMedia failures", () => {
     });
 });
 
+describe("resolveMedia outage cooldown", () => {
+    it("does not call the provider or warn again during the cooldown after a transient failure", async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const provider = makeProvider();
+        provider.search.mockRejectedValue(new MediaProviderError("transient", "offline"));
+        setMediaProviderForTests(provider);
+
+        expect(await resolveMedia(input())).toBeNull();
+        for (let i = 0; i < 5; i++) {
+            vi.advanceTimersByTime(1000);
+            expect(await resolveMedia(input({ title: `Other ${i}` }))).toBeNull();
+        }
+
+        expect(provider.search).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(60 * 1000);
+        await resolveMedia(input());
+        expect(provider.search).toHaveBeenCalledTimes(2);
+    });
+});
+
 describe("resolveMedia match validation", () => {
+    it.each([
+        ["Dr", "Dr. Strangelove or: How I Learned to Stop Worrying"],
+        ["It", "It Follows"],
+        ["Up", "Up Close and Personal"],
+        ["Dune", "Dune: Part Two"],
+    ])("rejects a one word title %s that only starts a longer title", async (fileTitle, tmdbTitle) => {
+        const provider = makeProvider({
+            search: vi.fn(async () => makeInfo({ kind: "movie", title: tmdbTitle, originalTitle: tmdbTitle })),
+        });
+        setMediaProviderForTests(provider);
+
+        expect(await resolveMedia(input({ title: fileTitle, season: null, episode: null }))).toBeNull();
+    });
+
+    it("accepts a one word title that equals the result title", async () => {
+        const provider = makeProvider({
+            search: vi.fn(async () => makeInfo({ kind: "movie", title: "Dune", year: 2021 })),
+        });
+        setMediaProviderForTests(provider);
+
+        expect(await resolveMedia(input({ title: "Dune", season: null, episode: null }))).not.toBeNull();
+    });
+
+    it("accepts a one word title for a longer result when the file year matches", async () => {
+        const provider = makeProvider({
+            search: vi.fn(async () => makeInfo({ kind: "movie", title: "Dune: Part Two", year: 2024 })),
+        });
+        setMediaProviderForTests(provider);
+
+        expect(await resolveMedia(input({ title: "Dune", season: null, episode: null, year: 2024 }))).not.toBeNull();
+    });
+
     it("rejects a result whose title does not match", async () => {
         const provider = makeProvider({
             search: vi.fn(async () => makeInfo({ title: "Itaewon Class", originalTitle: "Itaewon Class" })),
