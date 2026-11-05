@@ -1,6 +1,7 @@
 import * as child_process from "node:child_process";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as parser from "../src/core/parser";
+import { setPttImporterForTests } from "../src/core/parser-ptt";
 
 // Mock execFile to simulate GuessIt responses
 vi.mock("node:child_process", async () => {
@@ -21,6 +22,17 @@ vi.mock("axios", async () => {
     };
 });
 
+// PTT answers before GuessIt, so the blocks below that simulate GuessIt responses
+// switch PTT off (a module whose parser finds no title). The PTT flow is covered
+// by parser-ptt-flow.test.ts and parser-ptt-table.test.ts.
+function disablePtt(): void {
+    setPttImporterForTests(async () => ({ parseTorrentTitle: () => ({}) }));
+}
+
+afterEach(() => {
+    setPttImporterForTests(null);
+});
+
 // Mock util.promisify since we use it in the source code
 // However, since we mock execFile which is used by promisify, we might need a different approach
 // Actually, let's test the fallback parser which is pure JS regex logic.
@@ -33,6 +45,7 @@ describe("Parser Fallback Logic", () => {
     // (vi.mocked(axios.post).mockResolvedValue(...)) don't leak
     // into later tests and pollute the parseCache.
     beforeEach(async () => {
+        disablePtt();
         const axios = await import("axios");
         vi.mocked(axios.default.post).mockReset();
         vi.mocked(axios.default.post).mockRejectedValue(new Error("GuessIt API mocked to fail by default"));
@@ -267,6 +280,7 @@ describe("Parser Fallback Logic", () => {
 
 describe("Invalid Title Validation", () => {
     beforeEach(async () => {
+        disablePtt();
         const axios = await import("axios");
         vi.mocked(axios.default.post).mockReset();
         vi.mocked(axios.default.post).mockRejectedValue(new Error("GuessIt API mocked to fail by default"));
@@ -371,6 +385,7 @@ describe("Anime Release Fallback", () => {
     // locally with vi.mocked to keep this block self-contained and to
     // avoid disrupting tests that depend on a real GuessIt API call.
     beforeEach(async () => {
+        disablePtt();
         const axios = await import("axios");
         vi.mocked(axios.default.post).mockRejectedValue(new Error("GuessIt API disabled in test"));
     });
