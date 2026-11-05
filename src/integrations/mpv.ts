@@ -8,7 +8,8 @@ import * as net from "node:net";
 import { checkSeriesNameOverride } from "../console";
 import { getAnimeInfoWithProvider, getEpisodeTitle, resolveOverflowEpisode } from "../core/anime";
 import { config } from "../core/config";
-import type { ResolvedMetadata } from "../core/metadata-router";
+import { resolveMedia } from "../core/media";
+import { type ResolvedMetadata, routeMetadata } from "../core/metadata-router";
 import { type ParsedFilename, parseFilename } from "../core/parser";
 import { normalizeTitleTokens } from "../core/title-tokens";
 import { normalizeTvdbLanguageCode } from "../providers/tvdb";
@@ -39,7 +40,9 @@ function titlesHaveSafeTokenOverlap(contextName: string | null, playbackTitle: s
     return matchingTokens / shorterTokens.length >= 0.8;
 }
 
-function isStremioIdentitySafeForPlayback(context: StremioPlaybackContext, data: MpvData): boolean {
+type StremioPlaybackPosition = Pick<MpvData, "series_title" | "season" | "episode">;
+
+function isStremioIdentitySafeForPlayback(context: StremioPlaybackContext, data: StremioPlaybackPosition): boolean {
     if (!context.imdbId) {
         return false;
     }
@@ -80,7 +83,7 @@ function readProviderIdFromContext(context: StremioPlaybackContext, provider: "m
     return null;
 }
 
-function readStremioPlaybackIdentity(data: MpvData): {
+export function readStremioPlaybackIdentity(data: StremioPlaybackPosition): {
     imdbId?: string;
     type?: "series" | "movie";
     malId?: number;
@@ -126,6 +129,8 @@ export interface MpvData {
     type?: string; // For Stremio sync
     tvdb_id?: number; // For Stremio fallback tracking
     kitsu_id?: number; // For Stremio fallback tracking
+    media_kind?: "movie" | "series"; // Set when TMDb resolved the metadata
+    year?: number; // Release year from TMDb
     playlistPos: number; // Current position in playlist (0-indexed)
     playlistCount: number; // Total number of items in playlist
 }
@@ -471,6 +476,47 @@ export async function resolveAnimeMetadata(input: {
 }
 
 /**
+ * Media (movie and non-anime series) metadata through TMDb. Returns null when nothing matched
+ * or TMDb is not available, so the router can fall back to the anime pipeline. `seriesTitle` is
+ * the title to search (the rename override when one is active).
+ */
+export async function resolveMediaMetadata(input: {
+    parsed: ParsedFilename;
+    seriesTitle: string;
+    renameOverrideName: string | null;
+    stremioType: "movie" | "series" | undefined;
+    stremioImdbId: string | undefined;
+}): Promise<ResolvedMetadata | null> {
+    const { parsed, seriesTitle, renameOverrideName } = input;
+    if (!seriesTitle || seriesTitle === "N/A") return null;
+
+    const resolved = await resolveMedia({
+        title: seriesTitle,
+        kindHint: input.stremioType ?? null,
+        season: parsed.season,
+        episode: parsed.episode,
+        year: parsed.year ?? null,
+        imdbId: input.stremioImdbId ?? null,
+    });
+    if (!resolved) return null;
+
+    // TITLE_LANG=none keeps the filename title, except when a rename override asks for the API title.
+    const useProviderTitle = config.settings.preferredTitleLanguage !== "none" || renameOverrideName !== null;
+
+    return {
+        coverImage: resolved.coverUrl,
+        seriesTitle: useProviderTitle ? resolved.info.title : seriesTitle,
+        episodeTitle: resolved.episodeTitle ?? parsed.episode_title,
+        malId: null,
+        totalEpisodes: null,
+        adjustedEpisode: null,
+        metadataSourceProvider: "tmdb",
+        mediaKind: resolved.info.kind,
+        year: resolved.info.year,
+    };
+}
+
+/**
  * Get all MPV data needed for Discord presence
  */
 export async function getMpvData(): Promise<MpvData | null> {
@@ -587,15 +633,47 @@ export async function getMpvData(): Promise<MpvData | null> {
 
         // Check for manual series name override (rename command)
         const renameOverride = checkSeriesNameOverride(filename);
-        const originalTitle = parsed.series_title; // Keep original for episode lookup
+        const renameOverrideName = renameOverride ? renameOverride.overrideName : null;
+        const lookupTitle = renameOverrideName ?? parsed.series_title;
 
-        // Fetch anime metadata
-        const metadata = await resolveAnimeMetadata({
-            parsed,
-            seriesTitle: renameOverride ? renameOverride.overrideName : parsed.series_title,
-            originalTitle,
-            renameOverrideName: renameOverride ? renameOverride.overrideName : null,
+        // The Stremio context is read before the lookup, against the parsed title, so that a
+        // movie from Stremio can be routed to TMDb. A context for another title yields nothing.
+        const earlyStremioIdentity = readStremioPlaybackIdentity({
+            series_title: parsed.series_title,
+            season: parsed.season,
+            episode: parsed.episode,
         });
+
+        // Fetch metadata: TMDb for movies and non-anime series, the anime providers otherwise
+        const routed = await routeMetadata(
+            { parsedMediaType: parsed.media_type, stremioType: earlyStremioIdentity.type },
+            {
+                anime: () =>
+                    resolveAnimeMetadata({
+                        parsed,
+                        seriesTitle: lookupTitle,
+                        originalTitle: parsed.series_title, // Keep original for episode lookup
+                        renameOverrideName,
+                    }),
+                media: () =>
+                    resolveMediaMetadata({
+                        parsed,
+                        seriesTitle: lookupTitle,
+                        renameOverrideName,
+                        stremioType: earlyStremioIdentity.type,
+                        stremioImdbId: earlyStremioIdentity.imdbId,
+                    }),
+            },
+        );
+        const metadata: ResolvedMetadata = routed.result ?? {
+            coverImage: null,
+            seriesTitle: lookupTitle,
+            episodeTitle: parsed.episode_title,
+            malId: null,
+            totalEpisodes: null,
+            adjustedEpisode: null,
+            metadataSourceProvider: null,
+        };
         const { coverImage, seriesTitle, episodeTitle, malId, totalEpisodes, adjustedEpisode } = metadata;
 
         const mpvData: MpvData = {
@@ -617,8 +695,13 @@ export async function getMpvData(): Promise<MpvData | null> {
             adjusted_episode: adjustedEpisode,
             playlistPos: typeof playlistPos === "number" ? playlistPos : 0,
             playlistCount: typeof playlistCount === "number" ? playlistCount : 0,
+            ...(metadata.mediaKind ? { media_kind: metadata.mediaKind } : {}),
+            ...(typeof metadata.year === "number" ? { year: metadata.year } : {}),
         };
-        const stremioIdentity = readStremioPlaybackIdentity(mpvData);
+        // A TMDb title can be translated, so it is not compared with the Stremio name again;
+        // the identity already validated against the parsed title is reused.
+        const stremioIdentity =
+            routed.pipeline === "media" ? earlyStremioIdentity : readStremioPlaybackIdentity(mpvData);
 
         return {
             ...mpvData,
