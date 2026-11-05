@@ -2,6 +2,12 @@
 
 This file is managed by semantic-release.
 
+## [2.7.2](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.7.1...mpv-rpc-v2.7.2) (2026-11-05)
+
+### Bug Fixes
+
+* **bridge:** stop aborting slow stream providers and fetch episodes in parallel ([96f17f8](https://github.com/gabszap/mpv-rpc/commit/96f17f844e371826477ba0997c7910bb703d68df))
+
 ## [2.7.1](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.7.0...mpv-rpc-v2.7.1) (2026-11-05)
 
 ### Bug Fixes
