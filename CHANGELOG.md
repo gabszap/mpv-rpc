@@ -2,6 +2,17 @@
 
 This file is managed by semantic-release.
 
+## [2.7.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.6.0...mpv-rpc-v2.7.0) (2026-11-05)
+
+### Features
+
+* **parser:** add PTT adapter ([4b4d1fe](https://github.com/gabszap/mpv-rpc/commit/4b4d1fe71ed5412cef0fe81aeb97c1e87a32c925))
+* **parser:** use PTT before GuessIt ([8fa65f5](https://github.com/gabszap/mpv-rpc/commit/8fa65f522fea958d0615d9b98d7f54aefcb42a42))
+
+### Bug Fixes
+
+* **parser:** do not cache fallback results while PTT is unavailable ([82634ee](https://github.com/gabszap/mpv-rpc/commit/82634eee51602b2d9ed5b7b5b72e400b8de9c92b))
+
 ## [2.6.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.5.0...mpv-rpc-v2.6.0) (2026-11-04)
 
 ### Features
