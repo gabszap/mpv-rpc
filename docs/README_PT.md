@@ -49,7 +49,7 @@ O **MPV Discord RPC** acompanha a reprodução do MPV via IPC e transforma isso 
 | **Discord Rich Presence** | Status em tempo real, estado pausado/reproduzindo, progresso, modo privacidade, opção para ocultar idle |
 | **Metadados de anime** | Parsing de nome de arquivo, capa, títulos oficiais, títulos de episódio localizados, cache local |
 | **Vários provedores** | Jikan/MyAnimeList, AniList, Kitsu e TheTVDB, com fallback automático |
-| **Parser resiliente** | API GuessIt → CLI local do GuessIt → regex fallback |
+| **Parser resiliente** | PTT (TypeScript nativo) → regex de release de anime → regex fallback |
 | **Sincronização** | Progresso no MyAnimeList, scrobble no Trakt.tv, Continue Watching e marcação de assistido no Stremio |
 | **Bridge do Stremio** | Userscript + servidor local que abre streams do Stremio Web no MPV com suporte a playlists |
 
@@ -61,7 +61,6 @@ O **MPV Discord RPC** acompanha a reprodução do MPV via IPC e transforma isso 
 - **Node.js 22** ou mais recente
 - **MPV** Media Player
 - **Discord Desktop**, se `DISCORD_RPC=true`
-- *Opcional:* Python 3.12+ e `guessit`, apenas se você quiser usar o parser local em vez da API em nuvem
 - *Opcional:* gerenciador de userscript, como Tampermonkey ou Violentmonkey, para a integração com o Stremio Web
 
 ## Início rápido
@@ -84,12 +83,7 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Para o setup padrão sem Python, mantenha:
-
-```env
-USE_GUESSIT_API=true
-GUESSIT_API_URL=https://guessit-api.vercel.app/api/parse
-```
+Os padrões funcionam sem ajustes; edite os valores apenas para os recursos que você usar.
 
 ### 3. Habilitar IPC no MPV
 
@@ -160,47 +154,14 @@ Tokens e contexto do Stremio ficam em `.config/`, que é ignorado pelo git.
 
 ## Parsing de nome de arquivo
 
-O parser tenta o método seguro disponível, nesta ordem:
+O parser tenta estes métodos, nesta ordem:
 
-1. **API GuessIt**: ativa quando `USE_GUESSIT_API=true` e `GUESSIT_API_URL` está definido.
-2. **CLI local do GuessIt**: usada quando a API não está disponível e o `guessit` está instalado localmente.
-3. **Regex fallback**: sempre disponível para extração básica de título/episódio.
+1. **PTT**: um parser nativo em TypeScript para nomes de release (`@aiostreams/release-parser`). Roda localmente, sem rede e sem Python, e extrai título, temporada, episódio, grupo de release, resolução e mais.
+2. **Regex de release de anime**: usada para nomes no formato `[Grupo] Título - 05 [tags]` quando o PTT não pode ser usado.
+3. **Regex genérico**: sempre disponível para extração básica de título/episódio.
 
-<details>
-<summary><b>API pública do GuessIt</b></summary>
-
-<br>
-
-O endpoint público padrão é:
-
-```env
-USE_GUESSIT_API=true
-GUESSIT_API_URL=https://guessit-api.vercel.app/api/parse
-```
-
-Apenas os nomes de arquivo são enviados para a API. Se você prefere privacidade máxima ou espera uso intenso, faça deploy da sua própria API a partir da pasta `guessit-api/`.
-
-</details>
-
-<details>
-<summary><b>Deploy da sua própria API GuessIt</b></summary>
-
-<br>
-
-```bash
-cd guessit-api
-npm i -g vercel
-vercel
-```
-
-Depois, defina o endpoint publicado no `.env` da raiz:
-
-```env
-USE_GUESSIT_API=true
-GUESSIT_API_URL=https://seu-projeto.vercel.app/api/parse
-```
-
-</details>
+> [!NOTE]
+> Versões antigas usavam o GuessIt (uma ferramenta em Python, ou uma API pública). As variáveis `USE_GUESSIT_API` e `GUESSIT_API_URL` não são mais lidas; deixá-las no seu `.env` não causa problema.
 
 ## Referência de configuração
 
@@ -250,8 +211,6 @@ Se você mudar `PORT`, atualize `CONFIG.SERVER_URL` em `stremio-mpv-bridge/users
 | `METADATA_PROVIDER` | `jikan` | Provedor de metadados: `jikan`, `anilist`, `kitsu` ou `tvdb` |
 | `TVDB_API_KEY` | vazio | Chave da API do TheTVDB, necessária ao usar `tvdb` como provedor principal e para o mapeamento seguro da ordem de episódios na sincronização |
 | `TVDB_LANG` | `eng` | Código de idioma do TheTVDB para os metadados de episódio |
-| `USE_GUESSIT_API` | `true` | Usa o parsing HTTP do GuessIt antes do fallback para a CLI local |
-| `GUESSIT_API_URL` | vazio no código, endpoint público no `.env.example` | Endpoint da API GuessIt |
 
 </details>
 

@@ -49,7 +49,7 @@
 | **Discord Rich Presence** | Live playback status, pause/playing state, progress, privacy mode, optional idle hiding |
 | **Anime metadata** | Filename parsing, cover art, official titles, localized episode titles, local cache |
 | **Multiple providers** | Jikan/MyAnimeList, AniList, Kitsu and TheTVDB, with automatic fallback |
-| **Resilient parser** | GuessIt API → local GuessIt CLI → regex fallback |
+| **Resilient parser** | PTT (native TypeScript) → anime release regex → regex fallback |
 | **Watch sync** | MyAnimeList progress, Trakt.tv scrobbling, Stremio Continue Watching and watched marking |
 | **Stremio bridge** | Userscript + local server that opens Stremio Web streams in MPV with playlist support |
 
@@ -61,7 +61,6 @@
 - **Node.js 22** or newer
 - **MPV** Media Player
 - **Discord Desktop**, if `DISCORD_RPC=true`
-- *Optional:* Python 3.12+ and `guessit`, only if you want local GuessIt parsing instead of the cloud API
 - *Optional:* a userscript manager such as Tampermonkey or Violentmonkey, for Stremio Web integration
 
 ## Quick start
@@ -84,12 +83,7 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-For the default no-Python parser setup, keep:
-
-```env
-USE_GUESSIT_API=true
-GUESSIT_API_URL=https://guessit-api.vercel.app/api/parse
-```
+The defaults work out of the box; edit values only for the features you use.
 
 ### 3. Enable MPV IPC
 
@@ -160,47 +154,14 @@ Tokens and Stremio context are stored under `.config/`, which is ignored by git.
 
 ## Filename parsing
 
-The parser tries the safest available method, in this order:
+The parser tries these methods, in this order:
 
-1. **GuessIt API**: enabled when `USE_GUESSIT_API=true` and `GUESSIT_API_URL` is set.
-2. **Local GuessIt CLI**: used when the API is unavailable and `guessit` is installed locally.
-3. **Regex fallback**: always available for basic title/episode extraction.
+1. **PTT**: a native TypeScript release-name parser (`@aiostreams/release-parser`). It runs locally, needs no network and no Python, and extracts the title, season, episode, release group, resolution and more.
+2. **Anime release regex**: used for names shaped like `[Group] Title - 05 [tags]` when PTT cannot be used.
+3. **Generic regex fallback**: always available for basic title/episode extraction.
 
-<details>
-<summary><b>Public GuessIt API</b></summary>
-
-<br>
-
-The default public endpoint is:
-
-```env
-USE_GUESSIT_API=true
-GUESSIT_API_URL=https://guessit-api.vercel.app/api/parse
-```
-
-Only filenames are sent to the API. If you prefer maximum privacy or expect heavy usage, deploy your own API from the included `guessit-api/` folder.
-
-</details>
-
-<details>
-<summary><b>Deploy your own GuessIt API</b></summary>
-
-<br>
-
-```bash
-cd guessit-api
-npm i -g vercel
-vercel
-```
-
-Then set the deployed endpoint in your root `.env`:
-
-```env
-USE_GUESSIT_API=true
-GUESSIT_API_URL=https://your-project.vercel.app/api/parse
-```
-
-</details>
+> [!NOTE]
+> Older versions used GuessIt (a Python tool, or a public API). The `USE_GUESSIT_API` and `GUESSIT_API_URL` variables are no longer read; leaving them in your `.env` is harmless.
 
 ## Configuration reference
 
@@ -250,8 +211,6 @@ If you change `PORT`, update `CONFIG.SERVER_URL` in `stremio-mpv-bridge/userscri
 | `METADATA_PROVIDER` | `jikan` | Metadata provider: `jikan`, `anilist`, `kitsu`, or `tvdb` |
 | `TVDB_API_KEY` | empty | TheTVDB API key, required when using `tvdb` as the primary provider and for safe sync episode order mapping |
 | `TVDB_LANG` | `eng` | TheTVDB language code for episode metadata |
-| `USE_GUESSIT_API` | `true` | Use HTTP GuessIt parsing before local CLI fallback |
-| `GUESSIT_API_URL` | empty in code, public endpoint in `.env.example` | GuessIt API endpoint |
 
 </details>
 

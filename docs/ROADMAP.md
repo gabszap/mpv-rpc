@@ -11,7 +11,7 @@ Project progress and planned features for mpv-rpc.
 - [x] AniList API support
 - [x] Kitsu API support
 - [x] MAL sync (mark as watched)
-- [x] Guessit Cloud API - No Python required!
+- [x] Native TypeScript filename parser (PTT), no Python dependency
 - [x] Trakt.tv integration (auto-scrobble)
 - [x] Stremio Sync
 - [x] Independent semantic-release for root and bridge
