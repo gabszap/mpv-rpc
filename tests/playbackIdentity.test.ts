@@ -22,11 +22,11 @@ describe("createPlaybackIdentity", () => {
         const identity = createPlaybackIdentity({
             title: "Sakurasou",
             imdbId: "tt0000001",
-            parserSource: "guessit",
+            parserSource: "ptt",
             confidence: "high",
         });
 
-        expect(identity.parserSource).toBe("guessit");
+        expect(identity.parserSource).toBe("ptt");
         expect(identity.confidence).toBe("high");
         expect(identity.imdbId).toBe("tt0000001");
     });
@@ -46,7 +46,7 @@ describe("mergePlaybackIdentity", () => {
         episode: 3,
         season: 1,
         imdbId: "tt1111111",
-        parserSource: "guessit",
+        parserSource: "ptt",
         confidence: "high",
     });
 
