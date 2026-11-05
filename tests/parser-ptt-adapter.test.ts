@@ -44,6 +44,30 @@ describe("parseWithPtt with the real PTT", () => {
     });
 });
 
+describe("parseWithPtt year", () => {
+    it("maps the year", async () => {
+        const result = await parseWithPtt("Movie.Name.2020.1080p.BluRay.x264-YIFY.mkv");
+
+        expect(result?.year).toBe(2020);
+    });
+
+    it("omits year when PTT finds none", async () => {
+        const result = await parseWithPtt("[Erai-raws] Oshi no Ko 3rd Season - 09 [1080p].mkv");
+
+        expect(result).not.toHaveProperty("year");
+    });
+
+    it("accepts a numeric year and ignores values that are not a four digit year", async () => {
+        setPttImporterForTests(fakeImporter(() => ({ title: "X", year: 1999 })));
+        expect((await parseWithPtt("X.mkv"))?.year).toBe(1999);
+
+        for (const bad of ["abc", "20", "", null, Number.NaN]) {
+            setPttImporterForTests(fakeImporter(() => ({ title: "X", year: bad })));
+            expect(await parseWithPtt("X.mkv")).not.toHaveProperty("year");
+        }
+    });
+});
+
 describe("parseWithPtt with a fake importer", () => {
     it("uses null season and episode when the arrays are missing or empty", async () => {
         setPttImporterForTests(fakeImporter(() => ({ title: "X", seasons: [], episodes: undefined })));

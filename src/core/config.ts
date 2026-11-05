@@ -103,6 +103,12 @@ export const config = {
         language: getEnv("TVDB_LANG", "eng"),
     },
 
+    // TMDb settings (movies and non-anime series metadata)
+    tmdb: {
+        apiKey: getEnv("TMDB_API_KEY", ""),
+        language: getEnv("TMDB_LANG", "en-US"),
+    },
+
     // MyAnimeList sync settings
     mal: {
         enabled: getEnvBool("MAL_SYNC", false),
@@ -242,6 +248,19 @@ export function reloadConfig(): string[] {
     if (config.tvdb.language !== newTvdbLang) {
         changes.push(`TVDB_LANG: ${config.tvdb.language} -> ${newTvdbLang}`);
         config.tvdb.language = newTvdbLang;
+    }
+
+    // TMDb
+    const newTmdbKey = getEnv("TMDB_API_KEY", "");
+    if (config.tmdb.apiKey !== newTmdbKey) {
+        changes.push("TMDB_API_KEY changed");
+        config.tmdb.apiKey = newTmdbKey;
+    }
+
+    const newTmdbLang = getEnv("TMDB_LANG", "en-US");
+    if (config.tmdb.language !== newTmdbLang) {
+        changes.push(`TMDB_LANG: ${config.tmdb.language} -> ${newTmdbLang}`);
+        config.tmdb.language = newTmdbLang;
     }
 
     // MAL

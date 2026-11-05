@@ -15,6 +15,7 @@ export interface PttParsed {
     resolution?: string;
     source?: string;
     codec?: string;
+    year?: number;
 }
 
 type PttModule = { parseTorrentTitle: (title: string) => unknown };
@@ -73,6 +74,13 @@ function readString(value: unknown): string | undefined {
     return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+/** PTT reports the year as a string ("2020"); accepts a number too, and only four digit years. */
+function readYear(value: unknown): number | undefined {
+    const text = typeof value === "number" ? String(value) : value;
+    if (typeof text !== "string" || !/^\d{4}$/.test(text.trim())) return undefined;
+    return Number(text.trim());
+}
+
 /**
  * True once the PTT module has been loaded. While it is false, a parse result came
  * from the regex fallbacks because PTT was unavailable, and must not be cached.
@@ -118,6 +126,8 @@ export async function parseWithPtt(filename: string): Promise<PttParsed | null> 
     if (resolution) parsed.resolution = resolution;
     if (source) parsed.source = source;
     if (codec) parsed.codec = codec;
+    const year = readYear(raw.year);
+    if (year !== undefined) parsed.year = year;
 
     return parsed;
 }

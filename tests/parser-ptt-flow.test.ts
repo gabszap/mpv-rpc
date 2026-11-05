@@ -24,6 +24,18 @@ describe("parseFilename with PTT first", () => {
         expect(result.releaseGroup).toBe("SubsPlease");
     });
 
+    it("exposes year on ParsedFilename", async () => {
+        const result = await parseFilename("Link.Click.2021.S04E10.1080p.CR.WEB-DL.DUAL.DDP2.0.H.264-AnoZu.mkv");
+
+        expect(result.year).toBe(2021);
+    });
+
+    it("leaves year unset when the filename has none", async () => {
+        const result = await parseFilename("[SubsPlease] Jujutsu Kaisen - 05 [1080p][HEVC].mkv");
+
+        expect(result).not.toHaveProperty("year");
+    });
+
     it("rejects the PTT result when a marker exists but no episode was extracted", async () => {
         setPttImporterForTests(async () => ({ parseTorrentTitle: () => ({ title: "Algum Titulo" }) }));
 
