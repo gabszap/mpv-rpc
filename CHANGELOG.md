@@ -2,6 +2,12 @@
 
 This file is managed by semantic-release.
 
+## [2.7.1](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.7.0...mpv-rpc-v2.7.1) (2026-11-05)
+
+### Bug Fixes
+
+* **parser:** tighten the episode marker and the parser tests ([e6cc551](https://github.com/gabszap/mpv-rpc/commit/e6cc551d9c4d5d81164fa840dcf0e2301fbb78fd))
+
 ## [2.7.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.6.0...mpv-rpc-v2.7.0) (2026-11-05)
 
 ### Features
