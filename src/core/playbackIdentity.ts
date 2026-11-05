@@ -21,19 +21,18 @@
 /**
  * Which subsystem produced the structural fields of an identity.
  *
- * - `guessit`     - GuessIt API or local CLI parser.
- * - `ptt`         - PTT/animetitle heuristics (reserved for future use).
- * - `fallback`    - Local regex fallback when GuessIt is unavailable.
+ * - `ptt`         - PTT, the native TypeScript release-name parser.
+ * - `fallback`    - Local regex fallback when PTT is unavailable or unusable.
  * - `stremioMeta` - Identity reconstructed from Stremio stream metadata.
  * - `manual`      - User-supplied via the console REPL override.
  */
-export type ParserSource = "guessit" | "ptt" | "fallback" | "stremioMeta" | "manual";
+export type ParserSource = "ptt" | "fallback" | "stremioMeta" | "manual";
 
 /**
  * Parser's self-assessed confidence in the identity it produced.
  *
  * - `low`    - Fallback regex, or insufficient signals.
- * - `medium` - Partial GuessIt result or a single heuristic match.
+ * - `medium` - Partial parse result or a single heuristic match.
  * - `high`   - Multiple agreeing signals, or authoritative source.
  */
 export type Confidence = "low" | "medium" | "high";

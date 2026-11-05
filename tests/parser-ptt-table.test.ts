@@ -1,22 +1,5 @@
-import * as child_process from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseFilename } from "../src/core/parser";
-import { setPttImporterForTests } from "../src/core/parser-ptt";
-
-vi.mock("node:child_process", async () => {
-    return {
-        execFile: vi.fn(),
-    };
-});
-
-// No GuessIt answer is available: every row below must be resolved by PTT alone.
-vi.mock("axios", async () => {
-    const post = vi.fn().mockRejectedValue(new Error("GuessIt API mocked to fail"));
-    return {
-        default: { post },
-        post,
-    };
-});
 
 type Row = {
     file: string;
@@ -28,8 +11,8 @@ type Row = {
 };
 
 // Expected values were checked by hand against the PTT output. Several rows are
-// names the GuessIt API got wrong (title truncated, season left in the title,
-// episode read from the title).
+// names the old GuessIt parser got wrong (title truncated, season left in the
+// title, episode read from the title).
 const ROWS: Row[] = [
     {
         file: "[Erai-raws] Oshi no Ko 3rd Season - 09 [1080p][Multiple Subtitle][ABCD1234].mkv",
@@ -153,21 +136,6 @@ const ROWS: Row[] = [
     { file: "Movie.Name.2020.1080p.BluRay.x264-YIFY.mkv", title: "Movie Name", season: null, episode: null },
     { file: "Example Movie.mkv", title: "Example Movie", season: null, episode: null },
 ];
-
-beforeEach(() => {
-    vi.mocked(child_process.execFile).mockImplementation(((...args: unknown[]) => {
-        const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
-        callback(new Error("guessit not installed"), "", "");
-        return {} as never;
-    }) as never);
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-});
-
-afterEach(() => {
-    setPttImporterForTests(null);
-    vi.restoreAllMocks();
-});
 
 describe("PTT acceptance table", () => {
     it.each(ROWS)("parses $file", async (row) => {

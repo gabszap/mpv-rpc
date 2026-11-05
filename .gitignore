@@ -3,7 +3,6 @@ legacy/
 dist/
 .env
 .config/
-guessit-api/.vercel
 /scripts/
 .ocx
 .anime_cache/

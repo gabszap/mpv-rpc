@@ -1,36 +1,8 @@
-import * as child_process from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseFilename } from "../src/core/parser";
 import { setPttImporterForTests } from "../src/core/parser-ptt";
 
-vi.mock("node:child_process", async () => {
-    return {
-        execFile: vi.fn(),
-    };
-});
-
-// The GuessIt HTTP API always fails here: any call to it would also be a sign
-// that PTT did not answer first.
-vi.mock("axios", async () => {
-    const post = vi.fn().mockRejectedValue(new Error("GuessIt API mocked to fail"));
-    return {
-        default: { post },
-        post,
-    };
-});
-
-function failingGuessItCli(): void {
-    vi.mocked(child_process.execFile).mockImplementation(((...args: unknown[]) => {
-        const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
-        callback(new Error("guessit not installed"), "", "");
-        return {} as never;
-    }) as never);
-}
-
-beforeEach(async () => {
-    failingGuessItCli();
-    const axios = await import("axios");
-    vi.mocked(axios.default.post).mockClear();
+beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
@@ -41,9 +13,7 @@ afterEach(() => {
 });
 
 describe("parseFilename with PTT first", () => {
-    it("uses PTT before GuessIt", async () => {
-        const axios = await import("axios");
-
+    it("uses PTT first", async () => {
         const result = await parseFilename("[SubsPlease] Jujutsu Kaisen - 05 [1080p][HEVC].mkv");
 
         expect(result.series_title).toBe("Jujutsu Kaisen");
@@ -51,7 +21,6 @@ describe("parseFilename with PTT first", () => {
         expect(result.episode).toBe(5);
         expect(result.parseMethod).toBe("ptt");
         expect(result.releaseGroup).toBe("SubsPlease");
-        expect(vi.mocked(axios.default.post)).not.toHaveBeenCalled();
     });
 
     it("rejects the PTT result when a marker exists but no episode was extracted", async () => {
@@ -59,7 +28,7 @@ describe("parseFilename with PTT first", () => {
 
         const result = await parseFilename("Algum Titulo - 05.mkv");
 
-        expect(result.parseMethod).not.toBe("ptt");
+        expect(result.parseMethod).toBe("regex");
         expect(result.episode).toBe(5);
     });
 
@@ -76,7 +45,7 @@ describe("parseFilename with PTT first", () => {
 
         const result = await parseFilename("12345.mkv");
 
-        expect(result.parseMethod).not.toBe("ptt");
+        expect(result.parseMethod).toBe("regex");
     });
 
     it("short-circuits N/A and stremio-playlist names without loading PTT", async () => {
@@ -108,6 +77,19 @@ describe("parseFilename with PTT first", () => {
         expect(result.series_title).toBe("Oshi no Ko");
         expect(result.season).toBe(3);
         expect(result.episode).toBe(9);
+    });
+
+    it("does not keep a regex result produced while PTT could not load", async () => {
+        setPttImporterForTests(async () => {
+            throw new Error("cannot load");
+        });
+        const first = await parseFilename("Cache Recovery - 07.mkv");
+        expect(first.parseMethod).toBe("regex");
+
+        setPttImporterForTests(null);
+        const second = await parseFilename("Cache Recovery - 07.mkv");
+
+        expect(second.parseMethod).toBe("ptt");
     });
 
     it("falls back to the regex when PTT cannot load", async () => {

@@ -1,15 +1,11 @@
 /**
- * Filename Parser Module - Uses GuessIt API with CLI fallback
+ * Filename Parser Module - PTT (native TypeScript) with regex fallbacks
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import axios from "axios";
-import { config } from "./config";
-import { type PttParsed, parseWithPtt } from "./parser-ptt";
+import { isPttLoaded, type PttParsed, parseWithPtt } from "./parser-ptt";
 
 /** Which parsing method produced a `ParsedFilename`. */
-export type ParseMethod = "ptt" | "guessit-api" | "guessit-cli" | "anime-regex" | "regex";
+export type ParseMethod = "ptt" | "anime-regex" | "regex";
 
 export interface ParsedFilename {
     full_title: string;
@@ -36,7 +32,7 @@ export interface ParsedFilename {
  * filename shaped like "[Group] Title - Episode [Tags]".
  *
  * Fields mirror the structural data the existing parse flow needs to build a
- * `ParsedFilename` without re-running the more expensive GuessIt pipeline.
+ * `ParsedFilename` without consulting PTT again.
  * Optional fields stay `undefined` when the corresponding tag is absent
  * from the release's tags block; the caller decides what to do with them.
  */
@@ -57,65 +53,8 @@ export type AnimeReleaseParseResult = {
  */
 const ANIME_RELEASE_REGEX = /^\[(?<group>[^\]]+)\]\s+(?<title>.+?)\s+-\s+(?<episode>\d{1,4})\s+\[(?<tags>[^\]]+)\]/i;
 
-const execFileAsync = promisify(execFile);
-
-// Cache for parsed filenames to avoid repeated API calls
+// Cache for parsed filenames to avoid parsing the same name twice
 const parseCache: Map<string, ParsedFilename> = new Map();
-
-/**
- * Call GuessIt via HTTP API
- */
-async function callGuessItApi(filename: string): Promise<Record<string, any> | null> {
-    if (!config.guessitApi.url) {
-        return null;
-    }
-
-    try {
-        const response = await axios.post(
-            config.guessitApi.url,
-            { filename },
-            {
-                timeout: config.guessitApi.timeout,
-                headers: {
-                    "Content-Type": "application/json",
-                },
-            },
-        );
-        return response.data;
-    } catch (e: any) {
-        // Log only once to avoid spam
-        if (e.response?.status === 404) {
-            console.warn("[Parser] GuessIt API endpoint not found, will try CLI fallback");
-        }
-        return null;
-    }
-}
-
-/**
- * Call GuessIt via local CLI
- */
-async function callGuessItCli(filename: string): Promise<Record<string, any> | null> {
-    try {
-        const { stdout } = await execFileAsync("guessit", [filename, "--json"], {
-            timeout: 15000,
-        });
-        return JSON.parse(stdout.trim());
-    } catch (_e) {
-        return null;
-    }
-}
-
-/**
- * Check if GuessIt CLI is available locally
- */
-export async function checkAvailability(): Promise<boolean> {
-    try {
-        await execFileAsync("guessit", ["--version"]);
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 /**
  * Detect if the file is anime or regular series based on filename patterns
@@ -170,10 +109,6 @@ function hasUrlEncodedChars(filename: string): boolean {
     return /%[0-9A-Fa-f]{2}/.test(filename);
 }
 
-function escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function extractEpisodeFromFilename(filename: string): number | null {
     const explicitEpisodeMatch = filename.match(/(?:^|[\s._-])[Ee][Pp]?(?:isode)?[\s._-]*(\d{1,3})(?=[^\d]|$)/);
     if (explicitEpisodeMatch) {
@@ -188,7 +123,6 @@ function extractEpisodeFromFilename(filename: string): number | null {
     return null;
 }
 
-const loggedInvalidTitles: Set<string> = new Set();
 const loggedTorrentExtractions: Set<string> = new Set();
 const loggedAnimeFallbackMatches: Set<string> = new Set();
 
@@ -213,6 +147,17 @@ function isValidSearchTitle(title: string): boolean {
     }
 
     return true;
+}
+
+/**
+ * Cache a result produced by a regex fallback. When PTT could not be loaded, the
+ * result is only a stand-in, so it is not cached: a later call, once PTT loads, must
+ * be able to produce the real answer for the same filename.
+ */
+function cacheFallbackResult(cacheKey: string, result: ParsedFilename): void {
+    if (isPttLoaded()) {
+        parseCache.set(cacheKey, result);
+    }
 }
 
 /**
@@ -279,176 +224,6 @@ function fromPtt(parsed: PttParsed, filename: string): ParsedFilename | null {
 }
 
 /**
- * Process GuessIt result into standardized format
- */
-function processGuessitResult(
-    guessed: Record<string, any>,
-    filename: string,
-    normalizedFilename: string,
-): ParsedFilename | null {
-    if (!guessed || Object.keys(guessed).length === 0) {
-        return null;
-    }
-
-    let title = guessed.title || filename;
-
-    const alternativeTitle =
-        typeof guessed.alternative_title === "string" ? cleanTitle(guessed.alternative_title) : null;
-
-    // Fix Guessit detecting "Ko" as Korean language in titles like "Oshi no Ko"
-    // Also handles dot-separated filenames like "OSHI.NO.KO.S03E10..."
-    if (guessed.language === "Korean" && title.toLowerCase() === "oshi no") {
-        const koMatch = filename.match(/oshi[.\s_-]no[.\s_-]ko/i);
-        if (koMatch) {
-            title = koMatch[0].replace(/[._-]/g, " ");
-        }
-    }
-
-    const knownReleaseGroups = [
-        "subsplease",
-        "erai-raws",
-        "judas",
-        "horriblesubs",
-        "hs",
-        "rarbg",
-        "yts",
-        "ettv",
-        "fgt",
-        "sparks",
-        "axxo",
-        "lol",
-        "toonshub",
-        "msubs",
-        "ddp",
-        "amzn",
-        "nf",
-        "hmax",
-    ];
-
-    if (guessed.release_group && guessed.title) {
-        const groupLower = guessed.release_group.toLowerCase();
-        const isKnownGroup = knownReleaseGroups.some((g) => groupLower.includes(g));
-
-        if (!isKnownGroup) {
-            const combinedTitle = `${guessed.release_group}-${guessed.title}`;
-            if (normalizedFilename.toLowerCase().includes(combinedTitle.toLowerCase().replace(/\s/g, "."))) {
-                title = combinedTitle;
-            }
-        }
-    }
-
-    title = cleanTitle(title);
-
-    if (!isValidSearchTitle(title)) {
-        if (!loggedInvalidTitles.has(title)) {
-            console.warn(`[Parser] Title "${title}" is not valid for API search, marking as unknown`);
-            loggedInvalidTitles.add(title);
-        }
-        return {
-            full_title: filename,
-            series_title: "N/A",
-            season: guessed.season ?? null,
-            episode: guessed.episode ?? null,
-            episode_title: guessed.episode_title ?? null,
-            media_type: "unknown",
-        };
-    }
-
-    let season = guessed.season ?? null;
-    let episode = guessed.episode ?? null;
-    let episode_title = guessed.episode_title ?? null;
-
-    if (season === null || episode === null) {
-        const seMatch = filename.match(/[Ss](\d{1,2})[Ee](\d{1,3})/);
-        if (seMatch) {
-            if (season === null) season = parseInt(seMatch[1], 10);
-            if (episode === null) episode = parseInt(seMatch[2], 10);
-        }
-    }
-
-    // Handle patterns where GuessIt splits season/subtitle into alternative_title,
-    // e.g. "Dr Stone - New World - 02" => title="Dr Stone", alternative_title="New World".
-    if (alternativeTitle && guessed.title && guessed.episode) {
-        const normalizedTitle = cleanTitle(guessed.title);
-        const combinedPattern = new RegExp(
-            `${escapeRegex(normalizedTitle)}\\s*-\\s*${escapeRegex(alternativeTitle)}\\s*-\\s*0*${guessed.episode}(?:[^\\d]|$)`,
-            "i",
-        );
-
-        if (combinedPattern.test(filename)) {
-            title = `${normalizedTitle} - ${alternativeTitle}`;
-        }
-    }
-
-    if (episode === null) {
-        episode = extractEpisodeFromFilename(filename);
-    }
-
-    if (episode !== null && episode_title && title) {
-        const arcPattern = new RegExp(
-            `${escapeRegex(title)}\\s*-\\s*${escapeRegex(episode_title)}\\s*-\\s*0*${episode}(?:[^\\d]|$)`,
-            "i",
-        );
-
-        if (arcPattern.test(filename)) {
-            title = `${title} - ${episode_title}`;
-            episode_title = null;
-        }
-    }
-
-    // Anime-release recovery: upgrade title if GuessIt truncated it.
-    // The anime regex captures the full title (e.g. "Dr Stone - Science Future Part 3")
-    // when the input has the shape "[Group] Title - Subtitle - Episode [Tags]".
-    // We only upgrade — never downgrade — by requiring the regex's title to be
-    // a strict-prefix extension of the current GuessIt title.
-    let animeRecoveryApplied: AnimeReleaseParseResult | null = null;
-    const animeRecovery = parseAnimeReleaseFallback(filename);
-    if (
-        animeRecovery?.title &&
-        typeof animeRecovery.episode === "number" &&
-        (episode === null || episode === animeRecovery.episode) &&
-        animeRecovery.title.trim().length > title.trim().length &&
-        animeRecovery.title.trim().startsWith(title.trim())
-    ) {
-        title = animeRecovery.title;
-        if (episode === null) {
-            episode = animeRecovery.episode;
-        }
-        // Anime regex is authoritative for this shape — drop any partial
-        // episode_title GuessIt may have produced.
-        episode_title = null;
-        animeRecoveryApplied = animeRecovery;
-    }
-
-    if (season === null) {
-        const seasonMatch = title.match(/(\d+)(?:st|nd|rd|th)?\s*[Ss]eason|[Ss]eason\s*(\d+)/i);
-        if (seasonMatch) {
-            season = parseInt(seasonMatch[1] || seasonMatch[2], 10);
-            title = title.replace(/(\d+)(?:st|nd|rd|th)?\s*[Ss]eason|[Ss]eason\s*(\d+)/i, "").trim();
-            title = title.replace(/\s+/g, " ").trim();
-        }
-    }
-
-    const full_title = buildFullTitle(title, season, episode, episode_title);
-
-    return {
-        full_title,
-        series_title: title,
-        season,
-        episode,
-        episode_title,
-        media_type: detectMediaType(filename),
-        // Propagate anime-release metadata only when the post-processor
-        // actually upgraded the title from the regex match. Stays
-        // `undefined` otherwise so existing non-anime parses are unaffected.
-        releaseGroup: animeRecoveryApplied?.releaseGroup,
-        resolution: animeRecoveryApplied?.resolution,
-        source: animeRecoveryApplied?.source,
-        codec: animeRecoveryApplied?.codec,
-    };
-}
-
-/**
  * Emit a debug-level log at most once per unique key.
  * Uses `console.debug` when available, falling back to `console.log`.
  * Intended to remain quiet; can be enabled later via DEBUG=true plumbing.
@@ -469,10 +244,10 @@ function logDebugOnce(key: string, message: string): void {
  * Anime-release fallback parser for filenames like
  * "[Erai-raws] Dr Stone - Science Future Part 3 - 06 [1080p CR WEBRip HEVC]".
  *
- * GuessIt misinterprets the subtitle ("Science Future Part 3") as the
- * episode title for these releases; this parser extracts the fields the
- * existing flow needs (title, episode, release metadata) and returns
- * null when the pattern does not match.
+ * A subtitle between the title and the episode ("Science Future Part 3") is easy
+ * to mistake for an episode title; this parser keeps it in the title and extracts
+ * the fields the existing flow needs (title, episode, release metadata). It
+ * returns null when the pattern does not match.
  *
  * The returned `title` is the raw matched group so the caller can
  * apply the existing `cleanTitle` for normalization.
@@ -513,7 +288,7 @@ export function parseAnimeReleaseFallback(filename: string): AnimeReleaseParseRe
 }
 
 /**
- * Parse a filename using GuessIt API with CLI fallback
+ * Parse a filename: PTT first, then the anime release regex, then the generic regex.
  */
 export async function parseFilename(filename: string): Promise<ParsedFilename> {
     // Extract torrent_name from URL query parameters early (Comet/Stremio streams)
@@ -578,8 +353,8 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
 
     const normalizedFilename = filename.replace(/\+/g, "-").replace(/\//g, "-");
 
-    // PTT first: native, local and deterministic. GuessIt only runs when PTT is
-    // unavailable or its result is not usable for this filename.
+    // PTT first: native, local and deterministic. The regex fallbacks below only run
+    // when PTT is unavailable or its result is not usable for this filename.
     const pttParsed = await parseWithPtt(normalizedFilename);
     if (pttParsed) {
         const pttResult = fromPtt(pttParsed, filename);
@@ -589,40 +364,9 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
         }
     }
 
-    let guessed: Record<string, any> | null = null;
-    let usedMethod: "api" | "cli" | "none" = "none";
-
-    // Try API first if enabled
-    if (config.guessitApi.enabled && config.guessitApi.url) {
-        guessed = await callGuessItApi(normalizedFilename);
-        if (guessed) {
-            usedMethod = "api";
-        }
-    }
-
-    // Fallback to CLI if API failed or disabled
-    if (!guessed) {
-        guessed = await callGuessItCli(normalizedFilename);
-        if (guessed) {
-            usedMethod = "cli";
-        }
-    }
-
-    // Process result if we got one
-    if (guessed) {
-        const result = processGuessitResult(guessed, filename, normalizedFilename);
-        if (result) {
-            result.parseMethod = usedMethod === "api" ? "guessit-api" : "guessit-cli";
-            // Cache the result using the cache key
-            parseCache.set(cacheKey, result);
-            return result;
-        }
-    }
-
     // Anime-release fallback: handles filenames like
-    // "[Group] Title - Episode [Tags]" where GuessIt misclassifies
-    // the subtitle as the episode title. Only consulted when GuessIt
-    // produced nothing useful.
+    // "[Group] Title - Episode [Tags]". Only consulted when PTT produced nothing
+    // useful.
     const animeFallback = parseAnimeReleaseFallback(filename);
     if (animeFallback?.title && typeof animeFallback.episode === "number") {
         const rawTitle = animeFallback.title;
@@ -650,19 +394,19 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             codec: animeFallback.codec,
             parseMethod: "anime-regex",
         };
-        parseCache.set(cacheKey, animeResult);
+        cacheFallbackResult(cacheKey, animeResult);
         return animeResult;
     }
 
     // Final fallback: regex parsing
     const fallbackResult = fallbackParse(filename);
     // Cache the fallback result too
-    parseCache.set(cacheKey, fallbackResult);
+    cacheFallbackResult(cacheKey, fallbackResult);
     return fallbackResult;
 }
 
 /**
- * Fallback regex-based parsing if GuessIt fails
+ * Generic regex-based parsing, used when PTT and the anime release regex fail
  */
 function fallbackParse(filename: string): ParsedFilename {
     let title = filename;

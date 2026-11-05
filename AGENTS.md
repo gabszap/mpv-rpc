@@ -32,8 +32,8 @@ The intent of this file is to keep work safe, reproducible, and easy to troubles
   - `npm run build`
 
 - **Parser fallback order (do not reorder):**
-  - PTT → GuessIt API → local GuessIt CLI → anime release regex → regex fallback
-  - PTT is the native TypeScript parser (`src/core/parser-ptt.ts`, package `@aiostreams/release-parser`). The GuessIt steps are a temporary safety net and are removed in a follow-up change.
+  - PTT → anime release regex → regex fallback
+  - PTT is the native TypeScript parser (`src/core/parser-ptt.ts`, package `@aiostreams/release-parser`). The project has no Python dependency; do not reintroduce GuessIt.
 
 - **`.env` loading must remain compatible with `src/core/config.ts`:**
   - use `dotenv` as the official loader
@@ -187,11 +187,8 @@ npm run bridge
      - episode (optional)
    - Fallback order is fixed:
      1. PTT (`src/core/parser-ptt.ts`)
-     2. GuessIt API
-     3. GuessIt CLI
-     4. Anime release regex
-     5. Regex fallback
-   - `src/core/parser.ts` also exposes parser availability checks.
+     2. Anime release regex
+     3. Regex fallback
 
 3) **Metadata resolution → providers + caching**
    - `src/core/anime.ts` calls the configured provider (from `src/core/config.ts`).
@@ -228,7 +225,7 @@ npm run bridge
 - **Parser changes / filename detection**
   - edit: `src/core/parser.ts`
   - validate: `tests/parser.test.ts`
-  - keep: PTT → GuessIt API → GuessIt CLI → anime release regex → regex fallback order
+  - keep: PTT → anime release regex → regex fallback order
 
 - **Provider logic / search matching / resilience**
   - edit: `src/core/anime.ts`, `src/providers/*`, `src/providers/types.ts`
@@ -353,7 +350,7 @@ Debug steps:
 1) Start from the filename.
    - Verify it contains an episode marker (e.g., `E02`, `- 02`, etc.).
 2) Check parsing result.
-   - The parser may have fallen back to regex if GuessIt is unavailable.
+   - The parser may have fallen back to regex if PTT could not be loaded (look for the "Failed to load PTT" warning).
 3) Check provider search matching.
    - Providers may return the “most popular” match for ambiguous queries.
 4) Clear confusion caused by cache.
@@ -446,6 +443,5 @@ Debug steps:
 - System Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - MAL OAuth and sync setup: [docs/mal-sync-setup.md](docs/mal-sync-setup.md)
 - Stremio bridge setup and usage: [docs/stremio-mpv-bridge.md](docs/stremio-mpv-bridge.md)
-- GuessIt API deployment and local dev: [guessit-api/README.md](guessit-api/README.md)
 
 Prefer linking to the docs above for long setup steps instead of duplicating them here.
