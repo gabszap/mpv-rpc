@@ -109,7 +109,7 @@ Test filename parsing without starting MPV or requiring network dependencies:
 npm start -- parse "[Erai-raws] Dr Stone - Science Future Part 3 - 06 [1080p].mkv"
 ```
 
-This runs the parser pipeline (GuessIt API → CLI → regex fallback) and prints the extracted title, season, episode, and other metadata. Useful for debugging parsing issues during development.
+This runs the parser pipeline (PTT → GuessIt API → CLI → anime release regex → regex fallback) and prints the extracted title, season, episode, and other metadata. Useful for debugging parsing issues during development.
 
 ### Dry-Run Mode
 
@@ -192,7 +192,7 @@ When submitting a PR, please include:
    - [ ] `npm run build` succeeds
    - [ ] `npm run check` passes (or fixes are included)
    - [ ] No new `any` types introduced
-   - [ ] Parser fallback order preserved (GuessIt API → CLI → regex)
+   - [ ] Parser fallback order preserved (PTT → GuessIt API → CLI → anime release regex → regex)
    - [ ] `.env` loading behavior unchanged
 
 ---
@@ -211,7 +211,7 @@ mpv-rpc/
 │   │   ├── anime.ts          # Metadata resolution & caching
 │   │   ├── auto-fetch.ts     # Next-episode auto-fetch logic
 │   │   ├── config.ts         # Configuration & env loading
-│   │   ├── parser.ts         # Filename parsing (GuessIt + regex)
+│   │   ├── parser.ts         # Filename parsing (PTT + GuessIt + regex)
 │   │   ├── canonical-episode.ts
 │   │   ├── playbackIdentity.ts
 │   │   ├── bridge-config-migration.ts
@@ -235,14 +235,14 @@ mpv-rpc/
 ### Data Flow
 
 1. **MPV → IPC**: `src/integrations/mpv.ts` connects to MPV's IPC server and fetches playback state.
-2. **Parser → Context**: `src/core/parser.ts` extracts series title, season, and episode from filenames (GuessIt API → CLI → regex fallback).
+2. **Parser → Context**: `src/core/parser.ts` extracts series title, season, and episode from filenames (PTT → GuessIt API → CLI → anime release regex → regex fallback).
 3. **Metadata Resolution**: `src/core/anime.ts` queries configured providers with caching (`.anime_cache/`).
 4. **Discord + MAL Sync**: `src/index.ts` orchestrates the update loop, updating Discord activity and optionally syncing to MAL.
 5. **Stremio Bridge**: `stremio-mpv-bridge/` provides a separate HTTP server (`/health`, `/play`) for Stremio integration.
 
 ### Key Invariants
 
-- **Parser fallback order**: GuessIt API → GuessIt CLI → regex (do not reorder).
+- **Parser fallback order**: PTT → GuessIt API → GuessIt CLI → anime release regex → regex (do not reorder).
 - **MPV IPC defaults**: Windows `\\.\pipe\mpv`, Unix `/tmp/mpv-socket`.
 - **Cache behavior**: Successful results cached for 24h, negative results for 10min.
 - **MAL sync gates**: Requires `MAL_SYNC=true`, authenticated session, playback ≥ 90%, episode detected, and MAL ID resolved.

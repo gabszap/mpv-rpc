@@ -6,6 +6,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import axios from "axios";
 import { config } from "./config";
+import { type PttParsed, parseWithPtt } from "./parser-ptt";
+
+/** Which parsing method produced a `ParsedFilename`. */
+export type ParseMethod = "ptt" | "guessit-api" | "guessit-cli" | "anime-regex" | "regex";
 
 export interface ParsedFilename {
     full_title: string;
@@ -22,6 +26,9 @@ export interface ParsedFilename {
     resolution?: string;
     source?: string;
     codec?: string;
+    // Which method produced this result. Optional so existing consumers and
+    // hand-built values keep working.
+    parseMethod?: ParseMethod;
 }
 
 /**
@@ -209,6 +216,69 @@ function isValidSearchTitle(title: string): boolean {
 }
 
 /**
+ * Build the display title: "Title - S01E02 - Episode title", or "Title - E02"
+ * when there is no season.
+ */
+function buildFullTitle(
+    title: string,
+    season: number | null,
+    episode: number | null,
+    episodeTitle: string | null,
+): string {
+    let fullTitle = title;
+    if (season !== null && episode !== null) {
+        fullTitle += ` - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+    } else if (episode !== null) {
+        fullTitle += ` - E${String(episode).padStart(2, "0")}`;
+    }
+    if (episodeTitle) {
+        fullTitle += ` - ${episodeTitle}`;
+    }
+    return fullTitle;
+}
+
+/**
+ * True when the filename carries an episode marker (S01E02, "E05", "Episode 5",
+ * or a trailing "- 05").
+ */
+function hasEpisodeMarker(filename: string): boolean {
+    // extractEpisodeFromFilename only recognizes a trailing "- 05" at the very end
+    // of the string, so drop a file extension first.
+    const withoutExtension = filename.replace(/\.[A-Za-z0-9]{2,4}$/, "");
+    return /[Ss](\d{1,2})[Ee](\d{1,3})/.test(withoutExtension) || extractEpisodeFromFilename(withoutExtension) !== null;
+}
+
+/**
+ * Convert a PTT result into a `ParsedFilename`. Returns null when the result must
+ * not be used: the title is not valid for provider searches, or the filename has
+ * an episode marker but PTT did not extract an episode.
+ */
+function fromPtt(parsed: PttParsed, filename: string): ParsedFilename | null {
+    const title = cleanTitle(parsed.title);
+    if (!isValidSearchTitle(title)) {
+        return null;
+    }
+    if (hasEpisodeMarker(filename) && parsed.episode === null) {
+        return null;
+    }
+
+    const result: ParsedFilename = {
+        full_title: buildFullTitle(title, parsed.season, parsed.episode, parsed.episodeTitle),
+        series_title: title,
+        season: parsed.season,
+        episode: parsed.episode,
+        episode_title: parsed.episodeTitle,
+        media_type: detectMediaType(filename),
+        parseMethod: "ptt",
+    };
+    if (parsed.releaseGroup) result.releaseGroup = parsed.releaseGroup;
+    if (parsed.resolution) result.resolution = parsed.resolution;
+    if (parsed.source) result.source = parsed.source;
+    if (parsed.codec) result.codec = parsed.codec;
+    return result;
+}
+
+/**
  * Process GuessIt result into standardized format
  */
 function processGuessitResult(
@@ -359,15 +429,7 @@ function processGuessitResult(
         }
     }
 
-    let full_title = title;
-    if (season !== null && episode !== null) {
-        full_title += ` - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
-    } else if (episode !== null) {
-        full_title += ` - E${String(episode).padStart(2, "0")}`;
-    }
-    if (episode_title) {
-        full_title += ` - ${episode_title}`;
-    }
+    const full_title = buildFullTitle(title, season, episode, episode_title);
 
     return {
         full_title,
@@ -516,14 +578,25 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
 
     const normalizedFilename = filename.replace(/\+/g, "-").replace(/\//g, "-");
 
+    // PTT first: native, local and deterministic. GuessIt only runs when PTT is
+    // unavailable or its result is not usable for this filename.
+    const pttParsed = await parseWithPtt(normalizedFilename);
+    if (pttParsed) {
+        const pttResult = fromPtt(pttParsed, filename);
+        if (pttResult) {
+            parseCache.set(cacheKey, pttResult);
+            return pttResult;
+        }
+    }
+
     let guessed: Record<string, any> | null = null;
-    let _usedMethod: "api" | "cli" | "none" = "none";
+    let usedMethod: "api" | "cli" | "none" = "none";
 
     // Try API first if enabled
     if (config.guessitApi.enabled && config.guessitApi.url) {
         guessed = await callGuessItApi(normalizedFilename);
         if (guessed) {
-            _usedMethod = "api";
+            usedMethod = "api";
         }
     }
 
@@ -531,7 +604,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     if (!guessed) {
         guessed = await callGuessItCli(normalizedFilename);
         if (guessed) {
-            _usedMethod = "cli";
+            usedMethod = "cli";
         }
     }
 
@@ -539,6 +612,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
     if (guessed) {
         const result = processGuessitResult(guessed, filename, normalizedFilename);
         if (result) {
+            result.parseMethod = usedMethod === "api" ? "guessit-api" : "guessit-cli";
             // Cache the result using the cache key
             parseCache.set(cacheKey, result);
             return result;
@@ -574,6 +648,7 @@ export async function parseFilename(filename: string): Promise<ParsedFilename> {
             resolution: animeFallback.resolution,
             source: animeFallback.source,
             codec: animeFallback.codec,
+            parseMethod: "anime-regex",
         };
         parseCache.set(cacheKey, animeResult);
         return animeResult;
@@ -616,12 +691,7 @@ function fallbackParse(filename: string): ParsedFilename {
     title = cleanTitle(title);
     title = title.replace(/\s*-\s*$/, "").trim();
 
-    let full_title = title;
-    if (season !== null && episode !== null) {
-        full_title += ` - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
-    } else if (episode !== null) {
-        full_title += ` - E${String(episode).padStart(2, "0")}`;
-    }
+    const full_title = buildFullTitle(title, season, episode, null);
 
     return {
         full_title,
@@ -630,5 +700,6 @@ function fallbackParse(filename: string): ParsedFilename {
         episode,
         episode_title: null,
         media_type: isValidSearchTitle(title) ? detectMediaType(filename) : "unknown",
+        parseMethod: "regex",
     };
 }
