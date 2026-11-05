@@ -249,3 +249,67 @@ describe("setActivity", () => {
         expect(typeof payload.endTimestamp).toBe("number");
     });
 });
+
+describe("buildActivityContent for a movie", () => {
+    const movie: MpvData = {
+        ...base,
+        media_title: "Inception",
+        series_title: "Inception",
+        season: null,
+        episode: null,
+        episode_title: null,
+        cover_image: "poster-url",
+        media_kind: "movie",
+        year: 2010,
+    };
+
+    function build(data: Partial<MpvData>, presence: boolean, cover = true): ReturnType<typeof buildActivityContent> {
+        return buildActivityContent(
+            { ...movie, ...data },
+            { showTitleAsPresence: presence, showCover: cover, mpvIcon: MPV_ICON },
+        );
+    }
+
+    it('showTitleAsPresence on shows "Movie (2010)" and "on MPV"', () => {
+        expect(build({}, true)).toMatchObject({ name: "Inception", details: "Movie (2010)", state: "on MPV" });
+    });
+
+    it('showTitleAsPresence on without a year shows "Movie"', () => {
+        expect(build({ year: undefined }, true)).toMatchObject({ details: "Movie", state: "on MPV" });
+    });
+
+    it("showTitleAsPresence off shows the title and the year as state", () => {
+        expect(build({}, false)).toMatchObject({ name: undefined, details: "Inception", state: "2010" });
+    });
+
+    it("showTitleAsPresence off without a year falls back to Paused / Playing", () => {
+        expect(build({ year: undefined, pause: true }, false).state).toBe("Paused");
+        expect(build({ year: undefined, pause: false }, false).state).toBe("Playing - 42.0%");
+    });
+
+    it('uses the poster with the text "Title (2010)" when showCover is on', () => {
+        expect(build({}, false)).toMatchObject({ largeImageKey: "poster-url", largeImageText: "Inception (2010)" });
+    });
+
+    it("uses the plain title as image text when there is no year", () => {
+        expect(build({ year: undefined }, false).largeImageText).toBe("Inception");
+    });
+
+    it("falls back to the MPV icon when the movie has no poster", () => {
+        expect(build({ cover_image: null }, false)).toMatchObject({
+            largeImageKey: MPV_ICON,
+            largeImageText: "MPV Media Player",
+        });
+    });
+
+    it("uses the MPV icon when showCover is off", () => {
+        expect(build({}, false, false)).toMatchObject({ largeImageKey: MPV_ICON, largeImageText: "MPV Media Player" });
+    });
+
+    it("a series result is unchanged", () => {
+        const series: MpvData = { ...base, media_kind: "series", year: 2008 };
+        const options = { showTitleAsPresence: true, showCover: true, mpvIcon: MPV_ICON };
+
+        expect(buildActivityContent(series, options)).toEqual(buildActivityContent(base, options));
+    });
+});

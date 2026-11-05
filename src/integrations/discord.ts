@@ -213,8 +213,18 @@ export function buildActivityContent(data: MpvData, options: ActivityContentOpti
     let state = "";
     let details = fullTitle; // Default: show full title in details
 
-    // When showTitleAsPresence is active, avoid duplicating title (it's already in activity name)
-    if (options.showTitleAsPresence) {
+    const isMovie = data.media_kind === "movie";
+    const movieYear = isMovie && typeof data.year === "number" ? data.year : null;
+
+    if (isMovie && options.showTitleAsPresence) {
+        // The title is already the activity name; a movie has no episode to show
+        details = movieYear ? `Movie (${movieYear})` : "Movie";
+        state = "on MPV";
+    } else if (isMovie && movieYear) {
+        // Title in details, release year in state
+        state = String(movieYear);
+    } else if (options.showTitleAsPresence) {
+        // When showTitleAsPresence is active, avoid duplicating title (it's already in activity name)
         if (data.season !== null && displayEpisode !== null) {
             // SxEx format
             details = resolvedEpisodeTitle || `Episode ${displayEpisode}`;
@@ -258,6 +268,8 @@ export function buildActivityContent(data: MpvData, options: ActivityContentOpti
     let largeText = "MPV Media Player";
     if (options.showCover && data.cover_image && data.season !== null && displayEpisode !== null) {
         largeText = `Season ${data.season}, Episode ${displayEpisode}`;
+    } else if (isMovie && options.showCover && data.cover_image) {
+        largeText = movieYear ? `${fullTitle} (${movieYear})` : fullTitle;
     }
 
     // Activity name - use clean title or "MPV" based on setting
