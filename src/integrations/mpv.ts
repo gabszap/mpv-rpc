@@ -131,6 +131,9 @@ export interface MpvData {
     kitsu_id?: number; // For Stremio fallback tracking
     media_kind?: "movie" | "series"; // Set when TMDb resolved the metadata
     year?: number; // Release year from TMDb
+    tmdb_id?: number;
+    anime_ids?: { mal?: string; anilist?: string; kitsu?: string };
+    parsed_has_episode?: boolean;
     playlistPos: number; // Current position in playlist (0-indexed)
     playlistCount: number; // Total number of items in playlist
 }
@@ -385,6 +388,12 @@ export async function resolveAnimeMetadata(input: {
     let totalEpisodes: number | null = null;
     let adjustedEpisode: number | null = null;
     let metadataSourceProvider: string | null = null;
+    let animeIds: ResolvedMetadata["animeIds"];
+    const nativeIds = (info: { id: number; mal_id?: number }, source: string): ResolvedMetadata["animeIds"] => ({
+        ...(info.mal_id ? { mal: String(info.mal_id) } : {}),
+        ...(source === "anilist" ? { anilist: String(info.id) } : {}),
+        ...(source === "kitsu" ? { kitsu: String(info.id) } : {}),
+    });
 
     // Try to get anime info for any valid title
     // The API will return null if the title is not found, so we don't need to filter by media_type
@@ -396,6 +405,7 @@ export async function resolveAnimeMetadata(input: {
                 const animeInfo = animeResult.animeInfo;
                 const sourceProvider = animeResult.sourceProvider;
                 metadataSourceProvider = sourceProvider;
+                animeIds = nativeIds(animeInfo, sourceProvider);
                 coverImage = selectCoverImage(animeInfo);
                 malId = animeInfo.mal_id || null;
                 totalEpisodes = animeInfo.total_episodes || null;
@@ -415,6 +425,7 @@ export async function resolveAnimeMetadata(input: {
                         overflowResolved = true;
                         // Use the resolved cour's info for display and MAL sync
                         malId = overflowResult.animeInfo.mal_id || null;
+                        animeIds = nativeIds(overflowResult.animeInfo, overflowResult.sourceProvider ?? sourceProvider);
                         totalEpisodes = overflowResult.animeInfo.total_episodes || null;
                         adjustedEpisode = overflowResult.adjustedEpisode;
                         // Update display info to show the correct cour
@@ -472,7 +483,16 @@ export async function resolveAnimeMetadata(input: {
         }
     }
 
-    return { coverImage, seriesTitle, episodeTitle, malId, totalEpisodes, adjustedEpisode, metadataSourceProvider };
+    return {
+        coverImage,
+        seriesTitle,
+        episodeTitle,
+        malId,
+        totalEpisodes,
+        adjustedEpisode,
+        metadataSourceProvider,
+        ...(animeIds && Object.keys(animeIds).length ? { animeIds } : {}),
+    };
 }
 
 /**
@@ -516,6 +536,7 @@ export async function resolveMediaMetadata(input: {
         adjustedEpisode: null,
         metadataSourceProvider: "tmdb",
         mediaKind: resolved.info.kind,
+        tmdbId: resolved.info.tmdbId,
         year: resolved.info.year,
     };
 }
@@ -700,6 +721,13 @@ export async function getMpvData(): Promise<MpvData | null> {
             playlistPos: typeof playlistPos === "number" ? playlistPos : 0,
             playlistCount: typeof playlistCount === "number" ? playlistCount : 0,
             ...(metadata.mediaKind ? { media_kind: metadata.mediaKind } : {}),
+            ...(metadata.tmdbId ? { tmdb_id: metadata.tmdbId } : {}),
+            ...(metadata.animeIds ? { anime_ids: metadata.animeIds } : {}),
+            parsed_has_episode:
+                parsed.episode !== null ||
+                parsed.season !== null ||
+                hasEpisodeMarker(filename) ||
+                /(?:\b(?:episode|ep)\s*\d|\s-\s*\d{1,3}(?:\D|$))/i.test(filename),
             ...(typeof metadata.year === "number" ? { year: metadata.year } : {}),
         };
         // A TMDb title can be translated, so it is not compared with the Stremio name again;

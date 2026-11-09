@@ -8,6 +8,8 @@ export interface ResolvedMetadata {
     metadataSourceProvider: string | null;
     mediaKind?: "movie" | "series";
     year?: number | null;
+    tmdbId?: number;
+    animeIds?: { mal?: string; anilist?: string; kitsu?: string };
 }
 
 export interface RouteInput {

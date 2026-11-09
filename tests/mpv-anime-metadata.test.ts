@@ -92,6 +92,7 @@ describe("resolveAnimeMetadata", () => {
             totalEpisodes: 28,
             adjustedEpisode: null,
             metadataSourceProvider: "jikan",
+            animeIds: { mal: "100" },
         });
     });
 
@@ -150,6 +151,7 @@ describe("resolveAnimeMetadata", () => {
         });
 
         const result = await run({ parsed: parsed({ episode: 30 }) });
+        expect(result.animeIds).toEqual({ mal: "200" });
 
         expect(resolveOverflowEpisodeMock).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({
