@@ -57,6 +57,8 @@
 > [!NOTE]
 > Anime files use the anime providers. Movies and other series use TMDb when `TMDB_API_KEY` is set, and fall back to the anime providers when TMDb finds nothing or the match looks like Japanese animation. Without a key everything works as before.
 
+TMDb metadata and episode names are cached in `.anime_cache/media_cache.json` across restarts (24 hours for matches, 10 minutes for misses). Series use the series poster. With `DEBUG=true`, requests and failures appear in `.anime_cache/api_log.txt` without credentials.
+
 ## Requirements
 
 - **Node.js 22** or newer

@@ -1,5 +1,7 @@
 import axios from "axios";
+import { config } from "../core/config";
 import { type MediaInfo, type MediaKind, type MediaProvider, MediaProviderError } from "./media-types";
+import { logApiCall } from "./types";
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
@@ -144,10 +146,26 @@ export class TmdbProvider implements MediaProvider {
                     headers,
                     timeout: REQUEST_TIMEOUT_MS,
                 });
+                if (config.debug)
+                    logApiCall(
+                        "TMDb",
+                        path,
+                        { ...params, language: requestParams.language },
+                        `${response.status} OK`,
+                        `attempt ${attempt}`,
+                    );
                 return response.data as T;
             } catch (error) {
                 const failure = error as TmdbFailure;
                 const status = failure.response?.status;
+                if (config.debug)
+                    logApiCall(
+                        "TMDb",
+                        path,
+                        { ...params, language: requestParams.language },
+                        status ? String(status) : "NETWORK_ERROR",
+                        `attempt ${attempt}/${maxAttempts}`,
+                    );
                 if (status === 404) return null;
                 if (status === 401) {
                     throw new MediaProviderError("auth", "TMDb rejected the API key (401)");

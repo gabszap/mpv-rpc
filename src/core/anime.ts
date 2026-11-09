@@ -215,14 +215,25 @@ export function getAnimeCacheFilePath(): string {
 function loadCache(): void {
     try {
         const cachePath = getAnimeCacheFilePath();
+        if (!fs.existsSync(cachePath)) fs.writeFileSync(cachePath, "{}");
         if (fs.existsSync(cachePath)) {
-            const data = JSON.parse(fs.readFileSync(cachePath, "utf-8"));
+            const raw = fs.readFileSync(cachePath, "utf-8").trim();
+            let data: unknown;
+            try {
+                data = raw ? JSON.parse(raw) : null;
+            } catch {
+                data = null;
+            }
+            if (!data || typeof data !== "object" || Array.isArray(data)) {
+                fs.writeFileSync(cachePath, "{}");
+                return;
+            }
             const now = Date.now();
             let expiredCount = 0;
             for (const [key, value] of Object.entries(data)) {
                 const entry = value as CacheEntry;
                 // Only load entries that are not expired
-                if (isCacheEntryValid(entry, now)) {
+                if (entry && typeof entry === "object" && isCacheEntryValid(entry, now)) {
                     cache.set(key, entry);
                 } else {
                     expiredCount++;

@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/core/config", () => ({
@@ -60,7 +63,11 @@ function input(overrides: Partial<ResolveMediaInput> = {}): ResolveMediaInput {
     };
 }
 
+let testDir: string;
+
 beforeEach(() => {
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), "media-resolver-"));
+    vi.spyOn(process, "cwd").mockReturnValue(testDir);
     config.tmdb.apiKey = "test-key";
     config.tmdb.language = "en-US";
     clearMediaCacheForTests();
@@ -71,6 +78,7 @@ afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     setMediaProviderForTests(null);
+    fs.rmSync(testDir, { recursive: true, force: true });
 });
 
 describe("resolveMedia lookups", () => {
@@ -116,17 +124,14 @@ describe("resolveMedia lookups", () => {
         await resolveMedia(input({ season: null, episode: 5 }));
 
         expect(provider.getEpisodeTitle).toHaveBeenCalledWith(1396, 1, 5);
-        expect(provider.getSeasonPosterUrl).toHaveBeenCalledWith(1396, 1);
+        expect(provider.getSeasonPosterUrl).not.toHaveBeenCalled();
     });
 
-    it("uses the season poster, falling back to the series poster", async () => {
+    it("uses the series poster without requesting season artwork", async () => {
         const provider = makeProvider();
         setMediaProviderForTests(provider);
-        expect((await resolveMedia(input()))?.coverUrl).toBe(SEASON_POSTER);
-
-        clearMediaCacheForTests();
-        provider.getSeasonPosterUrl.mockResolvedValue(null);
         expect((await resolveMedia(input()))?.coverUrl).toBe(SERIES_POSTER);
+        expect(provider.getSeasonPosterUrl).not.toHaveBeenCalled();
     });
 
     it("returns the movie poster and no episode title for a movie", async () => {
@@ -250,7 +255,7 @@ describe("resolveMedia failures", () => {
         const first = await resolveMedia(input());
         const second = await resolveMedia(input());
 
-        expect(first).toMatchObject({ episodeTitle: null, coverUrl: SEASON_POSTER });
+        expect(first).toMatchObject({ episodeTitle: null, coverUrl: SERIES_POSTER });
         expect(second?.episodeTitle).toBe("Pilot");
     });
 
@@ -366,5 +371,74 @@ describe("resolveMedia match validation", () => {
         clearMediaCacheForTests();
         provider.search.mockResolvedValue(makeInfo({ kind: "movie", title: "Dune", year: null }));
         expect(await resolveMedia(input({ title: "Dune", season: null, episode: null, year: 2021 }))).not.toBeNull();
+    });
+});
+
+describe("persistent media cache", () => {
+    it("restores metadata and episode titles after a module restart", async () => {
+        setMediaProviderForTests(makeProvider());
+        await resolveMedia(input());
+        vi.resetModules();
+        const restarted = await import("../src/core/media");
+        const provider = makeProvider();
+        restarted.setMediaProviderForTests(provider);
+        expect(await restarted.resolveMedia(input())).toMatchObject({ coverUrl: SERIES_POSTER, episodeTitle: "Pilot" });
+        expect(provider.search).not.toHaveBeenCalled();
+        expect(provider.getEpisodeTitle).not.toHaveBeenCalled();
+        const saved = JSON.parse(fs.readFileSync(path.join(testDir, ".anime_cache", "media_cache.json"), "utf8"));
+        expect(Object.keys(saved).length).toBeGreaterThan(0);
+        restarted.setMediaProviderForTests(null);
+    });
+});
+
+describe("media cache disk resilience", () => {
+    it.each([
+        "",
+        "null",
+        "[]",
+        "invalid JSON",
+        '{"info|bad":null}',
+    ])("recovers malformed disk cache %j", async (content) => {
+        const file = path.join(testDir, ".anime_cache", "media_cache.json");
+        fs.mkdirSync(path.dirname(file));
+        fs.writeFileSync(file, content);
+        vi.resetModules();
+        const restarted = await import("../src/core/media");
+        restarted.setMediaProviderForTests(makeProvider());
+        expect((await restarted.resolveMedia(input()))?.episodeTitle).toBe("Pilot");
+        expect(Object.keys(JSON.parse(fs.readFileSync(file, "utf8"))).length).toBeGreaterThan(0);
+        restarted.setMediaProviderForTests(null);
+    });
+
+    it.each([false, true])("restores hits and misses but expires them (miss=%s)", async (miss) => {
+        vi.useFakeTimers();
+        const provider = makeProvider();
+        if (miss) provider.search.mockResolvedValue(null);
+        setMediaProviderForTests(provider);
+        await resolveMedia(input());
+        vi.resetModules();
+        const restarted = await import("../src/core/media");
+        const nextProvider = makeProvider();
+        restarted.setMediaProviderForTests(nextProvider);
+        const result = await restarted.resolveMedia(input());
+        expect(result === null).toBe(miss);
+        expect(nextProvider.search).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(miss ? 11 * 60 * 1000 : 25 * 60 * 60 * 1000);
+        expect((await restarted.resolveMedia(input()))?.info.title).toBe("Breaking Bad");
+        expect(nextProvider.search).toHaveBeenCalledTimes(1);
+        restarted.setMediaProviderForTests(null);
+    });
+
+    it("does not persist transient failures as misses", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const provider = makeProvider();
+        provider.search.mockRejectedValue(new MediaProviderError("transient", "offline"));
+        setMediaProviderForTests(provider);
+        expect(await resolveMedia(input())).toBeNull();
+        vi.resetModules();
+        const restarted = await import("../src/core/media");
+        restarted.setMediaProviderForTests(makeProvider());
+        expect((await restarted.resolveMedia(input()))?.episodeTitle).toBe("Pilot");
+        restarted.setMediaProviderForTests(null);
     });
 });

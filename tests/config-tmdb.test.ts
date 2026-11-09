@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// These tests control process.env; the local .env must not override their inputs.
+vi.mock("dotenv", () => ({ config: vi.fn(() => ({})) }));
+
 const originalKey = process.env.TMDB_API_KEY;
 const originalLang = process.env.TMDB_LANG;
 

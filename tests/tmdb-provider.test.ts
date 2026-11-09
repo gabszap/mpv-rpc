@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { axiosGetMock } = vi.hoisted(() => ({ axiosGetMock: vi.fn() }));
 
@@ -8,6 +9,7 @@ vi.mock("axios", () => ({
     default: { get: axiosGetMock },
 }));
 
+import { config } from "../src/core/config";
 import { MediaProviderError } from "../src/providers/media-types";
 import { TmdbProvider } from "../src/providers/tmdb";
 
@@ -265,5 +267,40 @@ describe("TmdbProvider requests", () => {
         expect(error).toBeInstanceOf(MediaProviderError);
         expect((error as MediaProviderError).reason).toBe("transient");
         expect(axiosGetMock).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("TMDb API log", () => {
+    let dir: string;
+    const originalDebug = config.debug;
+    beforeEach(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), "tmdb-log-"));
+        vi.spyOn(process, "cwd").mockReturnValue(dir);
+        config.debug = true;
+    });
+    afterEach(() => {
+        config.debug = originalDebug;
+        vi.restoreAllMocks();
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+    it("logs success, retries and errors without credentials", async () => {
+        axiosGetMock.mockRejectedValueOnce(httpError(500)).mockResolvedValueOnce(ok("search-tv"));
+        await makeProvider("secret-api-key").search("Doctor Who", "series");
+        axiosGetMock.mockRejectedValueOnce(httpError(401));
+        await expect(makeProvider("eyJ.secret-token").search("Doctor Who", "series")).rejects.toThrow();
+        const log = fs.readFileSync(path.join(dir, ".anime_cache", "api_log.txt"), "utf8");
+        expect(log).toContain("TMDb:/search/tv");
+        expect(log).toContain("500");
+        expect(log).toContain("200");
+        expect(log).toContain("401");
+        expect(log).toContain("Doctor Who");
+        expect(log).not.toContain("secret-api-key");
+        expect(log).not.toContain("secret-token");
+    });
+    it("does not log when DEBUG is off", async () => {
+        config.debug = false;
+        axiosGetMock.mockResolvedValueOnce(ok("search-tv"));
+        await makeProvider().search("Doctor Who", "series");
+        expect(fs.existsSync(path.join(dir, ".anime_cache", "api_log.txt"))).toBe(false);
     });
 });

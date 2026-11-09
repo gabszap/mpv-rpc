@@ -57,6 +57,8 @@ O **MPV Discord RPC** acompanha a reprodução do MPV via IPC e transforma isso 
 > [!NOTE]
 > Arquivos de anime usam os provedores de anime. Filmes e outras séries usam o TMDb quando `TMDB_API_KEY` está definida, e recorrem aos provedores de anime se o TMDb não achar nada ou se o resultado parecer animação japonesa. Sem a chave, tudo funciona como antes.
 
+Metadados e nomes de episódio do TMDb ficam em `.anime_cache/media_cache.json` entre reinicializações (24 horas para resultados, 10 minutos para não encontrados). Séries usam o pôster geral. Com `DEBUG=true`, requisições e falhas aparecem em `.anime_cache/api_log.txt`, sem credenciais.
+
 ## Requisitos
 
 - **Node.js 22** ou mais recente

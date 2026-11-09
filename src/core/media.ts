@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { type MediaInfo, type MediaKind, type MediaProvider, MediaProviderError } from "../providers/media-types";
 import { TmdbProvider } from "../providers/tmdb";
 import { config } from "./config";
@@ -36,6 +38,63 @@ let defaultProvider: TmdbProvider | null = null;
 let authDisabled = false;
 let transientCooldownUntil = 0;
 let lastTransientWarningAt = 0;
+let loadedCachePath: string | null = null;
+
+function mediaCachePath(): string {
+    return path.join(process.cwd(), ".anime_cache", "media_cache.json");
+}
+
+function saveMediaCache(): void {
+    const file = mediaCachePath();
+    const entries = Object.fromEntries([...cache].filter(([, entry]) => entry.expiresAt > Date.now()));
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(`${file}.tmp`, JSON.stringify(entries, null, 2));
+        fs.renameSync(`${file}.tmp`, file);
+    } catch {
+        // Disk failures must not interrupt playback; the in-memory cache still works.
+    }
+}
+
+function loadMediaCache(): void {
+    const file = mediaCachePath();
+    if (loadedCachePath === file) return;
+    loadedCachePath = file;
+    cache.clear();
+    try {
+        const data: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+        if (data && typeof data === "object" && !Array.isArray(data)) {
+            for (const [key, value] of Object.entries(data)) {
+                if (!value || typeof value !== "object") continue;
+                const entry = value as CacheEntry;
+                if (!Number.isFinite(entry.expiresAt) || entry.expiresAt <= Date.now()) continue;
+                if (key.startsWith("episode|") && (entry.value === null || typeof entry.value === "string")) {
+                    cache.set(key, entry);
+                } else if (key.startsWith("info|") && validMediaInfo(entry.value)) {
+                    cache.set(key, entry);
+                }
+            }
+        }
+    } catch {
+        // Missing, empty or malformed cache starts empty.
+    }
+    saveMediaCache();
+}
+
+function validMediaInfo(value: unknown): boolean {
+    if (value === null) return true;
+    if (!value || typeof value !== "object") return false;
+    const info = value as MediaInfo;
+    return (
+        (info.kind === "movie" || info.kind === "series") &&
+        Number.isFinite(info.tmdbId) &&
+        typeof info.title === "string" &&
+        typeof info.animeLikely === "boolean" &&
+        (info.posterUrl === null || typeof info.posterUrl === "string") &&
+        (info.originalTitle === null || typeof info.originalTitle === "string") &&
+        (info.year === null || Number.isFinite(info.year))
+    );
+}
 
 function getProvider(): MediaProvider {
     if (providerOverride) return providerOverride;
@@ -66,6 +125,7 @@ export function setMediaProviderForTests(provider: MediaProvider | null): void {
 
 export function clearMediaCacheForTests(): void {
     cache.clear();
+    loadedCachePath = mediaCachePath();
     pending.clear();
     transientCooldownUntil = 0;
     lastTransientWarningAt = 0;
@@ -85,6 +145,7 @@ async function cached<T>(key: string, load: () => Promise<T | null>): Promise<T 
     const promise = load()
         .then((value) => {
             cache.set(key, { value, expiresAt: Date.now() + (value === null ? MISS_TTL_MS : HIT_TTL_MS) });
+            saveMediaCache();
             return value;
         })
         .finally(() => {
@@ -158,7 +219,7 @@ async function lookupInfo(
     });
 }
 
-/** Season poster and episode name, each cached; a failed lookup only loses that piece. */
+/** Episode names are cached separately; a failed lookup only loses that piece. */
 async function lookupDetail(key: string, load: () => Promise<string | null>): Promise<string | null> {
     try {
         return await cached(key, load);
@@ -172,6 +233,7 @@ export async function resolveMedia(input: ResolveMediaInput): Promise<ResolvedMe
     if (!isMediaProviderConfigured()) return null;
     if (Date.now() < transientCooldownUntil) return null;
 
+    loadMediaCache();
     const provider = getProvider();
     const kind: MediaKind = input.kindHint ?? (input.season !== null || input.episode !== null ? "series" : "movie");
 
@@ -194,18 +256,12 @@ export async function resolveMedia(input: ResolveMediaInput): Promise<ResolvedMe
 
     const language = config.tmdb.language;
     const season = input.season ?? (input.episode !== null ? 1 : null);
-    const [seasonPoster, episodeTitle] = await Promise.all([
-        season === null
-            ? null
-            : lookupDetail(`poster|${info.tmdbId}|${season}|${language}`, () =>
-                  provider.getSeasonPosterUrl(info.tmdbId, season),
-              ),
+    const episodeTitle =
         season === null || input.episode === null
             ? null
-            : lookupDetail(`episode|${info.tmdbId}|${season}|${input.episode}|${language}`, () =>
+            : await lookupDetail(`episode|${info.tmdbId}|${season}|${input.episode}|${language}`, () =>
                   provider.getEpisodeTitle(info.tmdbId, season, input.episode as number),
-              ),
-    ]);
+              );
 
-    return { info, coverUrl: seasonPoster ?? info.posterUrl, episodeTitle };
+    return { info, coverUrl: info.posterUrl, episodeTitle };
 }
