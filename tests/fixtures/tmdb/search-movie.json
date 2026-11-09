@@ -1,0 +1,21 @@
+{
+    "page": 1,
+    "results": [
+        {
+            "id": 27205,
+            "title": "Inception",
+            "original_title": "Inception",
+            "release_date": "2010-07-15",
+            "poster_path": "/ljsZTbVsrQSqZgWeep2B1QiDKuh.jpg"
+        },
+        {
+            "id": 64956,
+            "title": "Inception: The Cobol Job",
+            "original_title": "Inception: The Cobol Job",
+            "release_date": "2010-12-07",
+            "poster_path": null
+        }
+    ],
+    "total_pages": 1,
+    "total_results": 2
+}
