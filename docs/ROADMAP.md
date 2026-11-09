@@ -13,6 +13,7 @@ Project progress and planned features for mpv-rpc.
 - [x] MAL sync (mark as watched)
 - [x] Native TypeScript filename parser (PTT), no Python dependency
 - [x] Trakt.tv integration (auto-scrobble)
+- [x] Simkl scrobbling for anime, series and movies (completion on stop)
 - [x] Stremio Sync
 - [x] Independent semantic-release for root and bridge
 - [x] Metadata for movies and TV series (TMDb)
