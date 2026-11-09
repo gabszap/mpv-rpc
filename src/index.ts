@@ -8,6 +8,7 @@ import { ConsoleRepl, createEpisodeContext } from "./console";
 import { getAnimeCacheFilePath, getProviderName, reloadProvider } from "./core/anime";
 import { checkAndTriggerAutoFetch } from "./core/auto-fetch";
 import { config, reloadConfig } from "./core/config";
+import { isMediaProviderConfigured, reloadMediaProvider } from "./core/media";
 import { parseFilename } from "./core/parser";
 import * as discord from "./integrations/discord";
 import * as mpv from "./integrations/mpv";
@@ -75,6 +76,7 @@ async function performReload(arg: string): Promise<void> {
     const oldMetadataProvider = config.metadataProvider;
 
     const changes = reloadConfig();
+    reloadMediaProvider();
 
     if (changes.length === 0) {
         console.log("[Reload] No config changes detected.");
@@ -328,6 +330,9 @@ async function start(): Promise<void> {
 
     // Show metadata provider
     console.log(`[Main] Metadata provider: ${getProviderName()}`);
+    if (!isMediaProviderConfigured()) {
+        console.log("[Main] TMDb: TMDB_API_KEY not set; movie and series metadata disabled");
+    }
 
     // Show MAL sync status
     if (config.mal.enabled) {
