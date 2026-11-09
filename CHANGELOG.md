@@ -2,6 +2,26 @@
 
 This file is managed by semantic-release.
 
+## [2.8.0](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.7.2...mpv-rpc-v2.8.0) (2026-11-09)
+
+### Features
+
+* **bridge:** show episode names in the auto-fetch queue ([6e97292](https://github.com/gabszap/mpv-rpc/commit/6e972923214350dde7648618ea4b064a34797ff5))
+* **config:** add TMDB_API_KEY and TMDB_LANG ([9cc1262](https://github.com/gabszap/mpv-rpc/commit/9cc12628bd38abcada78b170c9effa38869634ea))
+* **core:** add the media metadata resolver ([4426759](https://github.com/gabszap/mpv-rpc/commit/442675988674c729b31a57e81827c5db056a3a6a))
+* **core:** add the metadata router ([776d694](https://github.com/gabszap/mpv-rpc/commit/776d694d17064ba2aea01ecac2f584b558007286))
+* **discord:** show movies with poster, title and year ([0774d42](https://github.com/gabszap/mpv-rpc/commit/0774d42e6ff76255e7f0ba28ea1de2054f786e1b))
+* **mpv:** route metadata between the anime and media pipelines ([bfc0274](https://github.com/gabszap/mpv-rpc/commit/bfc02748451d4fbc7b3dd5b618bcc1149d8759cb))
+* **parser:** expose the release year ([bf70b16](https://github.com/gabszap/mpv-rpc/commit/bf70b1657a0665eee6b37f8075aea76536eec87a))
+* **providers:** add the TMDb media provider ([bee9f44](https://github.com/gabszap/mpv-rpc/commit/bee9f44969c2b5c8c0a1e6126f814afec1261019))
+
+### Bug Fixes
+
+* **media:** keep anime on the anime pipeline and survive a TMDb outage ([41839f6](https://github.com/gabszap/mpv-rpc/commit/41839f6251b8e740fc1e9379e12d5ebe26f938a7))
+* **metadata:** persist media cache and log TMDb requests ([88df1ae](https://github.com/gabszap/mpv-rpc/commit/88df1ae3488734c149a8bed7dbd3f290070223f6))
+* **playback:** isolate bridge playlists and skip MAL for TMDb media ([b68ba8d](https://github.com/gabszap/mpv-rpc/commit/b68ba8d1204179db562e751b55df422edb344b24))
+* **tmdb:** keep episode cache in memory and always log API calls ([2fa1e05](https://github.com/gabszap/mpv-rpc/commit/2fa1e05d9c84f966bf18dec9fcfa4a3dd6b22922))
+
 ## [2.7.2](https://github.com/gabszap/mpv-rpc/compare/mpv-rpc-v2.7.1...mpv-rpc-v2.7.2) (2026-11-05)
 
 ### Bug Fixes
