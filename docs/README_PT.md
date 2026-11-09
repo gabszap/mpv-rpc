@@ -57,6 +57,8 @@ O **MPV Discord RPC** acompanha a reprodução do MPV via IPC e transforma isso 
 > [!NOTE]
 > Arquivos de anime usam os provedores de anime. Filmes e outras séries usam o TMDb quando `TMDB_API_KEY` está definida, e recorrem aos provedores de anime se o TMDb não achar nada ou se o resultado parecer animação japonesa. Sem a chave, tudo funciona como antes.
 
+Metadados e capas de filmes/séries ficam em `.anime_cache/media_cache.json` entre reinicializações (24 horas para resultados, 10 minutos para não encontrados). Nomes de episódio ficam só em memória. Séries usam o pôster principal do TMDb em `TMDB_LANG`, como as capas de anime usam `TVDB_LANG`: escolha `pt-BR` para português ou `en-US` para inglês. Requisições reais, falhas e tentativas do TMDb são sempre registradas em `.anime_cache/api_log.txt`, mesmo com `DEBUG=false`, sem credenciais. Acertos no cache não fazem requisições à API.
+
 ## Requisitos
 
 - **Node.js 22** ou mais recente
@@ -213,7 +215,7 @@ Se você mudar `PORT`, atualize `CONFIG.SERVER_URL` em `stremio-mpv-bridge/users
 | `TVDB_API_KEY` | vazio | Chave da API do TheTVDB, necessária ao usar `tvdb` como provedor principal e para o mapeamento seguro da ordem de episódios na sincronização |
 | `TVDB_LANG` | `eng` | Código de idioma do TheTVDB para os metadados de episódio |
 | `TMDB_API_KEY` | vazio | Chave da API ou token de leitura do TMDb (crie em themoviedb.org/settings/api). Ativa os metadados de filmes e séries; sem ela o app se comporta como antes |
-| `TMDB_LANG` | `en-US` | Idioma do TMDb para títulos e nomes de episódio (por exemplo `pt-BR`, `ja-JP`) |
+| `TMDB_LANG` | `en-US` | Idioma do TMDb para a capa principal, títulos e nomes de episódio (por exemplo `pt-BR`, `en-US`, `ja-JP`; aceita aliases `pt`/`por`, `en`/`eng`, `ja`/`jpn`) |
 
 </details>
 
