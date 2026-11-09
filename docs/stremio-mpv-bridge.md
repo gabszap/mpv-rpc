@@ -57,6 +57,7 @@ Benefits:
 
 - You keep Stremio’s discovery/UI, but playback happens in MPV.
 - MPV gets you advanced playback controls, audio/subtitle handling, and your existing MPV configuration.
+- Auto-fetched series and anime episodes appear in the queue as `Series S04E10 - Episode title` (or just series/episode when the provider has no title). The bridge uses titled M3U entries and enables title display for its MPV sessions.
 - Bridge sessions disable directory playlist auto-creation (`--autocreate-playlist=no`), so unrelated files in the temporary folder cannot join the playlist. This does not change your MPV configuration file.
 - The Bridge is intentionally small and local; the RPC app remains the place for “rich presence / metadata / sync”.
 
@@ -399,6 +400,7 @@ Benefícios:
 
 - Você continua usando a UI do Stremio, mas a reprodução acontece no MPV.
 - O MPV oferece controles avançados, melhor manuseio de áudio/legendas e sua configuração pessoal.
+- Episódios de séries e anime adicionados pelo auto-fetch aparecem na fila como `Série S04E10 - Título do episódio` (ou só série/episódio quando o provedor não informa o título). O bridge usa entradas M3U com título e habilita a exibição de títulos nas sessões do MPV que abre.
 - Sessões abertas pelo bridge desativam a criação automática de playlist da pasta (`--autocreate-playlist=no`), evitando arquivos soltos na pasta temporária. Isso não altera seu arquivo de configuração do MPV.
 - O Bridge é propositalmente simples e local; o MPV-RPC é onde ficam “presence / metadados / sync”.
 

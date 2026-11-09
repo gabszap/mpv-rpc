@@ -417,7 +417,7 @@ This repo includes a separate workspace in `stremio-mpv-bridge/`.
 Contract:
 
 - `GET /health` returns server status (used by clients to verify connectivity).
-- `POST /play` opens URLs in MPV. Bridge-created sessions use `--autocreate-playlist=no` after custom arguments, preventing MPV from scanning the temporary playlist directory (where TypeScript `.ts` files can be mistaken for transport-stream videos). Keep legitimate remote `.ts` streams playable.
+- `POST /play` opens URLs in MPV. Bridge-created sessions use `--autocreate-playlist=no` after custom arguments, preventing MPV from scanning the temporary playlist directory (where TypeScript `.ts` files can be mistaken for transport-stream videos). Keep legitimate remote `.ts` streams playable. Bridge sessions also use `--osd-playlist-entry=title`; auto-fetch appends titled M3U entries via `loadlist` so queued series/anime episodes show their series, position and provider episode title before playback. Preserve raw stream URLs and release titles for matching/deduplication; temporary append playlists are deleted once IPC replies.
 - There is **no legacy scrobble endpoint** in the intended contract; do not reintroduce it.
 
 Debug steps:

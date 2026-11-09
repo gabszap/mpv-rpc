@@ -995,6 +995,17 @@ app.post("/config", (req, res) => {
     res.json({ success: true, message: "Config updated" });
 });
 
+/** M3U titles are attached to queue entries before playback starts. */
+function buildMpvPlaylist(items) {
+    return [
+        "#EXTM3U",
+        ...items.map((item) => {
+            const safeTitle = (item.title || "Stream").replace(/[\r\n]+/g, " - ");
+            return `#EXTINF:-1,${safeTitle}\n${item.url}`;
+        }),
+    ].join("\n");
+}
+
 app.post("/play", (req, res) => {
     const { playlist, urls, contentTitle, args, stremioAuth, stremioContext } = req.body;
     const items = playlist || (urls ? urls.map((u) => ({ url: u, title: contentTitle })) : []);
@@ -1042,13 +1053,7 @@ app.post("/play", (req, res) => {
             mpvArgs.push(...args);
         }
 
-        const m3uContent = [
-            "#EXTM3U",
-            ...items.map((item) => {
-                const safeTitle = (item.title || "Stream").replace(/[\r\n]+/g, " - ");
-                return `#EXTINF:-1,${safeTitle}\n${item.url}`;
-            }),
-        ].join("\n");
+        const m3uContent = buildMpvPlaylist(items);
         const tmpPath = path.join(os.tmpdir(), `stremio-playlist-${crypto.randomBytes(8).toString("hex")}.m3u`);
 
         try {
@@ -1061,7 +1066,7 @@ app.post("/play", (req, res) => {
         // The bridge supplies the complete playlist. Do not let MPV scan the temp directory
         // (a TypeScript .ts file there can be mistaken for a transport-stream video).
         // Keep this after custom arguments so directory autoload cannot override it.
-        mpvArgs.push("--autocreate-playlist=no", tmpPath);
+        mpvArgs.push("--autocreate-playlist=no", "--osd-playlist-entry=title", tmpPath);
 
         const mpvProcess = spawn(MPV_PATH, mpvArgs, {
             detached: true,
@@ -1538,72 +1543,86 @@ async function getMpvPlaylist() {
 }
 
 /**
- * Send a loadfile command to MPV via IPC to append a URL to the playlist.
+ * Append a titled M3U entry via loadlist so the queued item has a display name immediately.
  * Returns true if successfully sent, false on failure.
  */
-async function appendToMpvPlaylist(url) {
-    return new Promise((resolve) => {
-        const socket = net.createConnection({ path: MPV_IPC_PATH });
-        let buffer = "";
-        let resolved = false;
+async function appendToMpvPlaylist(url, title) {
+    const tmpPath = path.join(os.tmpdir(), `stremio-auto-fetch-${crypto.randomBytes(8).toString("hex")}.m3u`);
+    try {
+        fs.writeFileSync(tmpPath, buildMpvPlaylist([{ url, title }]));
+        return await new Promise((resolve) => {
+            const socket = net.createConnection({ path: MPV_IPC_PATH });
+            let buffer = "";
+            let resolved = false;
 
-        socket.on("connect", () => {
-            const cmd = JSON.stringify({
-                command: ["loadfile", url, "append"],
+            socket.on("connect", () => {
+                const cmd = JSON.stringify({
+                    command: ["loadlist", tmpPath, "append"],
+                    request_id: 1,
+                });
+                socket.write(`${cmd}\n`);
             });
-            socket.write(`${cmd}\n`);
-        });
 
-        socket.on("data", (chunk) => {
-            buffer += chunk.toString();
+            socket.on("data", (chunk) => {
+                buffer += chunk.toString();
 
-            // MPV IPC responses are JSON lines
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
+                // MPV IPC responses are JSON lines
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
 
-            for (const line of lines) {
-                if (line.trim().length === 0) continue;
-                try {
-                    const msg = JSON.parse(line);
-                    if (!resolved) {
-                        resolved = true;
-                        socket.destroy();
-                        if (msg.error !== "success") {
-                            console.error(`[MPV Bridge] MPV rejected loadfile: ${msg.error}`);
+                for (const line of lines) {
+                    if (line.trim().length === 0) continue;
+                    try {
+                        const msg = JSON.parse(line);
+                        if (msg.request_id === 1 && !resolved) {
+                            resolved = true;
+                            socket.destroy();
+                            if (msg.error !== "success") {
+                                console.error(`[MPV Bridge] MPV rejected playlist append: ${msg.error}`);
+                            }
+                            resolve(msg.error === "success");
                         }
-                        resolve(msg.error === "success");
+                    } catch (_) {
+                        // Not JSON, skip
                     }
-                } catch (_) {
-                    // Not JSON, skip
                 }
-            }
-        });
+            });
 
-        socket.on("error", (err) => {
-            if (!resolved) {
-                resolved = true;
-                console.error(`[MPV Bridge] IPC socket error appending to playlist: ${err.message}`);
-                resolve(false);
-            }
-        });
+            socket.on("error", (err) => {
+                if (!resolved) {
+                    resolved = true;
+                    console.error(`[MPV Bridge] IPC socket error appending to playlist: ${err.message}`);
+                    resolve(false);
+                }
+            });
 
-        socket.on("end", () => {
-            if (!resolved) {
-                resolved = true;
-                console.error("[MPV Bridge] IPC socket closed unexpectedly while appending to playlist");
-                resolve(false);
-            }
-        });
+            socket.on("end", () => {
+                if (!resolved) {
+                    resolved = true;
+                    console.error("[MPV Bridge] IPC socket closed unexpectedly while appending to playlist");
+                    resolve(false);
+                }
+            });
 
-        setTimeout(() => {
-            if (!resolved) {
-                resolved = true;
-                console.error("[MPV Bridge] IPC timeout while appending to playlist (5s)");
-                socket.destroy();
-                resolve(false);
-            }
-        }, 5000);
-    });
+            setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    console.error("[MPV Bridge] IPC timeout while appending to playlist (5s)");
+                    socket.destroy();
+                    resolve(false);
+                }
+            }, 5000);
+        });
+    } catch (error) {
+        console.error(`[MPV Bridge] Failed to append titled playlist: ${error.message}`);
+        return false;
+    } finally {
+        try {
+            fs.unlinkSync(tmpPath);
+        } catch (_) {
+            // Playlist parsing finishes before loadlist responds; the temporary file is no longer needed.
+        }
+    }
 }
 
 /**
@@ -1864,6 +1883,8 @@ async function collectNextEpisodes(
                 items.push({
                     url: streamItem.url,
                     title: streamItem.title || epKey,
+                    displayTitle:
+                        `${readNonEmptyString(name) || ""} ${epKey}${ep.title ? ` - ${ep.title}` : ""}`.trim(),
                     season: ep.season,
                     episode: ep.episode,
                     dedupeKey,
@@ -2059,7 +2080,7 @@ app.post("/auto-fetch", async (req, res) => {
     let added = 0;
     const appendedItems = [];
     for (const item of nextItems) {
-        const success = await appendToMpvPlaylist(item.url);
+        const success = await appendToMpvPlaylist(item.url, item.displayTitle);
         if (success) {
             console.log(`[MPV Bridge] Auto-fetch: Appended S${item.season}E${item.episode}`);
             completeAutoFetchEpisodeKey(item.dedupeKey);
