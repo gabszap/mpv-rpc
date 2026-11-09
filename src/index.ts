@@ -13,6 +13,8 @@ import { parseFilename } from "./core/parser";
 import * as discord from "./integrations/discord";
 import * as mpv from "./integrations/mpv";
 import { authorize, getUsername, isAuthenticated, syncEpisodeDetailed } from "./mal-sync/sync";
+import { authorize as simklAuthorize, isAuthenticated as simklIsAuthenticated } from "./simkl-sync/auth";
+import { flushSimklPlayback, reloadSimklPlayback, stopSimklPlayback, updateSimklPlayback } from "./simkl-sync/sync";
 import { logStremioSkipDetail } from "./stremio-sync/logging";
 import { trySyncStremio } from "./stremio-sync/sync";
 import { getUser } from "./trakt-sync/api";
@@ -31,6 +33,7 @@ let lastStremioSyncSuccessKey: string | null = null; // Avoid repeated Stremio s
 let stopPromise: Promise<void> | null = null;
 
 async function clearPlaybackSession(reason: "disconnect" | "no-media"): Promise<void> {
+    if (reason === "no-media" || !mpv.getConnectionStatus()) stopSimklPlayback();
     await discord.clearActivity();
     lastMalDiagnosticKey = null;
     lastMalSyncSuccessKey = null;
@@ -76,6 +79,7 @@ async function performReload(arg: string): Promise<void> {
     const oldMetadataProvider = config.metadataProvider;
 
     const changes = reloadConfig();
+    reloadSimklPlayback();
     reloadMediaProvider();
 
     if (changes.length === 0) {
@@ -145,12 +149,13 @@ async function performReload(arg: string): Promise<void> {
  */
 async function update(): Promise<void> {
     // Skip if already updating (prevents parallel updates)
-    if (isUpdating) return;
+    if (isUpdating || !_isRunning) return;
 
     isUpdating = true;
     try {
         // Get data from MPV
         const data = await mpv.getMpvData();
+        if (!_isRunning) return;
 
         if (!data) {
             // MPV not connected, clear Discord activity and stop Trakt scrobble
@@ -165,6 +170,8 @@ async function update(): Promise<void> {
             await clearPlaybackSession("no-media");
             return;
         }
+
+        updateSimklPlayback(data);
 
         // Update episode context for the REPL (for manual override tracking)
         if (consoleRepl) {
@@ -335,6 +342,16 @@ async function start(): Promise<void> {
         console.log("[Main] TMDb: TMDB_API_KEY not set; movie and series metadata disabled");
     }
 
+    if (config.simkl?.enabled) {
+        console.log(
+            !config.simkl.clientId
+                ? "[Main] Simkl sync: SIMKL_CLIENT_ID not set (OAuth V2 app required)"
+                : simklIsAuthenticated()
+                  ? `[Main] Simkl sync: enabled (completion on stop at ${config.simkl.syncThreshold}% or above)`
+                  : "[Main] Simkl sync: not authenticated (run 'npm start -- simkl-auth')",
+        );
+    } else console.log("[Main] Simkl sync: disabled");
+
     // Show MAL sync status
     if (config.mal.enabled) {
         if (isAuthenticated()) {
@@ -454,6 +471,13 @@ async function stopOnce(): Promise<void> {
     console.log("\n[Main] Shutting down...");
     _isRunning = false;
 
+    if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
+    }
+    stopSimklPlayback();
+    await flushSimklPlayback();
+
     // Stop Trakt scrobble on shutdown
     if (config.trakt.enabled && traktIsAuthenticated()) {
         try {
@@ -491,7 +515,14 @@ process.on("SIGTERM", stop);
 // Check for CLI commands
 const args = process.argv.slice(2);
 
-if (args.includes("mal-auth")) {
+if (args.includes("simkl-auth")) {
+    simklAuthorize()
+        .then((success) => process.exit(success ? 0 : 1))
+        .catch(() => {
+            console.error("[Simkl] Authorization failed. Check the OAuth V2 app configuration and try again.");
+            process.exit(1);
+        });
+} else if (args.includes("mal-auth")) {
     // MAL authorization mode
     console.log("[MAL] Starting authorization flow...");
     authorize().then((success) => {

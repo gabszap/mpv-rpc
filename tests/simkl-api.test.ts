@@ -51,3 +51,7 @@ it("rejects invalid progress before sending", async () => {
     await expect(sendScrobble({ ...event, progress: Number.NaN })).rejects.toMatchObject({ kind: "invalid" });
     expect(post).not.toHaveBeenCalled();
 });
+it("does not report completion when the server only saved partial progress", async () => {
+    post.mockResolvedValue({ status: 200, data: { action: "pause" } });
+    await expect(sendScrobble(event)).rejects.toMatchObject({ kind: "invalid" });
+});

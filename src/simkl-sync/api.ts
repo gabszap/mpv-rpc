@@ -47,7 +47,8 @@ export async function sendScrobble(event: SimklEvent): Promise<void> {
         logSimklRequest(endpoint, response.status);
         const { status, data } = response;
         if (status >= 200 && status < 300) {
-            const expected = event.action === "stop" ? ["pause", "scrobble"] : [event.action];
+            const expected =
+                event.action === "stop" ? [event.progress >= event.threshold ? "scrobble" : "pause"] : [event.action];
             if (!data?.action || !expected.includes(data.action)) throw new SimklApiError("invalid");
             return;
         }

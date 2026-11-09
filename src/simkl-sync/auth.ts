@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import axios from "axios";
 import { config } from "../core/config";
+import { SimklApiError } from "./types";
 
 interface Tokens {
     access_token: string;
@@ -183,7 +184,8 @@ export async function getAccessToken(
             fs.rmSync(tokenFile(), { force: true });
             return null;
         }
-        if (result?.status !== 200) return null;
+        if (!result || result.status >= 500 || result.status === 429) throw new SimklApiError("transient", 20000);
+        if (result.status !== 200) return null;
         const updated = fromResponse(result.data, clientId, sessionKey);
         if (!updated) return null;
         storeTokens(updated);
