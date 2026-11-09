@@ -41,7 +41,7 @@ it("opens only the supplied streams despite MPV directory-autoload settings", as
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            args: ["--autocreate-playlist=filter"],
+            args: ["--autocreate-playlist=filter", "--osd-playlist-entry=filename"],
             playlist: [
                 { url: "https://example.test/episode.mkv", title: "Doctor Who" },
                 { url: "https://example.test/legitimate-transport-stream.ts", title: "Next episode" },
@@ -52,6 +52,7 @@ it("opens only the supplied streams despite MPV directory-autoload settings", as
     const args = spawnMock.mock.calls[0][1] as string[];
     const playlistPath = args.at(-1) as string;
     expect(args.filter((arg) => arg.startsWith("--autocreate-playlist=")).at(-1)).toBe("--autocreate-playlist=no");
+    expect(args.filter((arg) => arg.startsWith("--osd-playlist-entry=")).at(-1)).toBe("--osd-playlist-entry=title");
     const playlist = fs.readFileSync(playlistPath, "utf8");
     expect(playlist).toContain("https://example.test/episode.mkv");
     expect(playlist).toContain("https://example.test/legitimate-transport-stream.ts");
