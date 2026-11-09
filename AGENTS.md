@@ -225,6 +225,7 @@ npm run bridge
      - playback percent ≥ `MAL_SYNC_THRESHOLD` (default 90)
      - episode number is detected
      - MAL ID is available for the resolved anime
+     - Playback is not explicitly classified as a TMDb movie/series (`media_kind` is absent)
 
 5) **Interactive overrides**
    - `src/console/` provides an interactive REPL for manual overrides.
@@ -420,7 +421,7 @@ This repo includes a separate workspace in `stremio-mpv-bridge/`.
 Contract:
 
 - `GET /health` returns server status (used by clients to verify connectivity).
-- `POST /play` opens URLs in MPV.
+- `POST /play` opens URLs in MPV. Bridge-created sessions use `--autocreate-playlist=no` after custom arguments, preventing MPV from scanning the temporary playlist directory (where TypeScript `.ts` files can be mistaken for transport-stream videos). Keep legitimate remote `.ts` streams playable.
 - There is **no legacy scrobble endpoint** in the intended contract; do not reintroduce it.
 
 Debug steps:

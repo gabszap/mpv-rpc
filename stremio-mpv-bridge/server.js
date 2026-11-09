@@ -1058,7 +1058,10 @@ app.post("/play", (req, res) => {
             return res.status(500).json({ error: "Failed to write playlist file" });
         }
 
-        mpvArgs.push(tmpPath);
+        // The bridge supplies the complete playlist. Do not let MPV scan the temp directory
+        // (a TypeScript .ts file there can be mistaken for a transport-stream video).
+        // Keep this after custom arguments so directory autoload cannot override it.
+        mpvArgs.push("--autocreate-playlist=no", tmpPath);
 
         const mpvProcess = spawn(MPV_PATH, mpvArgs, {
             detached: true,

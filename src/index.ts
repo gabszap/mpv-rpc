@@ -193,9 +193,10 @@ async function update(): Promise<void> {
         // Force a clean title in MPV (replaces ugly embedded titles like "Multi Subs / GB / RU...")
         await mpv.updateMpvTitle(data);
 
-        // MAL sync - diagnostics + sync attempt once threshold is reached
+        // TMDb movies/series are not MAL entries, even if bridge context carries a stale MAL id.
+        // Anime results do not set media_kind and retain the existing diagnostics and sync flow.
         const malThresholdReached = data.percent_pos >= config.mal.syncThreshold;
-        if (config.mal.enabled && isAuthenticated() && malThresholdReached) {
+        if (data.media_kind === undefined && config.mal.enabled && isAuthenticated() && malThresholdReached) {
             if (!data.episode) {
                 logMalDiagnostic(
                     `${data.filename}:missing-episode`,
