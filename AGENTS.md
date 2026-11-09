@@ -255,6 +255,10 @@ npm run bridge
   - verify: `npm run check:userscript`; `tests/userscript-bundle.test.ts` fails when the committed output is stale
   - note: semantic-release bumps `@version` in both `header.txt` and the built file
 
+- **Release workflows**
+  - `.github/workflows/release-root.yml` and `release-bridge.yml` are manual-only (`workflow_dispatch`); do not restore automatic push triggers.
+  - Keep CI automatic on PRs and pushes to `main`. Publishing is an explicit manual action, independently for root and bridge.
+
 - **Semantic-Release configuration updates**
   - edit: `semantic-release/`
   - keep: explicit `-e ./semantic-release/release.config.js` configuration path in `package.json` release scripts
