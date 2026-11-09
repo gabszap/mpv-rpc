@@ -2,6 +2,16 @@
 
 This file is managed by semantic-release.
 
+## [1.13.0](https://github.com/gabszap/mpv-rpc/compare/bridge-v1.12.1...bridge-v1.13.0) (2026-11-09)
+
+### Features
+
+* **bridge:** show episode names in the auto-fetch queue ([6e97292](https://github.com/gabszap/mpv-rpc/commit/6e972923214350dde7648618ea4b064a34797ff5))
+
+### Bug Fixes
+
+* **playback:** isolate bridge playlists and skip MAL for TMDb media ([b68ba8d](https://github.com/gabszap/mpv-rpc/commit/b68ba8d1204179db562e751b55df422edb344b24))
+
 ## [1.12.1](https://github.com/gabszap/mpv-rpc/compare/bridge-v1.12.0...bridge-v1.12.1) (2026-11-05)
 
 ### Bug Fixes
