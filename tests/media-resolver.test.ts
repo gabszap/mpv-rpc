@@ -375,7 +375,7 @@ describe("resolveMedia match validation", () => {
 });
 
 describe("persistent media cache", () => {
-    it("restores metadata and episode titles after a module restart", async () => {
+    it("restores series metadata but fetches episode names again after a restart", async () => {
         setMediaProviderForTests(makeProvider());
         await resolveMedia(input());
         vi.resetModules();
@@ -384,9 +384,11 @@ describe("persistent media cache", () => {
         restarted.setMediaProviderForTests(provider);
         expect(await restarted.resolveMedia(input())).toMatchObject({ coverUrl: SERIES_POSTER, episodeTitle: "Pilot" });
         expect(provider.search).not.toHaveBeenCalled();
-        expect(provider.getEpisodeTitle).not.toHaveBeenCalled();
+        expect(provider.getEpisodeTitle).toHaveBeenCalledTimes(1);
+        await restarted.resolveMedia(input());
+        expect(provider.getEpisodeTitle).toHaveBeenCalledTimes(1);
         const saved = JSON.parse(fs.readFileSync(path.join(testDir, ".anime_cache", "media_cache.json"), "utf8"));
-        expect(Object.keys(saved).length).toBeGreaterThan(0);
+        expect(Object.keys(saved)).toEqual(["info|series|breaking bad||en-US"]);
         restarted.setMediaProviderForTests(null);
     });
 });
@@ -441,4 +443,22 @@ describe("media cache disk resilience", () => {
         expect((await restarted.resolveMedia(input()))?.episodeTitle).toBe("Pilot");
         restarted.setMediaProviderForTests(null);
     });
+});
+
+it("drops legacy episode-name entries from the disk cache", async () => {
+    const file = path.join(testDir, ".anime_cache", "media_cache.json");
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(
+        file,
+        JSON.stringify({
+            "episode|1396|1|1|en-US": { value: "Obsolete episode name", expiresAt: Date.now() + 60000 },
+        }),
+    );
+    vi.resetModules();
+    const restarted = await import("../src/core/media");
+    restarted.setMediaProviderForTests(makeProvider());
+    expect((await restarted.resolveMedia(input()))?.episodeTitle).toBe("Pilot");
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    expect(Object.keys(saved).some((key) => key.startsWith("episode|"))).toBe(false);
+    restarted.setMediaProviderForTests(null);
 });

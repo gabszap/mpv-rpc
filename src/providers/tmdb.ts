@@ -1,5 +1,4 @@
 import axios from "axios";
-import { config } from "../core/config";
 import { type MediaInfo, type MediaKind, type MediaProvider, MediaProviderError } from "./media-types";
 import { logApiCall } from "./types";
 
@@ -43,6 +42,20 @@ interface TmdbFailure {
     code?: string;
     message?: string;
     response?: { status?: number };
+}
+
+/** Match common language aliases accepted by the other metadata providers. */
+function normalizeLanguage(language: string): string {
+    const aliases: Record<string, string> = {
+        pt: "pt-BR",
+        por: "pt-BR",
+        en: "en-US",
+        eng: "en-US",
+        ja: "ja-JP",
+        jpn: "ja-JP",
+    };
+    const trimmed = language.trim();
+    return aliases[trimmed.toLowerCase()] ?? (trimmed || "en-US");
 }
 
 function parseYear(date: string | undefined): number | null {
@@ -129,7 +142,10 @@ export class TmdbProvider implements MediaProvider {
     /** GET with credentials, language, timeout and one retry for transient failures. `null` on 404. */
     private async request<T>(path: string, params: Record<string, string | number>): Promise<T | null> {
         const apiKey = this.options.getApiKey();
-        const requestParams: Record<string, string | number> = { ...params, language: this.options.getLanguage() };
+        const requestParams: Record<string, string | number> = {
+            ...params,
+            language: normalizeLanguage(this.options.getLanguage()),
+        };
         const headers: Record<string, string> = {};
         if (apiKey.startsWith(BEARER_TOKEN_PREFIX)) {
             headers.Authorization = `Bearer ${apiKey}`;
@@ -146,26 +162,24 @@ export class TmdbProvider implements MediaProvider {
                     headers,
                     timeout: REQUEST_TIMEOUT_MS,
                 });
-                if (config.debug)
-                    logApiCall(
-                        "TMDb",
-                        path,
-                        { ...params, language: requestParams.language },
-                        `${response.status} OK`,
-                        `attempt ${attempt}`,
-                    );
+                logApiCall(
+                    "TMDb",
+                    path,
+                    { ...params, language: requestParams.language },
+                    `${response.status} OK`,
+                    `attempt ${attempt}`,
+                );
                 return response.data as T;
             } catch (error) {
                 const failure = error as TmdbFailure;
                 const status = failure.response?.status;
-                if (config.debug)
-                    logApiCall(
-                        "TMDb",
-                        path,
-                        { ...params, language: requestParams.language },
-                        status ? String(status) : "NETWORK_ERROR",
-                        `attempt ${attempt}/${maxAttempts}`,
-                    );
+                logApiCall(
+                    "TMDb",
+                    path,
+                    { ...params, language: requestParams.language },
+                    status ? String(status) : "NETWORK_ERROR",
+                    `attempt ${attempt}/${maxAttempts}`,
+                );
                 if (status === 404) return null;
                 if (status === 401) {
                     throw new MediaProviderError("auth", "TMDb rejected the API key (401)");

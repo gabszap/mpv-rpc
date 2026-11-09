@@ -57,7 +57,7 @@
 > [!NOTE]
 > Anime files use the anime providers. Movies and other series use TMDb when `TMDB_API_KEY` is set, and fall back to the anime providers when TMDb finds nothing or the match looks like Japanese animation. Without a key everything works as before.
 
-TMDb metadata and episode names are cached in `.anime_cache/media_cache.json` across restarts (24 hours for matches, 10 minutes for misses). Series use the series poster. With `DEBUG=true`, requests and failures appear in `.anime_cache/api_log.txt` without credentials.
+Movie/series metadata and posters are cached in `.anime_cache/media_cache.json` across restarts (24 hours for matches, 10 minutes for misses). Episode names stay in memory only. Series use the main TMDb poster in `TMDB_LANG`, like anime artwork uses `TVDB_LANG`: choose `pt-BR` for Portuguese or `en-US` for English. Actual TMDb requests, failures and retries are always recorded in `.anime_cache/api_log.txt`, even with `DEBUG=false`, without credentials. Cache hits do not make API requests.
 
 ## Requirements
 
@@ -215,7 +215,7 @@ If you change `PORT`, update `CONFIG.SERVER_URL` in `stremio-mpv-bridge/userscri
 | `TVDB_API_KEY` | empty | TheTVDB API key, required when using `tvdb` as the primary provider and for safe sync episode order mapping |
 | `TVDB_LANG` | `eng` | TheTVDB language code for episode metadata |
 | `TMDB_API_KEY` | empty | TMDb API key or read access token (create one at themoviedb.org/settings/api). Enables movie and series metadata; without it the app behaves as before |
-| `TMDB_LANG` | `en-US` | TMDb language for titles and episode names (for example `pt-BR`, `ja-JP`) |
+| `TMDB_LANG` | `en-US` | TMDb language for the main poster, titles and episode names (for example `pt-BR`, `en-US`, `ja-JP`; aliases `pt`/`por`, `en`/`eng`, `ja`/`jpn` are accepted) |
 
 </details>
 

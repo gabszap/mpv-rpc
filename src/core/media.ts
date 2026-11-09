@@ -46,7 +46,9 @@ function mediaCachePath(): string {
 
 function saveMediaCache(): void {
     const file = mediaCachePath();
-    const entries = Object.fromEntries([...cache].filter(([, entry]) => entry.expiresAt > Date.now()));
+    const entries = Object.fromEntries(
+        [...cache].filter(([key, entry]) => key.startsWith("info|") && entry.expiresAt > Date.now()),
+    );
     try {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(`${file}.tmp`, JSON.stringify(entries, null, 2));
@@ -68,9 +70,7 @@ function loadMediaCache(): void {
                 if (!value || typeof value !== "object") continue;
                 const entry = value as CacheEntry;
                 if (!Number.isFinite(entry.expiresAt) || entry.expiresAt <= Date.now()) continue;
-                if (key.startsWith("episode|") && (entry.value === null || typeof entry.value === "string")) {
-                    cache.set(key, entry);
-                } else if (key.startsWith("info|") && validMediaInfo(entry.value)) {
+                if (key.startsWith("info|") && validMediaInfo(entry.value)) {
                     cache.set(key, entry);
                 }
             }
@@ -145,7 +145,7 @@ async function cached<T>(key: string, load: () => Promise<T | null>): Promise<T 
     const promise = load()
         .then((value) => {
             cache.set(key, { value, expiresAt: Date.now() + (value === null ? MISS_TTL_MS : HIT_TTL_MS) });
-            saveMediaCache();
+            if (key.startsWith("info|")) saveMediaCache();
             return value;
         })
         .finally(() => {
@@ -219,7 +219,7 @@ async function lookupInfo(
     });
 }
 
-/** Episode names are cached separately; a failed lookup only loses that piece. */
+/** Episode names stay in memory for the current run; only series/movie metadata is persisted. */
 async function lookupDetail(key: string, load: () => Promise<string | null>): Promise<string | null> {
     try {
         return await cached(key, load);

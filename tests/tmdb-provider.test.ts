@@ -29,8 +29,16 @@ function makeProvider(apiKey = "plain-key", language = "en-US"): TmdbProvider {
     return new TmdbProvider({ getApiKey: () => apiKey, getLanguage: () => language, retryDelayMs: 0 });
 }
 
+let providerTestDir: string;
 beforeEach(() => {
+    providerTestDir = fs.mkdtempSync(path.join(os.tmpdir(), "tmdb-provider-"));
+    vi.spyOn(process, "cwd").mockReturnValue(providerTestDir);
     axiosGetMock.mockReset();
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(providerTestDir, { recursive: true, force: true });
 });
 
 describe("TmdbProvider.findByImdbId", () => {
@@ -191,6 +199,21 @@ describe("TmdbProvider seasons and episodes", () => {
 });
 
 describe("TmdbProvider requests", () => {
+    it.each([
+        ["pt", "pt-BR"],
+        ["por", "pt-BR"],
+        ["eng", "en-US"],
+        ["en", "en-US"],
+        ["ja", "ja-JP"],
+        ["jpn", "ja-JP"],
+        ["pt-PT", "pt-PT"],
+    ])("uses artwork language %s as TMDb language %s", async (configured, expected) => {
+        axiosGetMock.mockResolvedValueOnce(ok("search-tv"));
+        const info = await makeProvider("key", configured).search("Breaking Bad", "series");
+        expect(info?.posterUrl).toBe("https://image.tmdb.org/t/p/w500/ggFHVNu6YYI5L9pCfOacjizRGt.jpg");
+        expect(axiosGetMock.mock.calls[0][1].params.language).toBe(expected);
+    });
+
     it("sends the language at the time of the call", async () => {
         let language = "en-US";
         const provider = new TmdbProvider({ getApiKey: () => "k", getLanguage: () => language, retryDelayMs: 0 });
@@ -297,10 +320,10 @@ describe("TMDb API log", () => {
         expect(log).not.toContain("secret-api-key");
         expect(log).not.toContain("secret-token");
     });
-    it("does not log when DEBUG is off", async () => {
+    it("logs actual API calls even when DEBUG is off", async () => {
         config.debug = false;
         axiosGetMock.mockResolvedValueOnce(ok("search-tv"));
         await makeProvider().search("Doctor Who", "series");
-        expect(fs.existsSync(path.join(dir, ".anime_cache", "api_log.txt"))).toBe(false);
+        expect(fs.readFileSync(path.join(dir, ".anime_cache", "api_log.txt"), "utf8")).toContain("TMDb:/search/tv");
     });
 });
