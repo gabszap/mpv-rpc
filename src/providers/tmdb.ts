@@ -3,7 +3,8 @@ import { type MediaInfo, type MediaKind, type MediaProvider, MediaProviderError 
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
-const REQUEST_TIMEOUT_MS = 10000;
+const REQUEST_TIMEOUT_MS = 6000;
+const ANIMATION_GENRE_ID = 16;
 const DEFAULT_RETRY_DELAY_MS = 500;
 const BEARER_TOKEN_PREFIX = "eyJ";
 
@@ -22,6 +23,9 @@ interface TmdbItem {
     release_date?: string;
     first_air_date?: string;
     poster_path?: string | null;
+    genre_ids?: number[];
+    origin_country?: string[];
+    original_language?: string;
 }
 
 interface TmdbListResponse {
@@ -48,6 +52,12 @@ function posterUrl(posterPath: string | null | undefined): string | null {
     return posterPath ? `${TMDB_IMAGE_BASE}${posterPath}` : null;
 }
 
+function looksLikeAnime(item: TmdbItem): boolean {
+    const isAnimation = item.genre_ids?.includes(ANIMATION_GENRE_ID) === true;
+    const isJapanese = item.origin_country?.includes("JP") === true || item.original_language === "ja";
+    return isAnimation && isJapanese;
+}
+
 function toMediaInfo(item: TmdbItem, kind: MediaKind, imdbId: string | null): MediaInfo | null {
     const title = (kind === "movie" ? item.title : item.name) ?? "";
     if (typeof item.id !== "number" || title.length === 0) return null;
@@ -60,6 +70,7 @@ function toMediaInfo(item: TmdbItem, kind: MediaKind, imdbId: string | null): Me
         originalTitle: originalTitle || null,
         year: parseYear(kind === "movie" ? item.release_date : item.first_air_date),
         posterUrl: posterUrl(item.poster_path),
+        animeLikely: looksLikeAnime(item),
     };
 }
 

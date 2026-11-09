@@ -15,10 +15,10 @@ Project progress and planned features for mpv-rpc.
 - [x] Trakt.tv integration (auto-scrobble)
 - [x] Stremio Sync
 - [x] Independent semantic-release for root and bridge
+- [x] Metadata for movies and TV series (TMDb)
 
 ## Planned
 
-- [ ] Metadata for movies and TV series (TMDb/OMDb)
 - [ ] System tray (run in background)
 - [ ] Graphical interface (GUI) for configuration
 - [ ] Mini Mode (show only filename without metadata fetch)
