@@ -328,12 +328,14 @@ Mais: [Arquitetura](ARCHITECTURE.md) · [Contribuindo](CONTRIBUTING.md) · [Road
 
 ### Releases
 
-As releases são automatizadas com **semantic-release** e divididas em dois fluxos independentes:
+As releases usam **semantic-release**, iniciado manualmente, e são divididas em dois fluxos independentes:
 
 | App | Formato da tag | Changelog | Escopo |
 | --- | --- | --- | --- |
 | App RPC (raiz) | `mpv-rpc-v${version}` | `CHANGELOG.md` | Caminhos fora do bridge |
 | Stremio bridge | `bridge-v${version}` | `stremio-mpv-bridge/CHANGELOG.md` | `stremio-mpv-bridge/**` |
+
+No GitHub **Actions**, escolha **Release Root (mpv-rpc)** ou **Release Bridge (stremio-mpv-bridge)** e clique em **Run workflow** usando a `main`. Mergear PRs não publica release; as verificações do CI continuam automáticas. Cada execução manual calcula a próxima versão e o changelog a partir dos Conventional Commits acumulados.
 
 Use Conventional Commits. Não rode `npm version` manualmente nas releases do projeto.
 

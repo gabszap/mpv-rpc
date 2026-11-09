@@ -328,12 +328,14 @@ More: [Architecture](docs/ARCHITECTURE.md) · [Contributing](docs/CONTRIBUTING.m
 
 ### Releases
 
-Releases are automated with **semantic-release** and split into two independent streams:
+Releases use **semantic-release**, started manually, and are split into two independent streams:
 
 | App | Tag format | Changelog | Scope |
 | --- | --- | --- | --- |
 | Root RPC app | `mpv-rpc-v${version}` | `CHANGELOG.md` | Non-bridge paths |
 | Stremio bridge | `bridge-v${version}` | `stremio-mpv-bridge/CHANGELOG.md` | `stremio-mpv-bridge/**` |
+
+In GitHub **Actions**, select **Release Root (mpv-rpc)** or **Release Bridge (stremio-mpv-bridge)** and click **Run workflow** using `main`. Merging PRs does not publish a release; the CI checks still run automatically. Each manual run calculates the next version and changelog from the accumulated Conventional Commits.
 
 Use Conventional Commits. Do not run `npm version` manually for project releases.
 

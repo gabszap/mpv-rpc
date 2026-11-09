@@ -2,15 +2,6 @@ name: Release Bridge (stremio-mpv-bridge)
 
 on:
     workflow_dispatch:
-    push:
-        branches:
-            - main
-        paths:
-            # Keep bridge workflow scoped to bridge-owned files to avoid duplicate
-            # runs when shared release tooling changes trigger the root pipeline.
-            - "stremio-mpv-bridge/**"
-            - "docs/stremio-mpv-bridge.md"
-            - "semantic-release/release.bridge.config.js"
 
 permissions:
     contents: write

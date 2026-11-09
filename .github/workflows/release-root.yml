@@ -2,12 +2,6 @@ name: Release Root (mpv-rpc)
 
 on:
     workflow_dispatch:
-    push:
-        branches:
-            - main
-        paths-ignore:
-            - "stremio-mpv-bridge/**"
-            - "semantic-release/release.bridge.config.js"
 
 permissions:
     contents: write
