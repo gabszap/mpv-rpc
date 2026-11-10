@@ -116,6 +116,13 @@ export const config = {
         syncThreshold: parseInt(getEnv("MAL_SYNC_THRESHOLD", "90"), 10), // % watched to trigger sync
     },
 
+    // Simkl scrobbling (independent from MAL/Trakt; completion only on stop).
+    simkl: {
+        enabled: getEnvBool("SIMKL_SYNC", false),
+        clientId: getEnv("SIMKL_CLIENT_ID", ""),
+        syncThreshold: Math.max(50, Math.min(100, parseInt(getEnv("SIMKL_SYNC_THRESHOLD", "80"), 10) || 80)),
+    },
+
     // Trakt.tv sync settings
     trakt: {
         enabled: getEnvBool("TRAKT_SYNC", false),
@@ -280,6 +287,23 @@ export function reloadConfig(): string[] {
     if (config.mal.syncThreshold !== newMalThreshold) {
         changes.push(`MAL_SYNC_THRESHOLD: ${config.mal.syncThreshold} -> ${newMalThreshold}`);
         config.mal.syncThreshold = newMalThreshold;
+    }
+
+    // Simkl
+    const simklEnabled = getEnvBool("SIMKL_SYNC", false);
+    const simklClient = getEnv("SIMKL_CLIENT_ID", "");
+    const simklThreshold = Math.max(50, Math.min(100, parseInt(getEnv("SIMKL_SYNC_THRESHOLD", "80"), 10) || 80));
+    if (config.simkl.enabled !== simklEnabled) {
+        changes.push(`SIMKL_SYNC: ${config.simkl.enabled} -> ${simklEnabled}`);
+        config.simkl.enabled = simklEnabled;
+    }
+    if (config.simkl.clientId !== simklClient) {
+        changes.push("SIMKL_CLIENT_ID changed");
+        config.simkl.clientId = simklClient;
+    }
+    if (config.simkl.syncThreshold !== simklThreshold) {
+        changes.push(`SIMKL_SYNC_THRESHOLD: ${config.simkl.syncThreshold} -> ${simklThreshold}`);
+        config.simkl.syncThreshold = simklThreshold;
     }
 
     // Trakt
