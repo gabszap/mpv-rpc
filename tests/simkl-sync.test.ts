@@ -38,6 +38,19 @@ afterEach(() => {
 const tick = async (): Promise<void> => {
     await vi.advanceTimersByTimeAsync(0);
 };
+it.each([20, 85])("reports an already-completed stop without claiming a new save (%s)", async (progress) => {
+    sync.update(data({ percent_pos: progress }), settings);
+    await tick();
+    send.mockResolvedValueOnce("already-completed");
+    sync.stop();
+    await tick();
+    const logs = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(logs).toContain("Session already completed (409)");
+    expect(logs).not.toMatch(/Saved (watched|partial progress)/);
+    expect(logs).not.toContain("Confirmed stop");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(send).toHaveBeenCalledTimes(2);
+});
 it("logs queued and confirmed starts and pauses with content and progress", async () => {
     sync.update(data(), settings);
     await tick();

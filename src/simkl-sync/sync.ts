@@ -43,7 +43,9 @@ export class SimklScrobbler {
     private blockedGrants = new Set<string>();
     private lastMissingFile: string | null = null;
 
-    constructor(private readonly send: (event: SimklEvent) => Promise<void> = sendScrobble) {}
+    constructor(
+        private readonly send: (event: SimklEvent) => Promise<undefined | "already-completed"> = sendScrobble,
+    ) {}
 
     configure(settings: SimklSettings): void {
         if (settings.dryRun !== this.dryRun) {
@@ -178,8 +180,14 @@ export class SimklScrobbler {
                 if (this.blockedGrants.has(grant)) continue;
                 const generation = this.generation;
                 try {
-                    await this.send(item.event);
+                    const outcome = await this.send(item.event);
                     if (generation !== this.generation) continue;
+                    if (outcome === "already-completed") {
+                        console.log(
+                            `[Simkl] Session already completed (409): ${JSON.stringify(item.event.payload)}; no new progress saved.`,
+                        );
+                        continue;
+                    }
                     console.log(
                         `[Simkl] Confirmed ${item.event.action}: ${JSON.stringify(item.event.payload)} at ${item.event.progress.toFixed(1)}% (reason=${item.event.reason}).`,
                     );

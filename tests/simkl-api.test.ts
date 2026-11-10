@@ -44,7 +44,7 @@ it.each([429, 400])("recognizes the Simkl rate lock (%s)", async (status) => {
 });
 it("accepts a duplicate stop only", async () => {
     post.mockResolvedValue({ status: 409 });
-    await expect(sendScrobble(event)).resolves.toBeUndefined();
+    await expect(sendScrobble(event)).resolves.toBe("already-completed");
     await expect(sendScrobble({ ...event, action: "start" })).rejects.toMatchObject({ kind: "invalid" });
 });
 it("rejects invalid progress before sending", async () => {

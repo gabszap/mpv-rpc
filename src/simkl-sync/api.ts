@@ -2,7 +2,7 @@ import axios, { type AxiosResponse } from "axios";
 import { getAccessToken, logSimklRequest } from "./auth";
 import { SimklApiError, type SimklEvent } from "./types";
 
-export async function sendScrobble(event: SimklEvent): Promise<void> {
+export async function sendScrobble(event: SimklEvent): Promise<undefined | "already-completed"> {
     if (
         !Number.isFinite(event.progress) ||
         event.progress < 0 ||
@@ -68,7 +68,7 @@ export async function sendScrobble(event: SimklEvent): Promise<void> {
             if (!data?.action || !expected.includes(data.action)) throw new SimklApiError("invalid");
             return;
         }
-        if (status === 409 && event.action === "stop") return;
+        if (status === 409 && event.action === "stop") return "already-completed";
         if (status === 401 && attempt === 0) {
             token = await getAccessToken(event.clientId, event.sessionKey, token);
             continue;
