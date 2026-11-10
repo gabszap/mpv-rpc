@@ -33,7 +33,7 @@ let lastStremioSyncSuccessKey: string | null = null; // Avoid repeated Stremio s
 let stopPromise: Promise<void> | null = null;
 
 async function clearPlaybackSession(reason: "disconnect" | "no-media"): Promise<void> {
-    if (reason === "no-media" || !mpv.getConnectionStatus()) stopSimklPlayback();
+    if (reason === "no-media" || !mpv.getConnectionStatus()) stopSimklPlayback(reason);
     await discord.clearActivity();
     lastMalDiagnosticKey = null;
     lastMalSyncSuccessKey = null;
@@ -475,7 +475,7 @@ async function stopOnce(): Promise<void> {
         clearInterval(updateInterval);
         updateInterval = null;
     }
-    stopSimklPlayback();
+    stopSimklPlayback("shutdown");
     await flushSimklPlayback();
 
     // Stop Trakt scrobble on shutdown

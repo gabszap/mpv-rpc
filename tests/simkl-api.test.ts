@@ -55,3 +55,19 @@ it("does not report completion when the server only saved partial progress", asy
     post.mockResolvedValue({ status: 200, data: { action: "pause" } });
     await expect(sendScrobble(event)).rejects.toMatchObject({ kind: "invalid" });
 });
+it("logs safe response fields and request identity without arbitrary response secrets", async () => {
+    post.mockResolvedValue({
+        status: 201,
+        data: {
+            action: "start",
+            progress: 10,
+            access_token: "never-log-this",
+            show: { ids: { simkl: 123 }, title: "Title" },
+        },
+    });
+    await sendScrobble({ ...event, action: "start", progress: 10 });
+    const details = JSON.stringify(log.mock.calls);
+    expect(details).toContain("simkl");
+    expect(details).toContain("123");
+    expect(details).not.toContain("never-log-this");
+});

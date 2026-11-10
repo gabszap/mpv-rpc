@@ -18,13 +18,13 @@ interface Tokens {
 const refreshes = new Map<string, Promise<string | null>>();
 const tokenFile = (): string => path.join(process.cwd(), ".config", ".simkl_tokens.json");
 
-export function logSimklRequest(endpoint: string, status: number | string): void {
+export function logSimklRequest(endpoint: string, status: number | string, detail?: string): void {
     try {
         const dir = path.join(process.cwd(), ".anime_cache");
         fs.mkdirSync(dir, { recursive: true });
         fs.appendFileSync(
             path.join(dir, "api_log.txt"),
-            `${new Date().toISOString()} [Simkl] POST ${endpoint} ${status}\n`,
+            `${new Date().toISOString()} [Simkl] POST ${endpoint} ${status}${detail ? ` ${detail}` : ""}\n`,
         );
     } catch {
         // Logging must never interrupt playback or authentication.

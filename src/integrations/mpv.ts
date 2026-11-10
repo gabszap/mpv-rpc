@@ -562,6 +562,8 @@ export async function getMpvData(): Promise<MpvData | null> {
         const mediaTitle = sanitizeMediaTitle(rawMediaTitle);
 
         if (!filename || filename === "N/A") {
+            const [idle, count] = await Promise.all([getProperty("idle-active"), getProperty("playlist-count")]);
+            if (idle !== true || count !== 0) return null;
             // MPV is connected but no media playing
             return {
                 media_title: "N/A",
@@ -655,6 +657,22 @@ export async function getMpvData(): Promise<MpvData | null> {
             getProperty("playlist-pos"),
             getProperty("playlist-count"),
         ]);
+        // Unavailable IPC properties are not evidence of a file change or resume.
+        if (
+            typeof currentPath !== "string" ||
+            currentPath === "N/A" ||
+            !currentPath ||
+            typeof pause !== "boolean" ||
+            !Number.isInteger(playlistPos) ||
+            playlistPos < 0 ||
+            !Number.isInteger(playlistCount) ||
+            playlistCount <= 0 ||
+            typeof percent_pos !== "number" ||
+            !Number.isFinite(percent_pos) ||
+            typeof time_pos !== "number" ||
+            !Number.isFinite(time_pos)
+        )
+            return null;
 
         // Check for manual series name override (rename command)
         const renameOverride = checkSeriesNameOverride(filename);

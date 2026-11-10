@@ -44,7 +44,23 @@ export async function sendScrobble(event: SimklEvent): Promise<void> {
             logSimklRequest(endpoint, "NETWORK_ERROR");
             throw new SimklApiError("transient", 20000);
         }
-        logSimklRequest(endpoint, response.status);
+        const responseMedia = response.data as {
+            show?: { ids?: { simkl?: unknown } };
+            movie?: { ids?: { simkl?: unknown } };
+            anime?: { ids?: { simkl?: unknown } };
+        } | null;
+        const simklId = (responseMedia?.show ?? responseMedia?.movie ?? responseMedia?.anime)?.ids?.simkl;
+        logSimklRequest(
+            endpoint,
+            response.status,
+            JSON.stringify({
+                request: event.payload,
+                progress: event.progress,
+                reason: event.reason,
+                action: typeof response.data?.action === "string" ? response.data.action : undefined,
+                simkl: typeof simklId === "number" || typeof simklId === "string" ? simklId : undefined,
+            }),
+        );
         const { status, data } = response;
         if (status >= 200 && status < 300) {
             const expected =

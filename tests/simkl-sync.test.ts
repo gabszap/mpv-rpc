@@ -38,6 +38,15 @@ afterEach(() => {
 const tick = async (): Promise<void> => {
     await vi.advanceTimersByTimeAsync(0);
 };
+it("logs queued and confirmed starts and pauses with content and progress", async () => {
+    sync.update(data(), settings);
+    await tick();
+    sync.update(data({ pause: true }), settings);
+    await tick();
+    const logs = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(logs).toMatch(/Confirmed start.*Movie.*10/);
+    expect(logs).toMatch(/Confirmed pause.*Movie.*10/);
+});
 it("does not complete when playback crosses 80%; pause and resume send only transitions", async () => {
     sync.update(data(), settings);
     await tick();

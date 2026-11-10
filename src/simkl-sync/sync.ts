@@ -63,7 +63,7 @@ export class SimklScrobbler {
                 this.active.settings.clientId !== settings.clientId ||
                 this.active.settings.sessionKey !== settings.sessionKey)
         ) {
-            this.stop();
+            this.stop("configuration");
         }
     }
 
@@ -73,7 +73,7 @@ export class SimklScrobbler {
         const file = JSON.stringify([data.path ?? data.filename, data.playlistPos]);
         const identity = resolveSimklIdentity(data);
         if (this.active && this.active.file !== file) {
-            this.stop();
+            this.stop("file-change");
         }
         const progress = data.percent_pos;
         if (!Number.isFinite(progress) || progress < 0 || progress > 100) return;
@@ -118,13 +118,13 @@ export class SimklScrobbler {
         }
     }
 
-    stop(): void {
+    stop(reason = "stop"): void {
         if (!this.active) return;
-        this.enqueue(this.active, "stop");
+        this.enqueue(this.active, "stop", reason);
         this.active = null;
     }
 
-    private enqueue(session: Session, action: SimklEvent["action"]): void {
+    private enqueue(session: Session, action: SimklEvent["action"], reason = "playback-transition"): void {
         const event: SimklEvent = {
             action,
             payload: session.payload,
@@ -132,6 +132,7 @@ export class SimklScrobbler {
             threshold: session.settings.threshold,
             clientId: session.settings.clientId,
             sessionKey: session.settings.sessionKey ?? "dry-run",
+            reason,
         };
         if (session.settings.dryRun) {
             console.log(`[Simkl] Dry-run: ${action} at ${event.progress.toFixed(1)}%.`);
@@ -145,6 +146,9 @@ export class SimklScrobbler {
             this.queue.shift();
         }
         this.queue.push({ event, serial: session.serial, retries: 0, due: 0 });
+        console.log(
+            `[Simkl] Queued ${action}: ${JSON.stringify(session.payload)} at ${event.progress.toFixed(1)}% (reason=${reason}).`,
+        );
         this.wake();
     }
 
@@ -176,6 +180,9 @@ export class SimklScrobbler {
                 try {
                     await this.send(item.event);
                     if (generation !== this.generation) continue;
+                    console.log(
+                        `[Simkl] Confirmed ${item.event.action}: ${JSON.stringify(item.event.payload)} at ${item.event.progress.toFixed(1)}% (reason=${item.event.reason}).`,
+                    );
                     if (item.event.action === "stop") {
                         const result = item.event.progress >= item.event.threshold ? "watched" : "partial progress";
                         console.log(`[Simkl] Saved ${result} (${item.event.progress.toFixed(1)}%).`);
@@ -238,9 +245,9 @@ export function reloadSimklPlayback(): void {
     scrobbler.configure(currentSettings());
 }
 
-export function stopSimklPlayback(): void {
+export function stopSimklPlayback(reason = "stop"): void {
     scrobbler.configure(currentSettings());
-    scrobbler.stop();
+    scrobbler.stop(reason);
 }
 export async function flushSimklPlayback(): Promise<void> {
     await scrobbler.flush();

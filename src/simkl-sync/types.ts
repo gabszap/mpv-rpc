@@ -27,6 +27,7 @@ export interface SimklEvent {
     threshold: number;
     clientId: string;
     sessionKey: string;
+    reason?: string;
 }
 
 export class SimklApiError extends Error {
