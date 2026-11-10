@@ -44,10 +44,30 @@ it.each([429, 400])("recognizes the Simkl rate lock (%s)", async (status) => {
 });
 it("accepts a duplicate stop only", async () => {
     post.mockResolvedValue({ status: 409 });
-    await expect(sendScrobble(event)).resolves.toBeUndefined();
+    await expect(sendScrobble(event)).resolves.toBe("already-completed");
     await expect(sendScrobble({ ...event, action: "start" })).rejects.toMatchObject({ kind: "invalid" });
 });
 it("rejects invalid progress before sending", async () => {
     await expect(sendScrobble({ ...event, progress: Number.NaN })).rejects.toMatchObject({ kind: "invalid" });
     expect(post).not.toHaveBeenCalled();
+});
+it("does not report completion when the server only saved partial progress", async () => {
+    post.mockResolvedValue({ status: 200, data: { action: "pause" } });
+    await expect(sendScrobble(event)).rejects.toMatchObject({ kind: "invalid" });
+});
+it("logs safe response fields and request identity without arbitrary response secrets", async () => {
+    post.mockResolvedValue({
+        status: 201,
+        data: {
+            action: "start",
+            progress: 10,
+            access_token: "never-log-this",
+            show: { ids: { simkl: 123 }, title: "Title" },
+        },
+    });
+    await sendScrobble({ ...event, action: "start", progress: 10 });
+    const details = JSON.stringify(log.mock.calls);
+    expect(details).toContain("simkl");
+    expect(details).toContain("123");
+    expect(details).not.toContain("never-log-this");
 });

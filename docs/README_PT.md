@@ -51,7 +51,7 @@ O **MPV Discord RPC** acompanha a reprodução do MPV via IPC e transforma isso 
 | **Vários provedores** | Jikan/MyAnimeList, AniList, Kitsu e TheTVDB, com fallback automático |
 | **Metadados de filmes e séries** | Pôster, título oficial, ano e nomes de episódio do TMDb para conteúdo que não é anime (precisa de uma `TMDB_API_KEY` gratuita) |
 | **Parser resiliente** | PTT (TypeScript nativo) → regex de release de anime → regex fallback |
-| **Sincronização** | Progresso no MyAnimeList, scrobble no Trakt.tv, Continue Watching e marcação de assistido no Stremio |
+| **Sincronização** | Progresso no MyAnimeList, scrobble no Trakt.tv e Simkl, Continue Watching e marcação de assistido no Stremio |
 | **Bridge do Stremio** | Userscript + servidor local que abre streams do Stremio Web no MPV com suporte a playlists |
 
 > [!NOTE]
@@ -144,10 +144,14 @@ Guia completo: [Guia do Stremio MPV Bridge](stremio-mpv-bridge.md)
 
 ## Serviços de sincronização
 
+> [!WARNING]
+> **Acesso à API do Trakt:** Em julho de 2026, a criação de apps foi restrita a contas VIP e usuários relataram o desaparecimento de apps de contas gratuitas, interrompendo integrações com erros `403` ([discussão de julho](https://github.com/trakt/trakt-api/discussions/898)). A [política de outubro de 2026](https://developer.trakt.tv/docs/api-use-policy) agora informa que o acesso Standard é gratuito e que criar um app exige uma conta GitHub verificada, em vez de VIP. A integração continua disponível, mas depende de credenciais válidas e dos limites atuais do Trakt; credenciais antigas ou de apps excluídos podem não funcionar. O Simkl é outra opção de scrobbler para anime, séries e filmes.
+
 | Serviço | Ativar no `.env` | Comando de autenticação | Guia |
 | --- | --- | --- | --- |
 | **MyAnimeList** | `MAL_SYNC=true` | `npm start -- mal-auth` | [Guia MAL](mal-sync-setup.md) |
 | **Trakt.tv** | `TRAKT_SYNC=true` | `npm start -- trakt-auth` | [Guia Trakt](trakt-sync-setup.md) |
+| **Simkl** | `SIMKL_SYNC=true` | `npm start -- simkl-auth` | [Guia Simkl](simkl-sync-setup.md) |
 | **Stremio** | `STREMIO_SYNC=true` | Abra uma mídia pelo bridge para capturar contexto/autenticação | [Guia Stremio](stremio-mpv-bridge.md) |
 
 Tokens e contexto do Stremio ficam em `.config/`, que é ignorado pelo git.
@@ -229,6 +233,9 @@ Se você mudar `PORT`, atualize `CONFIG.SERVER_URL` em `stremio-mpv-bridge/users
 | `MAL_SYNC` | `false` | Ativa a sincronização de progresso de episódios no MyAnimeList |
 | `MAL_CLIENT_ID` | vazio | Client ID da API do MyAnimeList |
 | `MAL_SYNC_THRESHOLD` | `90` | Percentual assistido para disparar a sincronização do MAL |
+| `SIMKL_SYNC` | `false` | Ativa o scrobble do Simkl para anime, séries e filmes |
+| `SIMKL_CLIENT_ID` | vazio | Client ID público de um app Simkl OAuth V2 |
+| `SIMKL_SYNC_THRESHOLD` | `80` | Marca como assistido só ao parar com esse percentual ou mais (50–100) |
 | `TRAKT_SYNC` | `false` | Ativa o scrobble no Trakt.tv |
 | `TRAKT_CLIENT_ID` | vazio | Client ID da API do Trakt |
 | `TRAKT_CLIENT_SECRET` | vazio | Client secret da API do Trakt |
@@ -238,7 +245,7 @@ Se você mudar `PORT`, atualize `CONFIG.SERVER_URL` em `stremio-mpv-bridge/users
 | `STREMIO_SYNC` | `false` | Ativa o Continue Watching e a marcação de assistido no Stremio |
 | `STREMIO_SYNC_THRESHOLD` | `85` | Percentual assistido para o Stremio marcar um item como assistido |
 | `STREMIO_PROGRESS_INTERVAL_MS` | `90000` | Intervalo mínimo entre gravações do Continue Watching, limitado a no mínimo `30000` |
-| `SYNC_DRY_RUN` | `false` | Quando ativado, todas as operações de sincronização (scrobble do Trakt, gravações no datastore do Stremio, requisições de Auto-Fetch, sync do MAL) são registradas em log mas NÃO executadas. Seguro para testar a configuração sem efeitos colaterais. |
+| `SYNC_DRY_RUN` | `false` | Registra as operações (scrobble Simkl/Trakt, gravações no Stremio, Auto-Fetch e MAL) sem executá-las |
 
 </details>
 

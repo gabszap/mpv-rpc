@@ -99,6 +99,7 @@ describe("resolveMediaMetadata", () => {
             totalEpisodes: null,
             adjustedEpisode: null,
             metadataSourceProvider: "tmdb",
+            tmdbId: 1396,
             mediaKind: "series",
             year: 2008,
         });

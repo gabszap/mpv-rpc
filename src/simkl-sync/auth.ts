@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import axios from "axios";
 import { config } from "../core/config";
+import { SimklApiError } from "./types";
 
 interface Tokens {
     access_token: string;
@@ -17,13 +18,13 @@ interface Tokens {
 const refreshes = new Map<string, Promise<string | null>>();
 const tokenFile = (): string => path.join(process.cwd(), ".config", ".simkl_tokens.json");
 
-export function logSimklRequest(endpoint: string, status: number | string): void {
+export function logSimklRequest(endpoint: string, status: number | string, detail?: string): void {
     try {
         const dir = path.join(process.cwd(), ".anime_cache");
         fs.mkdirSync(dir, { recursive: true });
         fs.appendFileSync(
             path.join(dir, "api_log.txt"),
-            `${new Date().toISOString()} [Simkl] POST ${endpoint} ${status}\n`,
+            `${new Date().toISOString()} [Simkl] POST ${endpoint} ${status}${detail ? ` ${detail}` : ""}\n`,
         );
     } catch {
         // Logging must never interrupt playback or authentication.
@@ -183,7 +184,8 @@ export async function getAccessToken(
             fs.rmSync(tokenFile(), { force: true });
             return null;
         }
-        if (result?.status !== 200) return null;
+        if (!result || result.status >= 500 || result.status === 429) throw new SimklApiError("transient", 20000);
+        if (result.status !== 200) return null;
         const updated = fromResponse(result.data, clientId, sessionKey);
         if (!updated) return null;
         storeTokens(updated);

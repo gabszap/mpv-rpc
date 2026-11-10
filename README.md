@@ -51,7 +51,7 @@
 | **Multiple providers** | Jikan/MyAnimeList, AniList, Kitsu and TheTVDB, with automatic fallback |
 | **Movies and series metadata** | TMDb poster, official title, year and episode names for non-anime content (needs a free `TMDB_API_KEY`) |
 | **Resilient parser** | PTT (native TypeScript) → anime release regex → regex fallback |
-| **Watch sync** | MyAnimeList progress, Trakt.tv scrobbling, Stremio Continue Watching and watched marking |
+| **Watch sync** | MyAnimeList progress, Trakt.tv and Simkl scrobbling, Stremio Continue Watching and watched marking |
 | **Stremio bridge** | Userscript + local server that opens Stremio Web streams in MPV with playlist support |
 
 > [!NOTE]
@@ -148,9 +148,13 @@ Full guide: [Stremio MPV Bridge Guide](docs/stremio-mpv-bridge.md)
 | --- | --- | --- | --- |
 | **MyAnimeList** | `MAL_SYNC=true` | `npm start -- mal-auth` | [MAL guide](docs/mal-sync-setup.md) |
 | **Trakt.tv** | `TRAKT_SYNC=true` | `npm start -- trakt-auth` | [Trakt guide](docs/trakt-sync-setup.md) |
+| **Simkl** | `SIMKL_SYNC=true` | `npm start -- simkl-auth` | [Simkl guide](docs/simkl-sync-setup.md) |
 | **Stremio** | `STREMIO_SYNC=true` | Open media through the bridge so it can capture context/auth | [Stremio guide](docs/stremio-mpv-bridge.md) |
 
 Tokens and Stremio context are stored under `.config/`, which is ignored by git.
+
+> [!WARNING]
+> **Trakt API access:** In July 2026, API app registration was restricted to VIP accounts and users reported existing free-account apps disappearing, breaking integrations with `403` errors ([July discussion](https://github.com/trakt/trakt-api/discussions/898)). Trakt's [October 2026 policy](https://developer.trakt.tv/docs/api-use-policy) now says Standard API access is free and creating an app requires a verified GitHub account, rather than VIP. This integration remains available, but working credentials and current Trakt access limits are required; existing or deleted credentials are not guaranteed to work. Simkl is another supported scrobbler for anime, series and movies.
 
 > [!IMPORTANT]
 > Some anime sync mappings use TheTVDB to safely convert aired/default season+episode numbers to absolute episode numbers, even when `METADATA_PROVIDER` is not `tvdb`. Set `TVDB_API_KEY` for those cases; without it, ambiguous syncs are skipped rather than guessed.
@@ -229,6 +233,9 @@ If you change `PORT`, update `CONFIG.SERVER_URL` in `stremio-mpv-bridge/userscri
 | `MAL_SYNC` | `false` | Enable MyAnimeList episode progress sync |
 | `MAL_CLIENT_ID` | empty | MyAnimeList API client ID |
 | `MAL_SYNC_THRESHOLD` | `90` | Percent watched before MAL sync triggers |
+| `SIMKL_SYNC` | `false` | Enable Simkl scrobbling for anime, series and movies |
+| `SIMKL_CLIENT_ID` | empty | Simkl OAuth V2 public client ID |
+| `SIMKL_SYNC_THRESHOLD` | `80` | Mark watched only on stop at or above this percentage (50–100) |
 | `TRAKT_SYNC` | `false` | Enable Trakt.tv scrobbling |
 | `TRAKT_CLIENT_ID` | empty | Trakt API client ID |
 | `TRAKT_CLIENT_SECRET` | empty | Trakt API client secret |
@@ -238,7 +245,7 @@ If you change `PORT`, update `CONFIG.SERVER_URL` in `stremio-mpv-bridge/userscri
 | `STREMIO_SYNC` | `false` | Enable Stremio Continue Watching and watched marking |
 | `STREMIO_SYNC_THRESHOLD` | `85` | Percent watched before Stremio marks an item watched |
 | `STREMIO_PROGRESS_INTERVAL_MS` | `90000` | Minimum delay between Continue Watching writes, clamped to at least `30000` |
-| `SYNC_DRY_RUN` | `false` | When enabled, all sync operations (Trakt scrobble, Stremio datastore writes, Auto-Fetch requests, MAL sync) are logged but NOT executed. Safe for testing configuration without side effects. |
+| `SYNC_DRY_RUN` | `false` | Log sync operations (Simkl/Trakt scrobble, Stremio writes, Auto-Fetch, MAL) without executing them |
 
 </details>
 

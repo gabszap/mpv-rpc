@@ -137,7 +137,7 @@ it("preserves tokens on transient refresh failures", async () => {
     save(true);
     post.mockRejectedValue(new Error("offline"));
     const auth = await import("../src/simkl-sync/auth");
-    expect(await auth.getAccessToken("client-v2", "grant-1")).toBeNull();
+    await expect(auth.getAccessToken("client-v2", "grant-1")).rejects.toMatchObject({ kind: "transient" });
     expect(fs.existsSync(file)).toBe(true);
 });
 it("invalidates only the revoked grant", async () => {

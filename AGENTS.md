@@ -9,6 +9,7 @@ This project connects **MPV** playback to:
 3) **Movie and series metadata** through TMDb (optionally, needs `TMDB_API_KEY`)
 4) **MyAnimeList (MAL) sync** (optionally)
 5) A separate **Stremio → MPV bridge** workspace
+6) **Simkl scrobbling** for anime, series and movies (optionally)
 
 The intent of this file is to keep work safe, reproducible, and easy to troubleshoot.
 
@@ -232,6 +233,14 @@ npm run bridge
    - `src/index.ts` feeds it context derived from MPV filename / parsed fields.
 
 ### Critical files by change type
+
+- **Simkl scrobbling**
+  - edit: `src/simkl-sync/` and runtime hooks in `src/index.ts`
+  - validate: `tests/simkl-*.test.ts`, `tests/runtime-simkl-routing.test.ts` and the full suite
+  - keep: completion only on stop at the session threshold (default 80%), no completion on pause/seek/threshold crossing; serial nonblocking API queue; IDs and tokens bound to the original content/cour and login
+  - OAuth V2 Device flow uses form fields client_id/scope then device_code polling; no client secret or PKCE verifier for this grant. Tokens live in `.config/.simkl_tokens.json`; logs in `.anime_cache/api_log.txt` always exclude credentials.
+  - Do not finalize on unavailable metadata while MPV remains connected. Shutdown is bounded and retries are in memory, without durable offline replay.
+  - setup: [Simkl guide](docs/simkl-sync-setup.md)
 
 - **Parser changes / filename detection**
   - edit: `src/core/parser.ts`

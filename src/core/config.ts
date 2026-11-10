@@ -147,7 +147,7 @@ export const config = {
         enabled: getEnvBool("AUTO_FETCH", true),
     },
 
-    // Sync dry-run (logs would-be MAL updates, Trakt scrobbles, Stremio writes,
+    // Sync dry-run (logs would-be MAL updates, Simkl/Trakt scrobbles, Stremio writes,
     // and Auto-Fetch POSTs without actually executing them).
     syncDryRun: getEnvBool("SYNC_DRY_RUN", false),
 };
